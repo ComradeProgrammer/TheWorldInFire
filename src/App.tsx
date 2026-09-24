@@ -1,50 +1,72 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
+import { useCallback, useRef, useState } from "react";
+import { MapCanvas } from "./map/MapCanvas";
+import { natoMap } from "./map/mapData";
+import type { HexData } from "./map/mapTypes";
+import { DEFAULT_LAYERS, type MapLayerId, type MapRenderer } from "./map/render/MapRenderer";
+import { BottomBar, type LogEntry } from "./ui/BottomBar";
+import { PREVIEW_HUD } from "./ui/hudPreview";
+import { SidePanel } from "./ui/SidePanel";
+import { TopBar } from "./ui/TopBar";
 import "./App.css";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+const MAX_LOG = 200;
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+function App() {
+  const rendererRef = useRef<MapRenderer | null>(null);
+  const [hovered, setHovered] = useState<HexData | null>(null);
+  const [selected, setSelected] = useState<HexData | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [layers, setLayers] = useState(DEFAULT_LAYERS);
+  const [log, setLog] = useState<LogEntry[]>([]);
+  const nextLogId = useRef(0);
+
+  const addLog = useCallback((text: string, tone?: LogEntry["tone"]) => {
+    setLog((prev) => [...prev.slice(-(MAX_LOG - 1)), { id: nextLogId.current++, text, tone }]);
+  }, []);
+
+  const onReady = useCallback(
+    (renderer: MapRenderer) => {
+      rendererRef.current = renderer;
+      const cities = natoMap.hexes.filter((h) => h.city).length;
+      addLog(`Map loaded: ${natoMap.hexes.length} hexes, ${cities} city hexes.`);
+    },
+    [addLog],
+  );
+
+  const onSelect = useCallback(
+    (hex: HexData | null) => {
+      setSelected(hex);
+      if (hex) addLog(`Selected hex ${hex.id}${hex.city ? ` — ${hex.city.name}` : ""}.`);
+    },
+    [addLog],
+  );
+
+  const toggleLayer = (layer: MapLayerId, visible: boolean) => {
+    setLayers((prev) => ({ ...prev, [layer]: visible }));
+    rendererRef.current?.setLayerVisible(layer, visible);
+  };
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
+    <div className="app">
+      <TopBar hud={PREVIEW_HUD} />
+      <main className="map-area">
+        <MapCanvas onReady={onReady} onHover={setHovered} onSelect={onSelect} onZoom={setZoom} />
+      </main>
+      <SidePanel
+        selected={selected}
+        zoom={zoom}
+        layers={layers}
+        onToggleLayer={toggleLayer}
+        onZoom={(f) => rendererRef.current?.zoomBy(f)}
+        onFit={() => rendererRef.current?.fitToView()}
+        onGoTo={(id) => {
+          if (!rendererRef.current) return false;
+          rendererRef.current.selectById(id);
+          return true;
         }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+      />
+      <BottomBar log={log} hovered={hovered} />
+    </div>
   );
 }
 
