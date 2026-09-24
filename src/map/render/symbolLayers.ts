@@ -17,7 +17,9 @@ export function buildCityLayer(map: MapData): Container {
     for (const c of map.cities) if (c.kind === kind) g.poly(c.points);
     g.fill(fill);
     for (const c of map.cities) if (c.kind === kind) g.poly(c.points);
-    g.stroke({ color: edge, width: 1.6, join: "round" });
+    g.stroke({ color: edge, width: 6, alpha: 0.18, join: "round" });
+    for (const c of map.cities) if (c.kind === kind) g.poly(c.points);
+    g.stroke({ color: edge, width: 1.8, join: "round" });
   }
   layer.addChild(g);
   return layer;
@@ -38,7 +40,9 @@ export function buildSymbolLayer(map: MapData): Container {
 
   for (const s of map.symbols) {
     if (s.kind === "mobilization") {
-      g.poly([s.x, s.y - 11, s.x + 12, s.y + 10, s.x - 12, s.y + 10]).fill(COLORS.mobilization);
+      g.poly([s.x, s.y - 11, s.x + 12, s.y + 10, s.x - 12, s.y + 10])
+        .fill(COLORS.mobilization)
+        .stroke({ color: COLORS.ink, width: 1.5 });
     } else if (s.kind === "defense") {
       g.rect(s.x - 12, s.y - 13, 24, 26).fill(COLORS.defenseBox).stroke({ color: COLORS.ink, width: 1.2 });
       const t = new Text({ text: String(s.value), style: numberStyle, resolution: 3 });
@@ -46,10 +50,14 @@ export function buildSymbolLayer(map: MapData): Container {
       t.position.set(s.x, s.y + 1);
       numbers.addChild(t);
     } else {
-      g.circle(s.x, s.y, 19).fill(0xffffff).stroke({ color: COLORS.ink, width: 2 });
+      g.circle(s.x, s.y, 19).fill(COLORS.ink).stroke({ color: COLORS.port, width: 2 });
       anchor(g, s.x, s.y - 3);
-      g.stroke({ color: COLORS.ink, width: 2, cap: "round" });
-      const t = new Text({ text: String(s.value), style: { ...numberStyle, fontSize: 15 }, resolution: 3 });
+      g.stroke({ color: COLORS.port, width: 2, cap: "round" });
+      const t = new Text({
+        text: String(s.value),
+        style: { ...numberStyle, fontSize: 15, fill: COLORS.port },
+        resolution: 3,
+      });
       t.anchor.set(0.5);
       t.position.set(s.x, s.y + 11);
       numbers.addChild(t);
@@ -60,17 +68,20 @@ export function buildSymbolLayer(map: MapData): Container {
 }
 
 const LABEL_STYLE: Record<LabelKind, TextStyleOptions> = {
-  sea: { fontSize: 38, fontWeight: "bold", fill: 0xe8f0f8, letterSpacing: 2, fontStyle: "italic" },
-  island: { fontSize: 30, fontWeight: "bold", fill: 0xffffff, fontStyle: "italic" },
-  river: { fontSize: 22, fill: 0x2b5b95, fontStyle: "italic" },
-  command: { fontSize: 30, fontWeight: "bold", fill: 0x8f8f94, letterSpacing: 1 },
-  deployment: { fontSize: 42, fontWeight: "bold", fill: 0x3b3f96 },
-  deploymentPact: { fontSize: 42, fontWeight: "bold", fill: 0xd9573a },
-  keyCity: { fontSize: 30, fontWeight: "bold", fill: COLORS.ink },
-  majorCity: { fontSize: 22, fontWeight: "bold", fill: COLORS.ink },
-  minorCity: { fontSize: 20, fill: COLORS.ink },
-  town: { fontSize: 20, fill: 0x2b5b95, fontStyle: "italic" },
+  sea: { fontSize: 38, fontWeight: "bold", fill: 0x4fa6d6, letterSpacing: 4, fontStyle: "italic" },
+  island: { fontSize: 30, fontWeight: "bold", fill: 0xcfe6f5, fontStyle: "italic" },
+  river: { fontSize: 22, fill: 0x62b6ff, fontStyle: "italic" },
+  command: { fontSize: 30, fontWeight: "bold", fill: 0xb58cff, letterSpacing: 2 },
+  deployment: { fontSize: 42, fontWeight: "bold", fill: 0x6f9dff },
+  deploymentPact: { fontSize: 42, fontWeight: "bold", fill: 0xff6b5c },
+  keyCity: { fontSize: 30, fontWeight: "bold", fill: 0xffffff, letterSpacing: 1 },
+  majorCity: { fontSize: 22, fontWeight: "bold", fill: 0xe4ecf3 },
+  minorCity: { fontSize: 20, fill: 0xb9c6d2 },
+  town: { fontSize: 20, fill: 0x7ec8f0, fontStyle: "italic" },
 };
+
+/** Dark halo keeps light text legible over any terrain. */
+const LABEL_HALO = { color: COLORS.labelHalo, width: 5, join: "round" } as const;
 
 /** Labels grouped by importance so the renderer can hide small text when zoomed out. */
 export interface LabelLayers {
@@ -82,7 +93,7 @@ export function buildLabelLayers(map: MapData): LabelLayers {
   const major = new Container({ label: "labels-major" });
   const minor = new Container({ label: "labels-minor" });
   for (const l of map.labels) {
-    const style = { fontFamily: FONT_FAMILY, ...LABEL_STYLE[l.kind] };
+    const style = { fontFamily: FONT_FAMILY, stroke: LABEL_HALO, ...LABEL_STYLE[l.kind] };
     const text = l.kind === "keyCity" ? l.text.toUpperCase() : l.text;
     const t = new Text({ text, style, resolution: 3 });
     t.anchor.set(0.5);
@@ -110,8 +121,8 @@ export function buildHexNumberLayer(map: MapData, grid: HexGrid): Container {
   for (const h of map.hexes) {
     const { x, y } = grid.center(h.row, h.col);
     const t = new BitmapText({ text: h.id, style: { fontFamily: "HexNumbers", fontSize: 15 } });
-    t.tint = h.terrain === "sea" ? 0x24476b : 0x2a2a2a;
-    t.alpha = 0.75;
+    t.tint = h.terrain === "sea" ? 0x3f7fae : 0x8aa6b8;
+    t.alpha = 0.6;
     t.anchor.set(0.5, 0);
     t.position.set(x, y - grid.radiusY + 14);
     t.cullable = true;

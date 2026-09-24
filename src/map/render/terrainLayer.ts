@@ -88,7 +88,7 @@ function drawStreaks(
     g.moveTo(p.x - dx, p.y - dy);
     g.quadraticCurveTo(p.x - dy * 0.3 + bend, p.y + dx * 0.3 + bend, p.x + dx, p.y + dy);
   }
-  g.stroke({ color: streak, width, cap: "round", alpha: 0.9 });
+  g.stroke({ color: streak, width, cap: "round", alpha: 0.8 });
 }
 
 function drawMarsh(g: Graphics, grid: HexGrid, h: HexData) {
@@ -104,7 +104,7 @@ function drawMarsh(g: Graphics, grid: HexGrid, h: HexData) {
     g.moveTo(p.x + s * 0.6, p.y - s).lineTo(p.x, p.y);
     g.moveTo(p.x - s, p.y).lineTo(p.x + s, p.y);
   }
-  g.stroke({ color: COLORS.marshGrass, width: 1.4, alpha: 0.9 });
+  g.stroke({ color: COLORS.marshGrass, width: 1.6, alpha: 0.75 });
 }
 
 /** Base land fill, then terrain artwork drawn in priority order so the richer art sits on top. */
@@ -134,7 +134,7 @@ export function buildTerrainLayer(map: MapData, grid: HexGrid): Container {
       speck.circle(p.x, p.y, 2 + rand() * 4);
     }
   }
-  speck.fill({ color: COLORS.clearSpeck, alpha: 0.35 });
+  speck.fill({ color: COLORS.clearSpeck, alpha: 0.6 });
   layer.addChild(speck);
 
   // Opaque (pre-blended) shadow so overlapping shapes don't darken each other.

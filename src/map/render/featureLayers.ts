@@ -65,11 +65,12 @@ export function buildWaterLayer(map: MapData): Container {
   }
   layer.addChild(water);
 
+  // Coastline as a glowing contour: wide faint halo under a thin bright core.
   const coast = new Graphics();
   for (const pts of linesOf(map, "coast")) path(coast, pts);
-  coast.stroke({ color: COLORS.sandEdge, width: 11, cap: "round", join: "round" });
+  coast.stroke({ color: COLORS.coastGlow, width: 14, alpha: 0.16, cap: "round", join: "round" });
   for (const pts of linesOf(map, "coast")) path(coast, pts);
-  coast.stroke({ color: COLORS.sand, width: 7.5, cap: "round", join: "round" });
+  coast.stroke({ color: COLORS.coast, width: 2.5, alpha: 0.9, cap: "round", join: "round" });
   layer.addChild(coast);
   return layer;
 }
@@ -80,13 +81,15 @@ export function buildRiverLayer(map: MapData): Container {
   const minor = linesOf(map, "minorRiver");
   const major = linesOf(map, "majorRiver");
   for (const pts of minor) path(g, pts);
-  g.stroke({ color: COLORS.minorRiverEdge, width: 8, cap: "round", join: "round" });
+  g.stroke({ color: COLORS.riverGlow, width: 10, alpha: 0.22, cap: "round", join: "round" });
   for (const pts of minor) path(g, pts);
-  g.stroke({ color: COLORS.minorRiver, width: 5, cap: "round", join: "round" });
+  g.stroke({ color: COLORS.minorRiver, width: 3.5, cap: "round", join: "round" });
   for (const pts of major) path(g, pts);
-  g.stroke({ color: COLORS.majorRiverEdge, width: 17, cap: "round", join: "round" });
+  g.stroke({ color: COLORS.riverGlow, width: 20, alpha: 0.28, cap: "round", join: "round" });
   for (const pts of major) path(g, pts);
-  g.stroke({ color: COLORS.majorRiver, width: 11.5, cap: "round", join: "round" });
+  g.stroke({ color: COLORS.majorRiver, width: 8, cap: "round", join: "round" });
+  for (const pts of major) path(g, pts);
+  g.stroke({ color: COLORS.majorRiverCore, width: 2, alpha: 0.9, cap: "round", join: "round" });
   layer.addChild(g);
   return layer;
 }
@@ -98,8 +101,8 @@ export function buildGridLayer(map: MapData, grid: HexGrid): Container {
   for (const h of map.hexes) {
     (h.terrain === "sea" ? sea : land).poly(grid.corners(h.row, h.col));
   }
-  land.stroke({ color: COLORS.grid, width: 1.8, alpha: 0.75 });
-  sea.stroke({ color: COLORS.seaGrid, width: 1.8, alpha: 0.8 });
+  land.stroke({ color: COLORS.grid, width: 1.4, alpha: 0.3 });
+  sea.stroke({ color: COLORS.seaGrid, width: 1.4, alpha: 0.28 });
   layer.addChild(sea, land);
   return layer;
 }
@@ -107,13 +110,16 @@ export function buildGridLayer(map: MapData, grid: HexGrid): Container {
 export function buildBoundaryLayer(map: MapData): Container {
   const layer = new Container({ label: "boundaries" });
   const g = new Graphics();
+  for (const pts of linesOf(map, "nationalBoundary")) path(g, pts);
+  g.stroke({ color: COLORS.lineShadow, width: 9, alpha: 0.55, cap: "round", join: "round" });
   for (const pts of linesOf(map, "nationalBoundary")) dashed(g, pts, [24, 8, 6, 8]);
-  g.stroke({ color: COLORS.boundary, width: 6.5, cap: "butt" });
+  g.stroke({ color: COLORS.boundary, width: 4, alpha: 0.9, cap: "butt" });
 
+  // Iron Curtain: neon band with a solid hot core.
   for (const pts of linesOf(map, "ironCurtain")) path(g, pts);
-  g.stroke({ color: COLORS.ironCurtain, width: 16, cap: "round", join: "round", alpha: 0.95 });
-  for (const pts of linesOf(map, "ironCurtain")) dashed(g, pts, [22, 7, 5, 7]);
-  g.stroke({ color: COLORS.boundary, width: 5, cap: "butt" });
+  g.stroke({ color: COLORS.ironCurtain, width: 22, cap: "round", join: "round", alpha: 0.22 });
+  for (const pts of linesOf(map, "ironCurtain")) path(g, pts);
+  g.stroke({ color: COLORS.ironCurtain, width: 5, cap: "round", join: "round" });
   layer.addChild(g);
   return layer;
 }
@@ -132,7 +138,7 @@ export function buildBlockedLayer(map: MapData, grid: HexGrid): Container {
   const layer = new Container({ label: "blocked" });
   const g = new Graphics();
   for (const seg of hexsideSegments(map, grid, "blocked")) path(g, seg);
-  g.stroke({ color: COLORS.blocked, width: 12, cap: "butt", alpha: 0.95 });
+  g.stroke({ color: COLORS.blocked, width: 10, cap: "butt", alpha: 0.75 });
   layer.addChild(g);
   return layer;
 }
@@ -146,9 +152,9 @@ export function buildDeploymentLayer(map: MapData, grid: HexGrid): Container {
   ] as const) {
     const segs = hexsideSegments(map, grid, feature);
     for (const seg of segs) path(g, seg);
-    g.stroke({ color: 0xffffff, width: 8, alpha: 0.75, cap: "butt" });
-    for (const seg of segs) dashed(g, seg, [8, 7]);
-    g.stroke({ color, width: 8, cap: "butt" });
+    g.stroke({ color: COLORS.lineShadow, width: 9, alpha: 0.6, cap: "butt" });
+    for (const seg of segs) dashed(g, seg, [9, 6]);
+    g.stroke({ color, width: 5, cap: "butt" });
   }
   layer.addChild(g);
   return layer;
@@ -159,7 +165,10 @@ export function buildCommandLayer(map: MapData): Container {
   const g = new Graphics();
   for (const line of map.commandLines) path(g, line.points);
   for (const pts of linesOf(map, "seaBoundary")) path(g, pts);
-  g.stroke({ color: COLORS.commandZone, width: 22, alpha: 0.55, join: "round", cap: "butt" });
+  g.stroke({ color: COLORS.commandZone, width: 22, alpha: 0.18, join: "round", cap: "butt" });
+  for (const line of map.commandLines) dashed(g, line.points, [30, 12]);
+  for (const pts of linesOf(map, "seaBoundary")) dashed(g, pts, [30, 12]);
+  g.stroke({ color: COLORS.commandZone, width: 3, alpha: 0.9, cap: "butt" });
   layer.addChild(g);
   return layer;
 }
@@ -169,8 +178,8 @@ export function buildCausewayLayer(map: MapData): Container {
   const g = new Graphics();
   for (const c of map.causeways) {
     const [x1, y1, x2, y2] = c.points;
-    g.moveTo(x1, y1).lineTo(x2, y2).stroke({ color: COLORS.ink, width: c.width + 3 });
-    g.moveTo(x1, y1).lineTo(x2, y2).stroke({ color: 0xffffff, width: c.width });
+    g.moveTo(x1, y1).lineTo(x2, y2).stroke({ color: COLORS.lineShadow, width: c.width + 3 });
+    g.moveTo(x1, y1).lineTo(x2, y2).stroke({ color: COLORS.boundary, width: c.width - 3 });
   }
   layer.addChild(g);
   return layer;
