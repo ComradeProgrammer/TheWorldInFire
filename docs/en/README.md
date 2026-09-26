@@ -5,6 +5,8 @@ This directory contains OOAW's English rules and development notes. All content 
 ## Player rules
 
 - [Turn sequence](rules/turn-sequence.md)
+- [Joint reinforcements](rules/reinforcements.md)
+- [BALTAP 1983](rules/baltap.md)
 
 `rules/` is the player-facing rulebook. It contains only rules currently in effect and excludes code structure, APIs, events, revisions, development progress, and future plans.
 

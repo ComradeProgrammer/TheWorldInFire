@@ -1,6 +1,8 @@
-use crate::scenario::PhaseExecution;
-
-use super::{CommandOutcome, GameCommand, GameEvent, GameState, GameStatus, RuleError};
+use crate::command::{CommandOutcome, GameCommand};
+use crate::error::RuleError;
+use crate::event::GameEvent;
+use crate::model::PhaseExecution;
+use crate::state::{GameState, GameStatus};
 
 impl GameState {
     /// Executes a command against the authoritative state and returns its outcome.
@@ -68,6 +70,7 @@ impl GameState {
                 game_turn: self.game_turn,
                 step,
             });
+            self.on_phase_started(events);
         }
     }
 }

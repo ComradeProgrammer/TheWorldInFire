@@ -1,9 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+/// A stable, serializable rules-engine error suitable for IPC responses.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuleError {
+    /// Machine-readable error code used by clients to select behavior.
     pub code: String,
+    /// Human-readable description of the rejected operation.
     pub message: String,
 }
 

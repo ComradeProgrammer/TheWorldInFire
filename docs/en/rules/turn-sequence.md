@@ -1,6 +1,6 @@
 # Turn Sequence
 
-A game lasts no more than fourteen complete game turns.
+The scenario determines the game length. The rules prototype lasts no more than fourteen complete turns, while BALTAP 1983 lasts seven complete turns.
 
 Each game turn consists, in order, of a Joint Player Turn, a Warsaw Pact Player Turn, and a NATO Player Turn.
 
@@ -10,6 +10,8 @@ Both players complete these phases in order:
 
 1. Joint Status Phase
 2. Joint Reinforcement Phase
+
+The Joint Reinforcement Phase resolves automatically and requires no player input.
 
 The Warsaw Pact begins its player turn after the Joint Player Turn ends.
 
@@ -28,4 +30,4 @@ The phases must be completed in this order. A player must finish the current pha
 
 NATO begins its player turn after the Warsaw Pact completes its entire player turn. The game turn ends after NATO completes its player turn, and the next game turn begins with the Joint Status Phase.
 
-The game ends after NATO completes its Post-Battle Phase in game turn fourteen.
+The game ends after NATO completes its Post-Battle Phase in the scenario's final turn.

@@ -1,6 +1,8 @@
 use std::sync::Mutex;
 
-use ooaw_core::{find_scenario, GameCommand, GameId, GameSnapshot, GameState, RuleError};
+use ooaw_core::{
+    find_scenario, GameCommand, GameId, GameSnapshot, GameState, RuleError, ScenarioSummary,
+};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -47,6 +49,11 @@ struct CommandResponse {
     revision: u64,
     events: Vec<ooaw_core::GameEvent>,
     snapshot: GameSnapshot,
+}
+
+#[tauri::command]
+fn list_scenarios() -> Vec<ScenarioSummary> {
+    ooaw_core::list_scenarios()
 }
 
 #[tauri::command]
@@ -116,6 +123,7 @@ pub fn run() {
         .manage(AppState::default())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            list_scenarios,
             new_game,
             get_game_snapshot,
             submit_game_command

@@ -5,6 +5,8 @@
 ## 玩家规则
 
 - [回合流程](rules/turn-sequence.md)
+- [联合增援](rules/reinforcements.md)
+- [BALTAP 1983](rules/baltap.md)
 
 `rules/` 是给玩家阅读的规则书，只记录当前游戏中已经生效的规则。这里不出现代码结构、接口、事件、revision、开发进度或未来计划。
 

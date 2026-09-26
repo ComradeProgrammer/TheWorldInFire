@@ -106,7 +106,8 @@ Keep random outcomes reproducible through an explicit seeded random-number sourc
   - `main.tsx`: browser/WebView entry point.
   - `App.tsx`: current application component; presently the generated Tauri demo.
   - `App.css`: current demo styling.
-- `public/`: files copied directly into the frontend build.
+- `public/`: files copied directly into the frontend build. Do not copy board-game
+  counter images here; the frontend renders counters from structured unit data.
 - `src-tauri/`: Rust and Tauri application.
   - `src/main.rs`: native executable entry point.
   - `src/lib.rs`: Tauri builder, current game session, and IPC commands.
@@ -119,6 +120,9 @@ Keep random outcomes reproducible through an explicit seeded random-number sourc
 - `node_modules/`: generated npm dependencies; do not edit.
 - `src-tauri/target/`: generated Rust build artifacts; do not edit.
 - `crates/ooaw-core/`: UI-independent Rust game core.
+  - `src/model/`: units, sides, phases, scenario definitions, and scenario content.
+  - `src/model/scenario_baltap.rs`: BALTAP 1983 setup and reinforcement schedule.
+  - `src/engine.rs`, `src/state.rs`, and `src/phase.rs`: game-state execution at the crate root.
 - `docs/`: durable design notes and decisions.
   - `docs/zh-CN/`: Chinese game-rule documentation.
   - `docs/en/`: matching English game-rule documentation.
