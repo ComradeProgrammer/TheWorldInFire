@@ -1,4 +1,5 @@
 import { Application, Container, CullerPlugin, extensions, Graphics } from "pixi.js";
+import type { BattlePlan, MovementOption, UnitState } from "../../gameApi";
 import type { HexGrid } from "../hexGrid";
 import { hexId } from "../hexGrid";
 import type { HexData, MapData } from "../mapTypes";
@@ -16,6 +17,7 @@ import {
 import { COLORS } from "./style";
 import { buildCityLayer, buildHexNumberLayer, buildLabelLayers, buildSymbolLayer } from "./symbolLayers";
 import { buildTerrainLayer } from "./terrainLayer";
+import { counterAt, populateUnitLayer, type CounterHit } from "./unitLayer";
 
 extensions.add(CullerPlugin);
 
@@ -35,8 +37,20 @@ export const DEFAULT_LAYERS: Record<MapLayerId, boolean> = {
 export interface MapRendererCallbacks {
   onHover(hex: HexData | null): void;
   onSelect(hex: HexData | null): void;
+  onUnitSelect(unitId: string): void;
+  /** Right-click on a destination the core listed as legal for the selected unit. */
+  onMoveOrder(hexId: string): void;
   onZoom(zoom: number): void;
 }
+
+/** Authoritative movement options for the selected unit, used for hover previews. */
+export interface MovementPreview {
+  /** Hex the unit currently occupies, or null when it is off the map. */
+  origin: string | null;
+  options: Map<string, MovementOption>;
+}
+
+const MOVE_ARROW_COLOR = 0xff3b30;
 
 /** Extent of the playable hexes in map pixels. */
 function mapBounds(map: MapData, grid: HexGrid): Rect {
@@ -71,6 +85,11 @@ export class MapRenderer {
   private readonly layers = {} as Record<MapLayerId, Container[]>;
   private readonly layerEnabled = { ...DEFAULT_LAYERS };
   private readonly highlight = new Graphics();
+  private readonly planningLayer = new Graphics({ label: "battle-plan" });
+  private readonly unitLayer = new Container({ label: "units" });
+  private readonly moveArrow = new Graphics({ label: "move-preview" });
+  private movePreview: MovementPreview | null = null;
+  private counterHits: CounterHit[] = [];
   private readonly camera: Camera;
   private hexNumbers!: Container;
   private minorLabels!: Container;
@@ -144,7 +163,10 @@ export class MapRenderer {
       labels.minor,
       labels.major,
       this.hexNumbers,
+      this.planningLayer,
+      this.unitLayer,
       this.highlight,
+      this.moveArrow,
     );
     this.layers.grid = [gridLayer];
     this.layers.hexNumbers = [this.hexNumbers];
@@ -159,6 +181,7 @@ export class MapRenderer {
   private bindInput(): void {
     const canvas = this.app.canvas;
     let drag: { id: number; x: number; y: number; moved: boolean } | null = null;
+    let rightDown: { id: number; x: number; y: number } | null = null;
 
     const local = (e: { clientX: number; clientY: number }) => {
       const r = canvas.getBoundingClientRect();
@@ -173,6 +196,11 @@ export class MapRenderer {
       this.camera.zoomAt(p.x, p.y, Math.exp(-e.deltaY * intensity));
     };
     const onDown = (e: PointerEvent) => {
+      if (e.button === 2) {
+        const p = local(e);
+        rightDown = { id: e.pointerId, x: p.x, y: p.y };
+        return;
+      }
       if (e.button !== 0 && e.button !== 1) return;
       const p = local(e);
       drag = { id: e.pointerId, x: p.x, y: p.y, moved: false };
@@ -195,23 +223,41 @@ export class MapRenderer {
       this.setHovered(this.hexAtScreen(p.x, p.y));
     };
     const onUp = (e: PointerEvent) => {
+      if (e.button === 2 && rightDown && rightDown.id === e.pointerId) {
+        const p = local(e);
+        const still = Math.hypot(p.x - rightDown.x, p.y - rightDown.y) <= DRAG_THRESHOLD;
+        rightDown = null;
+        const hex = this.hexAtScreen(p.x, p.y);
+        // Only destinations the core listed as legal can be ordered.
+        if (still && hex && this.movePreview?.options.has(hex.id)) this.callbacks.onMoveOrder(hex.id);
+        return;
+      }
       if (!drag || drag.id !== e.pointerId) return;
       if (!drag.moved && e.button === 0) {
         const p = local(e);
         const hex = this.hexAtScreen(p.x, p.y);
-        this.select(hex && hex === this.selected ? null : hex);
+        const w = this.camera.screenToWorld(p.x, p.y);
+        const unitId = counterAt(this.counterHits, w.x, w.y);
+        if (unitId) {
+          this.select(hex);
+          this.callbacks.onUnitSelect(unitId);
+        } else {
+          this.select(hex && hex === this.selected ? null : hex);
+        }
       }
       canvas.releasePointerCapture(e.pointerId);
       canvas.style.cursor = "";
       drag = null;
     };
     const onLeave = () => this.setHovered(null);
+    const onContextMenu = (e: MouseEvent) => e.preventDefault();
 
     canvas.addEventListener("wheel", onWheel, { passive: false });
     canvas.addEventListener("pointerdown", onDown);
     canvas.addEventListener("pointermove", onMove);
     canvas.addEventListener("pointerup", onUp);
     canvas.addEventListener("pointerleave", onLeave);
+    canvas.addEventListener("contextmenu", onContextMenu);
     const observer = new ResizeObserver(() => this.app.resize());
     observer.observe(canvas.parentElement ?? canvas);
     this.cleanup.push(() => {
@@ -220,6 +266,7 @@ export class MapRenderer {
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointerleave", onLeave);
+      canvas.removeEventListener("contextmenu", onContextMenu);
       observer.disconnect();
     });
   }
@@ -241,6 +288,7 @@ export class MapRenderer {
     if (hex === this.hovered) return;
     this.hovered = hex;
     this.redrawHighlight();
+    this.redrawMoveArrow();
     this.callbacks.onHover(hex);
   }
 
@@ -261,15 +309,15 @@ export class MapRenderer {
     }
   }
 
-  select(hex: HexData | null): void {
+  select(hex: HexData | null, notify = true): void {
     this.selected = hex;
     this.redrawHighlight();
-    this.callbacks.onSelect(hex);
+    if (notify) this.callbacks.onSelect(hex);
   }
 
-  selectById(id: string, center = true): void {
+  selectById(id: string, center = true, notify = true): void {
     const hex = this.hexByKey.get(id) ?? null;
-    this.select(hex);
+    this.select(hex, notify);
     if (hex && center) {
       const c = this.grid.center(hex.row, hex.col);
       this.camera.centerOn(c.x, c.y);
@@ -288,6 +336,110 @@ export class MapRenderer {
 
   fitToView(): void {
     this.camera.fit();
+  }
+
+  setUnits(units: UnitState[]): void {
+    this.counterHits = populateUnitLayer(this.unitLayer, units, this.map, this.grid);
+  }
+
+  /** Sets (or clears) the legal destinations that hover arrows and right-click orders use. */
+  setMovementPreview(preview: MovementPreview | null): void {
+    this.movePreview = preview;
+    this.redrawMoveArrow();
+  }
+
+  private hexCenter(id: string): { x: number; y: number } | null {
+    const hex = this.hexByKey.get(id);
+    return hex ? this.grid.center(hex.row, hex.col) : null;
+  }
+
+  private redrawMoveArrow(): void {
+    const g = this.moveArrow.clear();
+    const preview = this.movePreview;
+    const option = this.hovered && preview?.options.get(this.hovered.id);
+    if (!preview || !option || !this.hovered) {
+      this.app.canvas.style.cursor = "";
+      return;
+    }
+    this.app.canvas.style.cursor = "pointer";
+    const corners = this.grid.corners(this.hovered.row, this.hovered.col, 0.92);
+    g.poly(corners).stroke({ color: MOVE_ARROW_COLOR, width: 5, alpha: 0.9, join: "round" });
+
+    const ids = preview.origin ? [preview.origin, ...option.path] : [];
+    const points = ids.map((id) => this.hexCenter(id)).filter((p): p is { x: number; y: number } => p !== null);
+    if (points.length < 2) return;
+    const tip = points[points.length - 1];
+    const before = points[points.length - 2];
+    const angle = Math.atan2(tip.y - before.y, tip.x - before.x);
+    const head = 34;
+    // End the shaft at the arrowhead's base so the line does not poke through it.
+    const base = { x: tip.x - Math.cos(angle) * head * 0.8, y: tip.y - Math.sin(angle) * head * 0.8 };
+    g.moveTo(points[0].x, points[0].y);
+    for (const p of points.slice(1, -1)) g.lineTo(p.x, p.y);
+    g.lineTo(base.x, base.y);
+    g.stroke({ color: 0x05080c, width: 15, alpha: 0.55, cap: "round", join: "round" });
+    g.moveTo(points[0].x, points[0].y);
+    for (const p of points.slice(1, -1)) g.lineTo(p.x, p.y);
+    g.lineTo(base.x, base.y);
+    g.stroke({ color: MOVE_ARROW_COLOR, width: 9, cap: "round", join: "round" });
+    const spread = 0.5;
+    g.poly([
+      tip.x,
+      tip.y,
+      tip.x - Math.cos(angle - spread) * head,
+      tip.y - Math.sin(angle - spread) * head,
+      tip.x - Math.cos(angle + spread) * head,
+      tip.y - Math.sin(angle + spread) * head,
+    ])
+      .fill(MOVE_ARROW_COLOR)
+      .stroke({ color: 0x05080c, width: 2, alpha: 0.7 });
+  }
+
+  setBattlePlan(plan: BattlePlan | null): void {
+    const g = this.planningLayer.clear();
+    if (!plan) return;
+    for (const movement of plan.movements) {
+      const points = movement.path.flatMap((id) => {
+        const hex = this.hexByKey.get(id);
+        if (!hex) return [];
+        const center = this.grid.center(hex.row, hex.col);
+        return [center.x, center.y];
+      });
+      const fromId = movement.from.type === "hex" ? movement.from.hexId : null;
+      const fromHex = fromId ? this.hexByKey.get(fromId) : null;
+      if (fromHex) {
+        const center = this.grid.center(fromHex.row, fromHex.col);
+        points.unshift(center.x, center.y);
+      }
+      if (points.length >= 4) {
+        g.moveTo(points[0], points[1]);
+        for (let i = 2; i < points.length; i += 2) g.lineTo(points[i], points[i + 1]);
+        g.stroke({ color: movement.mode === "airTransport" ? 0x79cfff : 0xf0bf58, width: 7, alpha: 0.78 });
+      }
+    }
+    for (const id of plan.attackTargets) {
+      const hex = this.hexByKey.get(id);
+      if (!hex) continue;
+      const corners = this.grid.corners(hex.row, hex.col, 0.9);
+      g.poly(corners).fill({ color: 0xd94b46, alpha: 0.2 }).stroke({ color: 0xff625c, width: 9, alpha: 0.95 });
+    }
+  }
+
+  focusUnits(units: UnitState[]): void {
+    const points = units.flatMap((unit) => {
+      if (unit.location.type !== "hex") return [];
+      const hex = this.hexByKey.get(unit.location.hexId);
+      return hex ? [this.grid.center(hex.row, hex.col)] : [];
+    });
+    if (points.length === 0) return;
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    const margin = 180;
+    const minX = Math.min(...xs) - margin;
+    const maxX = Math.max(...xs) + margin;
+    const minY = Math.min(...ys) - margin;
+    const maxY = Math.max(...ys) + margin;
+    this.camera.fitBounds({ x: minX, y: minY, width: maxX - minX, height: maxY - minY });
   }
 
   destroy(): void {

@@ -1,5 +1,8 @@
+use super::map::nato_map;
 use super::scenario::{reinforcement, side, standard_turn_sequence};
-use super::{HexId, ReinforcementDefinition, ScenarioDefinition, UnitLocation};
+use super::{
+    BattlePlanningRules, HexId, ReinforcementDefinition, ScenarioDefinition, UnitLocation,
+};
 
 fn hex(id: &str) -> UnitLocation {
     UnitLocation::Hex {
@@ -43,6 +46,13 @@ pub(crate) fn baltap_scenario() -> ScenarioDefinition {
         id: "nato-baltap-1983".to_owned(),
         name: "BALTAP 1983 Introductory Scenario".to_owned(),
         max_game_turns: 7,
+        map: nato_map(),
+        // 36.2.1.2, 36.2.2.2: Airlift Commands, WP 3 and NATO 1.
+        battle_planning_rules: BattlePlanningRules {
+            warsaw_pact_airlift_commands: 3,
+            nato_airlift_commands: 1,
+            ..BattlePlanningRules::nato_standard()
+        },
         sides: vec![side("warsawPact", "Warsaw Pact"), side("nato", "NATO")],
         turn_sequence: standard_turn_sequence(),
         reinforcements: baltap_units(),

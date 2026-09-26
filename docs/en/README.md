@@ -5,6 +5,8 @@ This directory contains OOAW's English rules and development notes. All content 
 ## Player rules
 
 - [Turn sequence](rules/turn-sequence.md)
+- [Movement](rules/movement.md)
+- [Cities](rules/cities.md)
 - [Joint reinforcements](rules/reinforcements.md)
 - [BALTAP 1983](rules/baltap.md)
 

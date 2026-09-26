@@ -1,14 +1,15 @@
 use serde::{Deserialize, Serialize};
 
+use super::map::nato_map;
 use super::scenario_baltap::baltap_scenario;
 use super::{
-    FormationId, HexId, NationId, PhaseActor, PhaseDefinition, PhaseExecution, PhaseId,
-    SideDefinition, SideId, StepId, UnitDefinition, UnitId, UnitLocation, UnitState,
-    UnitStepDefinition, UnitTraitId, UnitTypeId,
+    BattlePlanningRules, FormationId, HexId, MapDefinition, NationId, PhaseActor, PhaseDefinition,
+    PhaseExecution, PhaseId, SideDefinition, SideId, StepId, UnitDefinition, UnitId, UnitLocation,
+    UnitState, UnitStepDefinition, UnitSupplyState, UnitTraitId, UnitTypeId,
 };
 
 /// Static rules and content currently used to create a game scenario.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ScenarioDefinition {
     /// Stable identifier accepted by [`find_scenario`].
     pub id: String,
@@ -16,6 +17,10 @@ pub struct ScenarioDefinition {
     pub name: String,
     /// Number of game turns after which the scenario ends.
     pub max_game_turns: u16,
+    /// Authoritative map used by the scenario.
+    pub map: MapDefinition,
+    /// Scenario-selected rules for movement and planning actions.
+    pub battle_planning_rules: BattlePlanningRules,
     /// Sides that participate in the scenario.
     pub sides: Vec<SideDefinition>,
     /// Ordered sequence repeated during every game turn.
@@ -43,6 +48,8 @@ pub struct ScenarioSummary {
     pub name: String,
     /// Number of game turns in the scenario.
     pub max_game_turns: u16,
+    /// Stable identifier of the authoritative map selected by the scenario.
+    pub map_id: String,
     /// Sides available in the scenario.
     pub sides: Vec<SideDefinition>,
 }
@@ -53,6 +60,7 @@ impl From<&ScenarioDefinition> for ScenarioSummary {
             id: value.id.clone(),
             name: value.name.clone(),
             max_game_turns: value.max_game_turns,
+            map_id: value.map.id.clone(),
             sides: value.sides.clone(),
         }
     }
@@ -87,7 +95,7 @@ fn joint_step(phase_id: &str, execution: PhaseExecution) -> PhaseDefinition {
 
 fn simplified_side_turn(side_id: &str) -> Vec<PhaseDefinition> {
     vec![
-        step(side_id, "preBattle", PhaseExecution::Interactive),
+        step(side_id, "preBattle", PhaseExecution::Automatic),
         step(side_id, "battlePlanning", PhaseExecution::Interactive),
         step(side_id, "offensiveStrike", PhaseExecution::Interactive),
         step(side_id, "combat", PhaseExecution::Interactive),
@@ -119,6 +127,32 @@ pub(crate) fn reinforcement(
     traits: &[&str],
     steps: &[(u16, u16, u16)],
 ) -> ReinforcementDefinition {
+    let supply = if unit_type_id == "headquarters" || traits.contains(&"headquarters") {
+        UnitSupplyState::supplied_headquarters()
+    } else {
+        UnitSupplyState::supplied_combat_unit()
+    };
+
+    let mut traits: Vec<_> = traits
+        .iter()
+        .map(|id| UnitTraitId((*id).to_owned()))
+        .collect();
+    let type_key = unit_type_id.to_ascii_lowercase();
+    if ["tank", "mechanized", "armored", "motorrifle"]
+        .iter()
+        .any(|key| type_key.contains(key))
+        && !traits.iter().any(|item| item.0 == "hard")
+    {
+        traits.push(UnitTraitId("hard".to_owned()));
+    }
+    if ["airborne", "airmobile"]
+        .iter()
+        .any(|key| type_key.contains(key))
+        && !traits.iter().any(|item| item.0 == "airTransportable")
+    {
+        traits.push(UnitTraitId("airTransportable".to_owned()));
+    }
+
     ReinforcementDefinition {
         game_turn,
         unit: UnitState {
@@ -129,10 +163,7 @@ pub(crate) fn reinforcement(
                 nation_id: NationId(nation_id.to_owned()),
                 unit_type_id: UnitTypeId(unit_type_id.to_owned()),
                 formation_id: formation_id.map(|id| FormationId(id.to_owned())),
-                traits: traits
-                    .iter()
-                    .map(|id| UnitTraitId((*id).to_owned()))
-                    .collect(),
+                traits,
                 steps: steps
                     .iter()
                     .map(|&(attack, defense, movement)| UnitStepDefinition {
@@ -144,6 +175,8 @@ pub(crate) fn reinforcement(
             },
             strength_step_index: 0,
             location,
+            supply,
+            train_status: None,
         },
     }
 }
@@ -159,6 +192,8 @@ pub fn find_scenario(id: &str) -> Option<ScenarioDefinition> {
             id: id.to_owned(),
             name: "NATO 1983 Rules Prototype".to_owned(),
             max_game_turns: 14,
+            map: nato_map(),
+            battle_planning_rules: BattlePlanningRules::nato_standard(),
             sides: vec![side("warsawPact", "Warsaw Pact"), side("nato", "NATO")],
             turn_sequence: standard_turn_sequence(),
             reinforcements: vec![

@@ -28,6 +28,12 @@ Each player turn proceeds through these phases in order:
 
 The phases must be completed in this order. A player must finish the current phase before beginning the next and cannot return to a completed phase during the same player turn.
 
+The Pre-Battle Phase resolves automatically and requires no player input. On entering it, the game records the applicable HQ, movement, and combat supply state of each unit belonging to the acting side. Newly arrived reinforcements and units in the Strategic Reserve are supplied. Play then advances automatically to the Battle Planning Phase.
+
+Battle Planning combines the player actions formerly spread across Movement, Recovery, and Battle Planning. In any order, the acting side may select one resupply target, move units, order units to entrain or detrain, use rail or air transport, and add or remove attack objectives. Movement follows the [movement rules](movement.md). An attack objective must be a hex that currently contains at least one enemy unit, or an enemy Free City (see [Cities](cities.md)). Sea transport is not part of the current implementation. Entraining consumes one complete friendly planning phase; the unit becomes Entrained at the beginning of its side's next planning phase and may then move by rail.
+
+Until the Battle Planning Phase ends, any order given during it can be taken back: clear the resupply choice, remove an attack objective, undo a unit's most recent movement, cancel an entrainment order, or restore the Entrained status of a unit detrained this phase. A detrainment cannot be undone after the unit has made a non-rail move, or when restoring it would exceed the side's rail capacity.
+
 NATO begins its player turn after the Warsaw Pact completes its entire player turn. The game turn ends after NATO completes its player turn, and the next game turn begins with the Joint Status Phase.
 
 The game ends after NATO completes its Post-Battle Phase in the scenario's final turn.

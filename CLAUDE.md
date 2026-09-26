@@ -16,6 +16,8 @@ Known reference material includes:
 - `internet/NATO_PZG_v2_4_1.vmod`: the downloaded NATO VASSAL module.
 - `internet/NATO_PZG_v2_4_1.zip`: the downloaded VASSAL module archive.
 - `internet/NATO_PZG_v2_4_1/`: the extracted VASSAL module, including `buildFile.xml`, maps, counters, scenarios, and other images.
+- `internet/NATO_Living_Rules_Booklet_1-1-26.pdf`: BoardGameGeek living rulebook with all errata to 1 January 2026; it takes precedence over the 2020 booklet.
+- `internet/NATO_Play_Booklet_Updated_1-1-26.pdf`: BoardGameGeek living play booklet (scenarios, including BALTAP) with errata to 1 January 2026.
 - `internet/1985UAIS-4E-Rules-v48-LR-Flak-Review.pdf`: supplementary modern-warfare rules reference.
 - `internet/1985_UAIS_(Thin_Red_Line).vmod`: supplementary VASSAL module.
 
@@ -48,7 +50,7 @@ Do not duplicate rule validation in React. The frontend may calculate previews f
 
 The shared protocol has four conceptual message types:
 
-- **Snapshot**: a complete serializable game state used when starting a game, loading a save, reconnecting, or recovering from desynchronization.
+- **Snapshot**: a complete serializable mutable game state used when starting a game, loading a save, reconnecting, or recovering from desynchronization. Immutable scenario content is referenced by stable IDs.
 - **Command**: a player's requested intent, such as `MoveUnit`, `DeclareAttack`, `ResolveCombat`, or `EndPhase`. A command is not proof that the action occurred.
 - **Event**: an accepted domain fact produced by Rust, such as `UnitMoved`, `StepLost`, `SupplyStatusChanged`, or `PhaseEnded`.
 - **Delta**: a compact group of changed state fields when an event stream alone is not convenient for updating the client.
@@ -60,11 +62,14 @@ React/PixiJS -- Command --> Rust game core
 React/PixiJS <-- Events or Delta -- Rust game core
 ```
 
-At initial load or after a detected mismatch:
+At initial game creation, the backend returns a bootstrap containing the mutable snapshot and the scenario's immutable map. After a detected mismatch, the already-bootstrapped client can request a fresh mutable snapshot:
 
 ```text
+React/PixiJS -- new_game --> Rust game core
+React/PixiJS <-- Bootstrap(Snapshot + Map) -- Rust game core
+
 React/PixiJS -- snapshot request --> Rust game core
-React/PixiJS <-- complete Snapshot -- Rust game core
+React/PixiJS <-- Snapshot(mapId) -- Rust game core
 ```
 
 Commands must use stable domain identifiers and game coordinates rather than screen coordinates. For example, a move command should contain a unit ID and destination hex, not the final mouse position. Rust must validate the active player, turn phase, ownership, movement allowance, terrain, path, stacking, zones of control, supply, airspace, and any other applicable rule before accepting it.
@@ -73,7 +78,7 @@ Pointer movement and visual animation stay in the frontend. During counter dragg
 
 Do not poll or transfer the complete game state every frame. Do not use Tauri events as a substitute for the renderer's frame loop. IPC should occur at meaningful gameplay boundaries such as submitting an order, resolving an action, changing a phase, loading a save, or requesting an explicit resynchronization.
 
-Maps, counter textures, fonts, audio, and other immutable assets should be loaded as application resources by the frontend or asset layer. Do not repeatedly send image bytes or base64 data through IPC. IPC messages should refer to assets by stable IDs or paths from an application-owned asset manifest.
+Scenario map definitions are authoritative structured rules data owned by `ooaw-core`. The Tauri `new_game` bootstrap sends the selected map to the frontend once; ordinary command snapshots identify it by stable map ID and must not resend the complete map. Counter textures, fonts, audio, and other immutable presentation assets should be loaded as application resources by the frontend or asset layer. Do not send image bytes or base64 data through IPC.
 
 Frontend previews are advisory. React or PixiJS may highlight reachable hexes or estimate combat odds for responsiveness, but submitting the action must cause Rust to recompute and validate the result. A preview must never mutate authoritative state.
 
@@ -104,8 +109,10 @@ Keep random outcomes reproducible through an explicit seeded random-number sourc
 
 - `src/`: React and TypeScript frontend.
   - `main.tsx`: browser/WebView entry point.
-  - `App.tsx`: current application component; presently the generated Tauri demo.
-  - `App.css`: current demo styling.
+  - `App.tsx`: application shell, game-bootstrap consumer, and command/event coordinator.
+  - `gameApi.ts`: typed Tauri game bootstrap and command boundary.
+  - `map/`: PixiJS renderer and client-side map presentation types.
+  - `App.css`: application styling.
 - `public/`: files copied directly into the frontend build. Do not copy board-game
   counter images here; the frontend renders counters from structured unit data.
 - `src-tauri/`: Rust and Tauri application.
@@ -120,7 +127,9 @@ Keep random outcomes reproducible through an explicit seeded random-number sourc
 - `node_modules/`: generated npm dependencies; do not edit.
 - `src-tauri/target/`: generated Rust build artifacts; do not edit.
 - `crates/ooaw-core/`: UI-independent Rust game core.
+  - `data/natoMap.json`: authoritative NATO scenario-map definition embedded in the core.
   - `src/model/`: units, sides, phases, scenario definitions, and scenario content.
+  - `src/model/map.rs`: serializable map model and embedded map loader.
   - `src/model/scenario_baltap.rs`: BALTAP 1983 setup and reinforcement schedule.
   - `src/engine.rs`, `src/state.rs`, and `src/phase.rs`: game-state execution at the crate root.
 - `docs/`: durable design notes and decisions.

@@ -1,4 +1,7 @@
-use crate::model::{find_scenario, list_scenarios, PhaseActor, SideId, UnitLocation};
+use crate::model::{
+    find_scenario, list_scenarios, HexId, MovementMode, PhaseActor, PhaseExecution, SideId,
+    SupplyStatus, TrainStatus, UnitId, UnitLocation, UnitState,
+};
 use crate::{GameCommand, GameEvent, GameId, GameState, GameStatus};
 
 fn new_game() -> GameState {
@@ -12,14 +15,76 @@ fn new_game() -> GameState {
 #[test]
 fn new_game_starts_at_first_scenario_defined_step() {
     let game = new_game();
+    assert_eq!(game.map().id, "nato-central-europe");
+    assert_eq!(game.map().version, 1);
+    assert_eq!(game.map().hexes.len(), 1_458);
+    assert!(game.map().hexes.iter().any(|hex| {
+        hex.id.0 == "1310"
+            && hex
+                .city
+                .as_ref()
+                .is_some_and(|city| city.name == "København")
+    }));
     let snapshot = game.snapshot();
     let step = snapshot.turn.current_step.unwrap();
 
     assert_eq!(snapshot.revision, 0);
+    assert_eq!(snapshot.protocol_version, 10);
     assert_eq!(snapshot.turn.game_turn, 1);
     assert_eq!(step.phase_id.0, "jointStatus");
     assert_eq!(step.actor, PhaseActor::All);
+    assert_eq!(snapshot.scenario.map_id, "nato-central-europe");
     assert!(snapshot.units.is_empty());
+}
+
+#[test]
+fn snapshot_identifies_the_scenario_map_without_repeating_its_data() {
+    let json = serde_json::to_value(new_game().snapshot()).unwrap();
+
+    assert_eq!(json["protocolVersion"], 10);
+    assert_eq!(json["scenario"]["mapId"], "nato-central-europe");
+    assert!(json.get("map").is_none());
+}
+
+#[test]
+fn scenario_map_serializes_for_the_new_game_bootstrap() {
+    let game = new_game();
+    let json = serde_json::to_value(game.map()).unwrap();
+
+    assert_eq!(json["id"], "nato-central-europe");
+    assert_eq!(json["grid"]["columnBase"], 38);
+    assert_eq!(json["hexes"][0]["id"], "0114");
+    assert!(json["hexsides"]
+        .as_array()
+        .is_some_and(|items| !items.is_empty()));
+}
+
+#[test]
+fn scenario_validation_rejects_a_unit_outside_its_map() {
+    let mut scenario = find_scenario("nato-1983-standard").unwrap();
+    scenario.reinforcements[0].unit.location = UnitLocation::Hex {
+        hex_id: crate::HexId("9999".to_owned()),
+    };
+
+    let error = GameState::new(GameId("invalid-map-unit".to_owned()), scenario)
+        .err()
+        .expect("unknown deployment hex should be rejected");
+
+    assert_eq!(error.code, "invalidScenario");
+    assert!(error.message.contains("unknown map hex"));
+}
+
+#[test]
+fn scenario_validation_rejects_a_hexside_outside_its_map() {
+    let mut scenario = find_scenario("nato-1983-standard").unwrap();
+    scenario.map.hexsides[0].a = crate::HexId("9999".to_owned());
+
+    let error = GameState::new(GameId("invalid-map-hexside".to_owned()), scenario)
+        .err()
+        .expect("unknown hexside endpoint should be rejected");
+
+    assert_eq!(error.code, "invalidScenario");
+    assert!(error.message.contains("unknown hex"));
 }
 
 #[test]
@@ -31,7 +96,7 @@ fn opening_units_arrive_through_the_first_joint_reinforcement_phase() {
     assert_eq!(outcome.snapshot.units.len(), 2);
     assert_eq!(
         outcome.snapshot.turn.current_step.unwrap().phase_id.0,
-        "preBattle"
+        "battlePlanning"
     );
     assert!(matches!(
         &outcome.events[..],
@@ -43,11 +108,21 @@ fn opening_units_arrive_through_the_first_joint_reinforcement_phase() {
                 step: reinforcement_ended,
                 ..
             },
+            GameEvent::PhaseStarted { step: pre_battle, .. },
+            GameEvent::PreBattleSupplyChecked { side_id, units, .. },
+            GameEvent::PhaseEnded {
+                step: pre_battle_ended,
+                ..
+            },
             GameEvent::PhaseStarted { step: next, .. }
         ] if ended.phase_id.0 == "jointStatus"
             && reinforcement.phase_id.0 == "jointReinforcement"
             && reinforcement_ended.phase_id.0 == "jointReinforcement"
-            && next.phase_id.0 == "preBattle"
+            && pre_battle.phase_id.0 == "preBattle"
+            && pre_battle_ended.phase_id.0 == "preBattle"
+            && side_id.0 == "warsawPact"
+            && units.len() == 1
+            && next.phase_id.0 == "battlePlanning"
     ));
 
     let arrivals = outcome.events.iter().find_map(|event| match event {
@@ -72,7 +147,7 @@ fn opening_units_arrive_through_the_first_joint_reinforcement_phase() {
 #[test]
 fn automatic_post_battle_is_processed_without_user_input() {
     let mut game = new_game();
-    for _ in 0..5 {
+    for _ in 0..4 {
         game.execute(GameCommand::EndPhase).unwrap();
     }
     assert_eq!(
@@ -84,7 +159,7 @@ fn automatic_post_battle_is_processed_without_user_input() {
     let snapshot = outcome.snapshot;
     let step = snapshot.turn.current_step.unwrap();
 
-    assert_eq!(step.phase_id.0, "preBattle");
+    assert_eq!(step.phase_id.0, "battlePlanning");
     assert_eq!(
         step.actor,
         PhaseActor::Side {
@@ -95,6 +170,25 @@ fn automatic_post_battle_is_processed_without_user_input() {
         event,
         GameEvent::PhaseEnded { step, .. } if step.phase_id.0 == "postBattle"
     )));
+    assert!(outcome.events.iter().any(|event| matches!(
+        event,
+        GameEvent::PreBattleSupplyChecked { side_id, .. } if side_id.0 == "nato"
+    )));
+}
+
+#[test]
+fn pre_battle_is_automatic_for_both_sides() {
+    let scenario = find_scenario("nato-1983-standard").unwrap();
+    let pre_battle_steps: Vec<_> = scenario
+        .turn_sequence
+        .iter()
+        .filter(|step| step.phase_id.0 == "preBattle")
+        .collect();
+
+    assert_eq!(pre_battle_steps.len(), 2);
+    assert!(pre_battle_steps
+        .iter()
+        .all(|step| step.execution == PhaseExecution::Automatic));
 }
 
 #[test]
@@ -130,7 +224,7 @@ fn joint_phases_precede_both_side_turns() {
 #[test]
 fn final_turn_completes_after_last_interactive_phase_and_cleanup() {
     let mut game = new_game();
-    let interactive_steps_per_turn = 11;
+    let interactive_steps_per_turn = 9;
     for _ in 0..(14 * interactive_steps_per_turn) {
         game.execute(GameCommand::EndPhase).unwrap();
     }
@@ -150,11 +244,11 @@ fn reinforcements_are_added_only_on_their_scheduled_turn() {
     game.execute(GameCommand::EndPhase).unwrap();
     assert!(game.snapshot().units.is_empty());
 
-    for _ in 0..11 {
+    for _ in 0..8 {
         game.execute(GameCommand::EndPhase).unwrap();
     }
 
-    let snapshot = game.snapshot();
+    let snapshot = game.execute(GameCommand::EndPhase).unwrap().snapshot;
     assert_eq!(snapshot.turn.game_turn, 2);
     assert_eq!(snapshot.units.len(), 1);
     assert_eq!(snapshot.units[0].id(), &unit_id);
@@ -182,7 +276,34 @@ fn reinforcement_event_serializes_as_a_camel_case_ipc_message() {
     assert!(json["units"][0]["steps"][0].get("counterAssetId").is_none());
     assert_eq!(json["units"][0]["location"]["type"], "hex");
     assert_eq!(json["units"][0]["location"]["hexId"], "2806");
+    assert_eq!(
+        json["units"][0]["supply"]["headquarters"],
+        serde_json::Value::Null
+    );
+    assert_eq!(json["units"][0]["supply"]["movement"], "supplied");
+    assert_eq!(json["units"][0]["supply"]["combat"], "supplied");
     assert!(json.get("game_turn").is_none());
+}
+
+#[test]
+fn pre_battle_supply_event_serializes_checked_unit_state() {
+    let mut game = new_game();
+    let outcome = game.execute(GameCommand::EndPhase).unwrap();
+    let event = outcome
+        .events
+        .iter()
+        .find(|event| matches!(event, GameEvent::PreBattleSupplyChecked { .. }))
+        .expect("pre-battle supply event");
+
+    let json = serde_json::to_value(event).unwrap();
+
+    assert_eq!(json["type"], "preBattleSupplyChecked");
+    assert_eq!(json["sideId"], "warsawPact");
+    assert_eq!(
+        json["units"][0]["unitId"],
+        "soviet.6thGuardsMotorRifleDivision"
+    );
+    assert_eq!(json["units"][0]["supply"]["movement"], "supplied");
 }
 
 #[test]
@@ -239,7 +360,7 @@ fn baltap_opening_setup_and_later_reinforcements_use_the_same_phase() {
         10
     );
 
-    for _ in 0..10 {
+    for _ in 0..8 {
         game.execute(GameCommand::EndPhase).unwrap();
     }
     let turn_two = game.execute(GameCommand::EndPhase).unwrap();
@@ -259,10 +380,722 @@ fn baltap_ends_after_seven_turns() {
     let scenario = find_scenario("nato-baltap-1983").unwrap();
     let mut game = GameState::new(GameId("baltap-completion".to_owned()), scenario).unwrap();
 
-    for _ in 0..(7 * 11) {
+    for _ in 0..(7 * 9) {
         game.execute(GameCommand::EndPhase).unwrap();
     }
 
     assert_eq!(game.snapshot().status, GameStatus::Completed);
     assert_eq!(game.snapshot().units.len(), 44);
+}
+
+#[test]
+fn baltap_pre_battle_records_applicable_supply_types() {
+    let scenario = find_scenario("nato-baltap-1983").unwrap();
+    let mut game = GameState::new(GameId("baltap-supply".to_owned()), scenario).unwrap();
+
+    let outcome = game.execute(GameCommand::EndPhase).unwrap();
+    let snapshot = outcome.snapshot;
+    let hq = snapshot
+        .units
+        .iter()
+        .find(|unit| unit.id().0 == "soviet.northernEastGermanyFront.hq")
+        .expect("Warsaw Pact HQ");
+    let reserve_unit = snapshot
+        .units
+        .iter()
+        .find(|unit| unit.id().0 == "soviet.7guardsAirborneDivision.119regiment")
+        .expect("Warsaw Pact strategic reserve unit");
+
+    assert_eq!(hq.supply.headquarters, Some(SupplyStatus::Supplied));
+    assert_eq!(hq.supply.movement, None);
+    assert_eq!(hq.supply.combat, None);
+    assert_eq!(reserve_unit.supply.headquarters, None);
+    assert_eq!(reserve_unit.supply.movement, Some(SupplyStatus::Supplied));
+    assert_eq!(reserve_unit.supply.combat, Some(SupplyStatus::Supplied));
+}
+
+#[test]
+fn battle_plan_actions_can_be_submitted_in_any_order() {
+    let mut game = new_game();
+    game.execute(GameCommand::EndPhase).unwrap();
+    let unit_id = UnitId("soviet.6thGuardsMotorRifleDivision".to_owned());
+
+    game.execute(GameCommand::SetAttackTarget {
+        hex_id: HexId("3216".to_owned()),
+        selected: true,
+    })
+    .unwrap();
+    game.execute(GameCommand::SetResupplyTarget {
+        unit_id: Some(unit_id.clone()),
+    })
+    .unwrap();
+    let moved = game
+        .execute(GameCommand::MoveUnit {
+            unit_id: unit_id.clone(),
+            destination: HexId("2807".to_owned()),
+            mode: MovementMode::Tactical,
+        })
+        .unwrap();
+
+    let plan = moved.snapshot.battle_plan.expect("active plan");
+    assert_eq!(plan.resupply_target_unit_id, Some(unit_id));
+    assert_eq!(plan.attack_targets, vec![HexId("3216".to_owned())]);
+    assert_eq!(plan.movements.len(), 1);
+    assert_eq!(plan.movements[0].cost, 1);
+    assert!(matches!(
+        moved.events.as_slice(),
+        [GameEvent::UnitMoved {
+            mode: MovementMode::Tactical,
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn resupply_is_applied_to_the_selected_stack_when_planning_ends() {
+    let mut game = new_game();
+    game.execute(GameCommand::EndPhase).unwrap();
+    let unit_id = UnitId("soviet.6thGuardsMotorRifleDivision".to_owned());
+    let unit = game.units.get_mut(&unit_id).unwrap();
+    unit.supply.movement = Some(SupplyStatus::OutOfSupply);
+    unit.supply.combat = Some(SupplyStatus::OutOfSupply);
+
+    game.execute(GameCommand::SetResupplyTarget {
+        unit_id: Some(unit_id.clone()),
+    })
+    .unwrap();
+    let outcome = game.execute(GameCommand::EndPhase).unwrap();
+    let unit = outcome
+        .snapshot
+        .units
+        .iter()
+        .find(|unit| unit.id() == &unit_id)
+        .unwrap();
+
+    assert_eq!(unit.supply.movement, Some(SupplyStatus::Supplied));
+    assert_eq!(unit.supply.combat, Some(SupplyStatus::Supplied));
+    assert!(matches!(
+        outcome.events.first(),
+        Some(GameEvent::UnitsResupplied { unit_ids, .. }) if unit_ids == &vec![unit_id]
+    ));
+}
+
+#[test]
+fn entraining_takes_one_player_turn_before_rail_movement_is_available() {
+    let mut game = new_game();
+    game.execute(GameCommand::EndPhase).unwrap();
+    let unit_id = UnitId("soviet.6thGuardsMotorRifleDivision".to_owned());
+
+    let outcome = game
+        .execute(GameCommand::EntrainUnit {
+            unit_id: unit_id.clone(),
+        })
+        .unwrap();
+    assert_eq!(
+        outcome
+            .snapshot
+            .units
+            .iter()
+            .find(|unit| unit.id() == &unit_id)
+            .unwrap()
+            .train_status,
+        Some(TrainStatus::Entraining)
+    );
+    assert_eq!(
+        game.execute(GameCommand::MoveUnit {
+            unit_id: unit_id.clone(),
+            destination: HexId("2807".to_owned()),
+            mode: MovementMode::Rail,
+        })
+        .unwrap_err()
+        .code,
+        "unitNotEntrained"
+    );
+
+    for _ in 0..9 {
+        game.execute(GameCommand::EndPhase).unwrap();
+    }
+    let unit = game
+        .snapshot()
+        .units
+        .into_iter()
+        .find(|unit| unit.id() == &unit_id)
+        .unwrap();
+    assert_eq!(unit.train_status, Some(TrainStatus::Entrained));
+}
+
+#[test]
+fn a_detrain_order_can_be_undone_during_the_same_plan() {
+    let mut game = new_game();
+    game.execute(GameCommand::EndPhase).unwrap();
+    let unit_id = UnitId("soviet.6thGuardsMotorRifleDivision".to_owned());
+    game.execute(GameCommand::EntrainUnit {
+        unit_id: unit_id.clone(),
+    })
+    .unwrap();
+    for _ in 0..9 {
+        game.execute(GameCommand::EndPhase).unwrap();
+    }
+    let train_status = |game: &GameState| {
+        game.snapshot()
+            .units
+            .into_iter()
+            .find(|unit| unit.id() == &unit_id)
+            .unwrap()
+            .train_status
+    };
+    assert_eq!(
+        game.execute(GameCommand::UndoDetrainUnit {
+            unit_id: unit_id.clone(),
+        })
+        .unwrap_err()
+        .code,
+        "unitNotDetrainedThisPlan"
+    );
+
+    game.execute(GameCommand::DetrainUnit {
+        unit_id: unit_id.clone(),
+    })
+    .unwrap();
+    assert_eq!(train_status(&game), None);
+    assert!(game
+        .snapshot()
+        .battle_plan
+        .unwrap()
+        .detrained_unit_ids
+        .contains(&unit_id));
+
+    let outcome = game
+        .execute(GameCommand::UndoDetrainUnit {
+            unit_id: unit_id.clone(),
+        })
+        .unwrap();
+    assert_eq!(
+        outcome.events,
+        vec![GameEvent::TrainStatusChanged {
+            unit_id: unit_id.clone(),
+            status: Some(TrainStatus::Entrained),
+        }]
+    );
+    assert_eq!(train_status(&game), Some(TrainStatus::Entrained));
+    assert!(outcome
+        .snapshot
+        .battle_plan
+        .unwrap()
+        .detrained_unit_ids
+        .is_empty());
+}
+
+#[test]
+fn airborne_reserve_unit_can_use_scenario_limited_air_transport() {
+    let scenario = find_scenario("nato-baltap-1983").unwrap();
+    let mut game = GameState::new(GameId("airlift-game".to_owned()), scenario).unwrap();
+    game.execute(GameCommand::EndPhase).unwrap();
+    let unit_id = UnitId("soviet.7guardsAirborneDivision.119regiment".to_owned());
+
+    let outcome = game
+        .execute(GameCommand::MoveUnit {
+            unit_id: unit_id.clone(),
+            destination: HexId("2010".to_owned()),
+            mode: MovementMode::AirTransport,
+        })
+        .unwrap();
+
+    assert!(matches!(
+        outcome
+            .snapshot
+            .units
+            .iter()
+            .find(|unit| unit.id() == &unit_id)
+            .unwrap()
+            .location,
+        UnitLocation::Hex { ref hex_id } if hex_id.0 == "2010"
+    ));
+    assert_eq!(outcome.snapshot.battle_plan.unwrap().airlift_steps_used, 1);
+}
+
+#[test]
+fn planning_commands_are_rejected_outside_battle_planning() {
+    let mut game = new_game();
+    let error = game
+        .execute(GameCommand::SetAttackTarget {
+            hex_id: HexId("3216".to_owned()),
+            selected: true,
+        })
+        .unwrap_err();
+    assert_eq!(error.code, "wrongPhase");
+    assert_eq!(game.snapshot().revision, 0);
+}
+
+#[test]
+fn resupply_selection_can_be_cancelled() {
+    let mut game = new_game();
+    game.execute(GameCommand::EndPhase).unwrap();
+    let unit_id = UnitId("soviet.6thGuardsMotorRifleDivision".to_owned());
+    game.execute(GameCommand::SetResupplyTarget {
+        unit_id: Some(unit_id),
+    })
+    .unwrap();
+
+    let outcome = game
+        .execute(GameCommand::SetResupplyTarget { unit_id: None })
+        .unwrap();
+
+    assert_eq!(
+        outcome
+            .snapshot
+            .battle_plan
+            .unwrap()
+            .resupply_target_unit_id,
+        None
+    );
+    assert!(matches!(
+        outcome.events.as_slice(),
+        [GameEvent::ResupplyTargetSet { unit_id: None, .. }]
+    ));
+}
+
+#[test]
+fn a_units_last_movement_can_be_undone() {
+    let mut game = new_game();
+    game.execute(GameCommand::EndPhase).unwrap();
+    let unit_id = UnitId("soviet.6thGuardsMotorRifleDivision".to_owned());
+    game.execute(GameCommand::MoveUnit {
+        unit_id: unit_id.clone(),
+        destination: HexId("2807".to_owned()),
+        mode: MovementMode::Tactical,
+    })
+    .unwrap();
+
+    let outcome = game
+        .execute(GameCommand::UndoUnitMovement {
+            unit_id: unit_id.clone(),
+        })
+        .unwrap();
+    let unit = outcome
+        .snapshot
+        .units
+        .iter()
+        .find(|unit| unit.id() == &unit_id)
+        .unwrap();
+
+    assert!(matches!(&unit.location, UnitLocation::Hex { hex_id } if hex_id.0 == "2806"));
+    assert!(outcome.snapshot.battle_plan.unwrap().movements.is_empty());
+    assert!(matches!(
+        outcome.events.as_slice(),
+        [GameEvent::UnitMovementUndone { .. }]
+    ));
+}
+
+#[test]
+fn commands_deserialize_from_camel_case_ipc_messages() {
+    let command: GameCommand = serde_json::from_value(serde_json::json!({
+        "type": "moveUnit",
+        "unitId": "soviet.6thGuardsMotorRifleDivision",
+        "destination": "2807",
+        "mode": "tactical",
+    }))
+    .unwrap();
+    assert_eq!(
+        command,
+        GameCommand::MoveUnit {
+            unit_id: UnitId("soviet.6thGuardsMotorRifleDivision".to_owned()),
+            destination: HexId("2807".to_owned()),
+            mode: MovementMode::Tactical,
+        }
+    );
+    let command: GameCommand = serde_json::from_value(serde_json::json!({
+        "type": "setAttackTarget",
+        "hexId": "3216",
+        "selected": true,
+    }))
+    .unwrap();
+    assert_eq!(
+        command,
+        GameCommand::SetAttackTarget {
+            hex_id: HexId("3216".to_owned()),
+            selected: true,
+        }
+    );
+}
+
+fn baltap_planning(side: &str, placements: &[(&str, &str)]) -> GameState {
+    let mut game = GameState::new(
+        GameId("movement-game".to_owned()),
+        find_scenario("nato-baltap-1983").unwrap(),
+    )
+    .unwrap();
+    loop {
+        let step = game.snapshot().turn.current_step.unwrap();
+        if step.phase_id.0 == "battlePlanning"
+            && matches!(&step.actor, PhaseActor::Side { side_id } if side_id.0 == side)
+        {
+            break;
+        }
+        game.execute(GameCommand::EndPhase).unwrap();
+    }
+    game.units
+        .retain(|id, _| placements.iter().any(|(unit, _)| id.0 == *unit));
+    for (unit, hex) in placements {
+        game.units
+            .get_mut(&UnitId((*unit).to_owned()))
+            .unwrap()
+            .location = UnitLocation::Hex {
+            hex_id: HexId((*hex).to_owned()),
+        };
+    }
+    game
+}
+
+fn move_to(unit: &str, hex: &str) -> GameCommand {
+    GameCommand::MoveUnit {
+        unit_id: UnitId(unit.to_owned()),
+        destination: HexId(hex.to_owned()),
+        mode: MovementMode::Tactical,
+    }
+}
+
+const DANE: &str = "denmark.landzealand.1mechanizedBrigade";
+const DANE_2: &str = "denmark.landzealand.2mechanizedBrigade";
+const SOVIET: &str = "soviet.2gta.21motorRifleDivision";
+const GERMAN: &str = "westGermany.6panzergrenadierDivision.16panzergrenadierBrigade";
+
+#[test]
+fn ground_movement_cannot_cross_an_all_sea_hexside() {
+    let mut game = baltap_planning("nato", &[(DANE, "1414")]);
+    let options = game
+        .movement_options(&UnitId(DANE.to_owned()), MovementMode::Tactical)
+        .unwrap();
+    assert!(options.iter().any(|option| option.hex_id.0 == "1514"));
+    assert!(options.iter().all(|option| option.hex_id.0 != "1413"));
+    assert_eq!(
+        game.execute(move_to(DANE, "1413")).unwrap_err().code,
+        "noLegalRoute"
+    );
+}
+
+#[test]
+fn one_nato_unit_per_direction_may_cross_the_danish_ferry_and_must_stop() {
+    let mut game = baltap_planning("nato", &[(DANE, "1514"), (DANE_2, "1514")]);
+    let outcome = game.execute(move_to(DANE, "1513")).unwrap();
+    let movement = &outcome.snapshot.battle_plan.unwrap().movements[0];
+    assert_eq!(movement.path, vec![HexId("1513".to_owned())]);
+    assert!(game
+        .movement_options(&UnitId(DANE.to_owned()), MovementMode::Tactical)
+        .unwrap()
+        .is_empty());
+    assert!(game
+        .movement_options(&UnitId(DANE_2.to_owned()), MovementMode::Tactical)
+        .unwrap()
+        .iter()
+        .all(|option| option.hex_id.0 != "1513"));
+    assert_eq!(
+        game.execute(move_to(DANE_2, "1513")).unwrap_err().code,
+        "noLegalRoute"
+    );
+
+    let mut game = baltap_planning("warsawPact", &[(SOVIET, "1514")]);
+    assert_eq!(
+        game.execute(move_to(SOVIET, "1513")).unwrap_err().code,
+        "noLegalRoute"
+    );
+}
+
+#[test]
+fn crossing_a_major_river_costs_one_extra_movement_point() {
+    let game = baltap_planning("nato", &[(GERMAN, "4104")]);
+    let river_crossing = game
+        .movement_options(&UnitId(GERMAN.to_owned()), MovementMode::Tactical)
+        .unwrap()
+        .into_iter()
+        .find(|option| option.hex_id.0 == "4103")
+        .unwrap();
+    assert_eq!(river_crossing.cost, 2);
+    assert_eq!(river_crossing.path, vec![HexId("4103".to_owned())]);
+}
+
+#[test]
+fn a_soft_unit_must_stop_after_entering_an_enemy_zone_of_control() {
+    let soft = "soviet.7guardsAirborneDivision.119regiment";
+    let mut game = baltap_planning("warsawPact", &[(soft, "4009"), (GERMAN, "4012")]);
+    game.execute(move_to(soft, "4011")).unwrap();
+    assert_eq!(
+        game.execute(move_to(soft, "4010")).unwrap_err().code,
+        "mustStopInEnemyZoc"
+    );
+
+    // Hard units may keep moving, paying +1 to leave the EZOC hex.
+    let mut game = baltap_planning("warsawPact", &[(SOVIET, "4009"), (GERMAN, "4012")]);
+    game.execute(move_to(SOVIET, "4011")).unwrap();
+    let outcome = game.execute(move_to(SOVIET, "4010")).unwrap();
+    assert_eq!(outcome.snapshot.battle_plan.unwrap().movements[1].cost, 2);
+}
+
+#[test]
+fn every_movement_option_is_accepted_and_no_other_hex_is() {
+    let mut game = baltap_planning("warsawPact", &[(SOVIET, "2412"), (GERMAN, "2415")]);
+    let unit_id = UnitId(SOVIET.to_owned());
+    for mode in [MovementMode::Tactical, MovementMode::March] {
+        let options = game.movement_options(&unit_id, mode).unwrap();
+        assert!(!options.is_empty());
+        // Every hex within reach of a doubled allowance, plus a margin.
+        let hexes: Vec<HexId> = game
+            .map()
+            .hexes
+            .iter()
+            .filter(|hex| hex.row.abs_diff(24) <= 12 && hex.col.abs_diff(12) <= 12)
+            .map(|hex| hex.id.clone())
+            .collect();
+        for hex_id in hexes {
+            let offered = options.iter().find(|option| option.hex_id == hex_id);
+            let result = game.execute(GameCommand::MoveUnit {
+                unit_id: unit_id.clone(),
+                destination: hex_id.clone(),
+                mode,
+            });
+            match (offered, result) {
+                (Some(option), Ok(outcome)) => {
+                    let movement = outcome.snapshot.battle_plan.unwrap().movements[0].clone();
+                    assert_eq!(
+                        (movement.cost, movement.path),
+                        (option.cost, option.path.clone())
+                    );
+                    game.execute(GameCommand::UndoUnitMovement {
+                        unit_id: unit_id.clone(),
+                    })
+                    .unwrap();
+                }
+                (None, Err(_)) => {}
+                (offered, result) => panic!(
+                    "{mode:?} to {}: offered={} accepted={}",
+                    hex_id.0,
+                    offered.is_some(),
+                    result.is_ok()
+                ),
+            }
+        }
+    }
+}
+
+fn plan_movements(game: &GameState) -> Vec<crate::PlannedMovement> {
+    game.snapshot().battle_plan.unwrap().movements
+}
+
+fn controller(game: &GameState, hex: &str) -> String {
+    game.snapshot()
+        .cities
+        .into_iter()
+        .find(|city| city.hex_id.0 == hex)
+        .unwrap()
+        .controller
+        .0
+}
+
+#[test]
+fn every_city_starts_as_a_free_city_of_its_original_alliance() {
+    let snapshot = new_game().snapshot();
+    assert_eq!(snapshot.cities.len(), 94);
+    assert!(snapshot.cities.iter().all(|city| city.free));
+    let owner = |hex: &str| {
+        snapshot
+            .cities
+            .iter()
+            .find(|city| city.hex_id.0 == hex)
+            .unwrap()
+            .owner
+            .0
+            .clone()
+    };
+    assert_eq!(owner("2214"), "nato"); // Lübeck
+    assert_eq!(owner("3007"), "nato"); // West Berlin
+    assert_eq!(owner("3006"), "warsawPact"); // Ost Berlin
+    assert_eq!(owner("2111"), "warsawPact"); // Rostock
+}
+
+#[test]
+fn ground_movement_may_not_enter_an_enemy_free_city() {
+    let mut game = baltap_planning("warsawPact", &[(SOVIET, "2314")]);
+    let modes = game.movement_modes(&UnitId(SOVIET.to_owned())).unwrap();
+    for mode in &modes {
+        assert!(mode.options.iter().all(|option| option.hex_id.0 != "2214"));
+    }
+    assert_eq!(
+        game.execute(move_to(SOVIET, "2214")).unwrap_err().code,
+        "enemyFreeCity"
+    );
+}
+
+#[test]
+fn an_unoccupied_enemy_free_city_is_a_legal_attack_objective() {
+    let mut game = baltap_planning("warsawPact", &[(SOVIET, "2314")]);
+    let options = game.attack_target_options().unwrap();
+    assert!(options.contains(&HexId("2214".to_owned())));
+    assert!(!options.contains(&HexId("2215".to_owned())));
+    assert!(!options.contains(&HexId("2111".to_owned()))); // own Free City
+    game.execute(GameCommand::SetAttackTarget {
+        hex_id: HexId("2214".to_owned()),
+        selected: true,
+    })
+    .unwrap();
+    assert_eq!(
+        game.execute(GameCommand::SetAttackTarget {
+            hex_id: HexId("2215".to_owned()),
+            selected: true,
+        })
+        .unwrap_err()
+        .code,
+        "invalidAttackTarget"
+    );
+}
+
+#[test]
+fn tactical_movement_liberates_a_conquered_city_and_undo_restores_it() {
+    let mut game = baltap_planning("nato", &[(DANE, "2215")]);
+    game.city_control
+        .insert(HexId("2214".to_owned()), SideId("warsawPact".to_owned()));
+    let modes = game.movement_modes(&UnitId(DANE.to_owned())).unwrap();
+    let march = modes
+        .iter()
+        .find(|mode| mode.mode == MovementMode::March)
+        .unwrap();
+    assert!(march.options.iter().all(|option| option.hex_id.0 != "2214"));
+
+    let outcome = game.execute(move_to(DANE, "2214")).unwrap();
+    assert!(outcome.events.contains(&GameEvent::CityControlChanged {
+        hex_id: HexId("2214".to_owned()),
+        controller: SideId("nato".to_owned()),
+        free: true,
+    }));
+    assert_eq!(controller(&game, "2214"), "nato");
+    assert_eq!(plan_movements(&game)[0].city_control_changes.len(), 1);
+
+    game.execute(GameCommand::UndoUnitMovement {
+        unit_id: UnitId(DANE.to_owned()),
+    })
+    .unwrap();
+    assert_eq!(controller(&game, "2214"), "warsawPact");
+}
+
+#[test]
+fn movement_modes_explain_unavailable_systems() {
+    let game = baltap_planning("nato", &[("denmark.landzealand.hq", "1411")]);
+    let modes = game
+        .movement_modes(&UnitId("denmark.landzealand.hq".to_owned()))
+        .unwrap();
+    let reason = |mode: MovementMode| {
+        modes
+            .iter()
+            .find(|entry| entry.mode == mode)
+            .unwrap()
+            .unavailable
+            .as_ref()
+            .map(|error| error.code.clone())
+    };
+    assert_eq!(reason(MovementMode::Tactical), None);
+    assert_eq!(
+        reason(MovementMode::March).as_deref(),
+        Some("marchUnavailable")
+    );
+    assert_eq!(
+        reason(MovementMode::Rail).as_deref(),
+        Some("unitNotEntrained")
+    );
+    assert_eq!(
+        reason(MovementMode::AirTransport).as_deref(),
+        Some("unitNotAirTransportable")
+    );
+}
+
+#[test]
+fn only_entrained_units_count_against_rail_capacity() {
+    let mut game = GameState::new(
+        GameId("rail-capacity".to_owned()),
+        find_scenario("nato-baltap-1983").unwrap(),
+    )
+    .unwrap();
+    game.execute(GameCommand::EndPhase).unwrap();
+    let stack: Vec<UnitId> = game
+        .snapshot()
+        .units
+        .into_iter()
+        .filter(|unit| matches!(&unit.location, UnitLocation::Hex { hex_id } if hex_id.0 == "2412"))
+        .map(|unit| unit.id().clone())
+        .collect();
+    let steps = |game: &GameState, status: TrainStatus| -> u16 {
+        game.units
+            .values()
+            .filter(|unit| unit.train_status == Some(status))
+            .map(UnitState::step_count)
+            .sum()
+    };
+    // Entraining markers do not count, so the whole stack may start loading.
+    for unit_id in &stack {
+        game.execute(GameCommand::EntrainUnit {
+            unit_id: unit_id.clone(),
+        })
+        .unwrap();
+    }
+    assert!(steps(&game, TrainStatus::Entraining) > 8);
+
+    for _ in 0..9 {
+        game.execute(GameCommand::EndPhase).unwrap();
+    }
+    let entrained = steps(&game, TrainStatus::Entrained);
+    assert!(
+        entrained > 0 && entrained <= 8,
+        "{entrained} steps entrained"
+    );
+    assert!(steps(&game, TrainStatus::Entraining) > 0);
+}
+
+#[test]
+fn marsh_costs_the_same_as_clear_terrain() {
+    let game = baltap_planning("nato", &[(GERMAN, "2922")]);
+    let marsh = game
+        .movement_options(&UnitId(GERMAN.to_owned()), MovementMode::Tactical)
+        .unwrap()
+        .into_iter()
+        .find(|option| option.hex_id.0 == "2921")
+        .unwrap();
+    assert_eq!(marsh.cost, 1);
+}
+
+#[test]
+fn baltap_warsaw_pact_has_three_airlift_commands() {
+    let mut game = GameState::new(
+        GameId("airlift-capacity".to_owned()),
+        find_scenario("nato-baltap-1983").unwrap(),
+    )
+    .unwrap();
+    game.execute(GameCommand::EndPhase).unwrap();
+    let airborne: Vec<UnitId> = game
+        .units
+        .values()
+        .filter(|unit| {
+            unit.definition.side_id.0 == "warsawPact"
+                && unit.location == UnitLocation::StrategicReserve
+                && unit.is_air_transportable()
+                && unit.step_count() == 1
+        })
+        .map(|unit| unit.id().clone())
+        .collect();
+    assert!(airborne.len() >= 4);
+    for (unit_id, destination) in airborne.iter().zip(["2010", "2009", "2008"]) {
+        game.execute(GameCommand::MoveUnit {
+            unit_id: unit_id.clone(),
+            destination: HexId(destination.to_owned()),
+            mode: MovementMode::AirTransport,
+        })
+        .unwrap();
+    }
+    assert_eq!(
+        game.execute(GameCommand::MoveUnit {
+            unit_id: airborne[3].clone(),
+            destination: HexId("1910".to_owned()),
+            mode: MovementMode::AirTransport,
+        })
+        .unwrap_err()
+        .code,
+        "airliftCapacityExceeded"
+    );
 }

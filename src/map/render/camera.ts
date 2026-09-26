@@ -55,6 +55,20 @@ export class Camera {
     this.apply();
   }
 
+  fitBounds(bounds: Rect, padding = 48, maxZoom = 0.8): void {
+    const { width, height } = this.viewport();
+    if (width <= 0 || height <= 0 || bounds.width <= 0 || bounds.height <= 0) return;
+    const zoom = Math.min(
+      maxZoom,
+      (width - padding * 2) / bounds.width,
+      (height - padding * 2) / bounds.height,
+    );
+    this.zoom = Math.min(this.maxZoom, Math.max(this.minZoom, zoom));
+    this.x = width / 2 - (bounds.x + bounds.width / 2) * this.zoom;
+    this.y = height / 2 - (bounds.y + bounds.height / 2) * this.zoom;
+    this.apply();
+  }
+
   zoomAt(screenX: number, screenY: number, factor: number): void {
     const next = Math.min(this.maxZoom, Math.max(this.minZoom, this.zoom * factor));
     const wx = (screenX - this.x) / this.zoom;

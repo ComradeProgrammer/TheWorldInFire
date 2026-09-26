@@ -1,5 +1,5 @@
 /**
- * Shape of the generated map description in `data/natoMap.json`.
+ * Shape of the authoritative map description received in a game snapshot.
  *
  * The file was traced once, offline, from the reference
  * VASSAL boards. All coordinates are "map pixels": the stitched board space in
@@ -28,6 +28,8 @@ export interface CityData {
   kind: CityKind;
   /** Organic defense strength printed in the yellow box. */
   defense: number;
+  /** Side that controls the city at the start of play. */
+  owner: string;
 }
 
 export interface HexData {
@@ -46,7 +48,15 @@ export interface HexData {
   commandZone?: CommandZone;
 }
 
-export type HexsideFeature = "corpsBoundary" | "frontBoundary" | "blocked";
+export type HexsideFeature =
+  | "corpsBoundary"
+  | "frontBoundary"
+  | "blocked"
+  | "allSea"
+  | "causeway"
+  | "majorRiver"
+  | "minorRiver"
+  | "danishFerry";
 
 export interface HexsideData {
   a: string;
@@ -117,6 +127,7 @@ export interface LabelData {
 }
 
 export interface MapData {
+  id: string;
   version: number;
   source: string;
   grid: MapGrid;

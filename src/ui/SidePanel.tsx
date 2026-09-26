@@ -1,149 +1,347 @@
 import { useState, type FormEvent } from "react";
-import { CITY_KIND_NAMES, hexesById, natoMap, TERRAIN_NAMES } from "../map/mapData";
-import type { HexData, HexsideFeature } from "../map/mapTypes";
-import type { MapLayerId } from "../map/render/MapRenderer";
-
-const LAYER_LABELS: Record<MapLayerId, string> = {
-  grid: "Hex grid",
-  hexNumbers: "Hex numbers",
-  labels: "Place names",
-  rivers: "Rivers",
-  boundaries: "National borders",
-  command: "Command zones",
-  deployment: "Deployment areas",
-};
+import type { BattlePlan, CityControlState, GameCommand, MovementMode, PhaseSnapshot, UnitState } from "../gameApi";
+import { MOVEMENT_MODES, type MovementPreviewStatus } from "./movementModes";
+import { CITY_KIND_NAMES, TERRAIN_NAMES } from "../map/mapData";
+import type { HexData, HexsideFeature, MapData } from "../map/mapTypes";
 
 const HEXSIDE_NAMES: Record<HexsideFeature, string> = {
   blocked: "Blocked hexside",
   corpsBoundary: "NATO corps deployment boundary",
   frontBoundary: "WP front deployment boundary",
+  allSea: "All-sea hexside",
+  causeway: "Causeway",
+  majorRiver: "Major river",
+  minorRiver: "Minor river",
+  danishFerry: "Danish Ferry",
 };
 
-function hexsideSummary(id: string): string[] {
+function sideName(sideId: string): string {
+  return sideId === "nato" ? "NATO" : sideId === "warsawPact" ? "Warsaw Pact" : sideId;
+}
+
+function readableId(value: string): string {
+  return value
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function hexsideSummary(map: MapData, id: string): string[] {
   const out: string[] = [];
-  for (const side of natoMap.hexsides) {
+  for (const side of map.hexsides) {
     if (side.a !== id && side.b !== id) continue;
     const other = side.a === id ? side.b : side.a;
-    for (const f of side.features) out.push(`${HEXSIDE_NAMES[f]} (${other})`);
+    for (const feature of side.features) out.push(`${HEXSIDE_NAMES[feature]} · ${other}`);
   }
   return out;
 }
 
-function HexDetails({ hex }: { hex: HexData | null }) {
-  if (!hex) {
-    return <p className="empty">Click a hex to inspect it.</p>;
-  }
-  const primary = hex.city ? CITY_KIND_NAMES[hex.city.kind] : TERRAIN_NAMES[hex.terrain];
-  const rows: [string, string][] = [["Primary terrain", primary]];
-  if (hex.city) rows.push(["Underlying terrain", TERRAIN_NAMES[hex.terrain]]);
-  if (hex.city) rows.push(["Organic defense", String(hex.city.defense)]);
-  if (hex.port) rows.push(["Port capacity", String(hex.port)]);
-  if (hex.coastal) rows.push(["Coastal", "Yes"]);
-  if (hex.mobilization) rows.push(["Mobilization site", "Yes"]);
-  if (hex.commandZone) rows.push(["Command zone", hex.commandZone]);
-  const sides = hexsideSummary(hex.id);
+function unitSymbol(unit: UnitState): string {
+  const type = unit.unitTypeId.toLowerCase();
+  if (type === "headquarters") return "HQ";
+  if (type.includes("tank") || type.includes("armored")) return "◉";
+  if (type.includes("mechanized") || type.includes("motorrifle")) return "ⓧ";
+  if (type.includes("airborne") || type.includes("airmobile")) return "⌁";
+  if (type.includes("marine")) return "M";
+  return "╳";
+}
+
+function UnitCounter({ unit }: { unit: UnitState }) {
+  const step = unit.steps[unit.strengthStepIndex];
   return (
-    <div className="hex-details">
-      <div className="hex-title">
-        <span className="hex-id">{hex.id}</span>
-        <span className="hex-name">{hex.city?.name ?? hex.town ?? ""}</span>
+    <div className={`detail-counter ${unit.sideId === "nato" ? "nato" : "pact"}`} aria-label={`${unit.name} counter`}>
+      <span className="counter-nation">{readableId(unit.nationId)}</span>
+      <span className="counter-symbol">{unitSymbol(unit)}</span>
+      <span className="counter-values">{step ? `${step.attack}  ${step.defense}  ${step.movement}` : "—"}</span>
+    </div>
+  );
+}
+
+function UnitRow({ unit, onSelect }: { unit: UnitState; onSelect(): void }) {
+  const step = unit.steps[unit.strengthStepIndex];
+  return (
+    <button type="button" className={`unit-row side-${unit.sideId === "nato" ? "nato" : "pact"}`} onClick={onSelect}>
+      <span>{unit.name}</span>
+      {step && <strong>{step.attack}–{step.defense}–{step.movement}</strong>}
+    </button>
+  );
+}
+
+export interface MovementControl {
+  mode: MovementMode;
+  status: MovementPreviewStatus;
+  onModeChange(mode: MovementMode): void;
+}
+
+function PlanningActions({ unit, plan, busy, movement, onCommand }: {
+  unit: UnitState;
+  plan: BattlePlan;
+  busy: boolean;
+  movement: MovementControl;
+  onCommand(command: GameCommand): void;
+}) {
+  const resupplySelected = plan.resupplyTargetUnitId === unit.id;
+  const movements = plan.movements.filter((entry) => entry.unitId === unit.id);
+  const lastMovement = movements[movements.length - 1];
+  const orderedEntraining = plan.entrainingUnitIds.includes(unit.id);
+  const detrainedThisPlan = plan.detrainedUnitIds.includes(unit.id);
+
+  let railButton;
+  if (orderedEntraining) {
+    railButton = (
+      <button type="button" className="action-toggle active" disabled={busy} onClick={() => onCommand({ type: "detrainUnit", unitId: unit.id })}>
+        Undo entrainment order
+      </button>
+    );
+  } else if (detrainedThisPlan && unit.trainStatus === null) {
+    railButton = (
+      <button type="button" className="action-toggle active" disabled={busy} onClick={() => onCommand({ type: "undoDetrainUnit", unitId: unit.id })}>
+        Undo detrain
+      </button>
+    );
+  } else if (unit.trainStatus) {
+    railButton = (
+      <button type="button" className="action-toggle" disabled={busy} onClick={() => onCommand({ type: "detrainUnit", unitId: unit.id })}>
+        Detrain unit
+      </button>
+    );
+  } else {
+    railButton = (
+      <button type="button" className="action-toggle" disabled={busy} onClick={() => onCommand({ type: "entrainUnit", unitId: unit.id })}>
+        Order entrainment
+      </button>
+    );
+  }
+
+  // Availability, reasons, and destinations all come from the Rust core.
+  const status = movement.status;
+  const modes = status.state === "ready" ? status.modes : [];
+  const current = modes.find((entry) => entry.mode === movement.mode);
+  let hint: string;
+  let warn = false;
+  if (status.state === "loading") hint = "Checking legal destinations…";
+  else if (status.state === "failed") [hint, warn] = [status.reason, true];
+  else if (!current) hint = "";
+  else if (current.unavailable) [hint, warn] = [current.unavailable.message, true];
+  else if (current.options.length === 0) hint = "No legal destination with this movement mode.";
+  else hint = `Right-click a destination on the map (${current.options.length} legal ${current.options.length === 1 ? "hex" : "hexes"}).`;
+
+  return (
+    <section className="unit-actions">
+      <h3>Planning actions</h3>
+      <button
+        type="button"
+        className={resupplySelected ? "action-toggle active" : "action-toggle"}
+        disabled={busy}
+        onClick={() => onCommand({ type: "setResupplyTarget", unitId: resupplySelected ? null : unit.id })}
+      >
+        {resupplySelected ? "Undo resupply selection" : "Select for resupply"}
+      </button>
+
+      <div className="movement-command-group">
+        <h4>Movement</h4>
+        <div className="mode-selector" role="radiogroup" aria-label="Movement mode">
+          {MOVEMENT_MODES.map(({ mode, label }) => {
+            const entry = modes.find((candidate) => candidate.mode === mode);
+            return (
+              <button
+                key={mode}
+                type="button"
+                role="radio"
+                aria-checked={movement.mode === mode}
+                className={movement.mode === mode ? "selected" : undefined}
+                title={entry?.unavailable?.message}
+                disabled={busy || !entry || entry.unavailable !== null}
+                onClick={() => movement.onModeChange(mode)}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <p className={warn ? "movement-hint warn" : "movement-hint"}>{hint}</p>
+        {lastMovement && (
+          <>
+            <p className="movement-summary">
+              {movements.length > 1 ? `${movements.length} legs · ` : ""}
+              {readableId(lastMovement.mode)} to {lastMovement.to}
+              {lastMovement.mode !== "airTransport" && (
+                <span>
+                  {movements.reduce((sum, entry) => sum + entry.cost, 0)} {lastMovement.mode === "rail" ? "rail hexes" : "MP"} used
+                </span>
+              )}
+            </p>
+            <button type="button" className="action-toggle active" disabled={busy} onClick={() => onCommand({ type: "undoUnitMovement", unitId: unit.id })}>
+              Undo move to {lastMovement.to}
+            </button>
+          </>
+        )}
       </div>
-      <dl>
-        {rows.map(([k, v]) => (
-          <div key={k} className="kv">
-            <dt>{k}</dt>
-            <dd>{v}</dd>
-          </div>
-        ))}
+
+      {railButton}
+    </section>
+  );
+}
+
+function UnitDetails({ unit, plan, activeSideId, planning, busy, movement, onBack, onCommand }: {
+  unit: UnitState;
+  plan: BattlePlan | null;
+  activeSideId?: string;
+  planning: boolean;
+  busy: boolean;
+  movement: MovementControl;
+  onBack(): void;
+  onCommand(command: GameCommand): void;
+}) {
+  const step = unit.steps[unit.strengthStepIndex];
+  const location = unit.location.type === "hex" ? `Hex ${unit.location.hexId}` : "Strategic Reserve";
+  return (
+    <div className="unit-detail-view">
+      <button type="button" className="panel-back" onClick={onBack}>← Back to hex</button>
+      <div className="unit-identity">
+        <UnitCounter unit={unit} />
+        <div>
+          <span className="detail-eyebrow">{readableId(unit.nationId)}</span>
+          <h2>{unit.name}</h2>
+          <p>{readableId(unit.unitTypeId)}</p>
+        </div>
+      </div>
+      <dl className="unit-data">
+        <div><dt>Location</dt><dd>{location}</dd></div>
+        <div><dt>Combat values</dt><dd>{step ? `${step.attack} / ${step.defense} / ${step.movement}` : "—"}</dd></div>
+        <div><dt>Formation</dt><dd>{unit.formationId ? readableId(unit.formationId.slice(unit.formationId.lastIndexOf(".") + 1)) : "Independent"}</dd></div>
+        <div><dt>Movement supply</dt><dd>{unit.supply.movement ? readableId(unit.supply.movement) : "N/A"}</dd></div>
+        <div><dt>Combat supply</dt><dd>{unit.supply.combat ? readableId(unit.supply.combat) : "N/A"}</dd></div>
+        <div><dt>Rail status</dt><dd>{unit.trainStatus ? readableId(unit.trainStatus) : "Not entrained"}</dd></div>
       </dl>
-      {sides.length > 0 && (
-        <ul className="hexsides">
-          {sides.map((s) => (
-            <li key={s}>{s}</li>
-          ))}
-        </ul>
+      {unit.traits.length > 0 && <div className="trait-list">{unit.traits.map((trait) => <span key={trait}>{readableId(trait)}</span>)}</div>}
+      {planning && plan && unit.sideId === activeSideId ? (
+        <PlanningActions unit={unit} plan={plan} busy={busy} movement={movement} onCommand={onCommand} />
+      ) : (
+        <p className="readonly-note">This unit has no available actions in the current phase.</p>
       )}
     </div>
   );
 }
 
 export interface SidePanelProps {
+  map: MapData;
+  units: UnitState[];
+  cities: CityControlState[];
+  /** Hexes the core reports as legal attack objectives right now. */
+  attackTargets: ReadonlySet<string>;
+  currentStep: PhaseSnapshot | null;
+  battlePlan: BattlePlan | null;
   selected: HexData | null;
-  zoom: number;
-  layers: Record<MapLayerId, boolean>;
-  onToggleLayer(layer: MapLayerId, visible: boolean): void;
-  onZoom(factor: number): void;
-  onFit(): void;
+  selectedUnitId: string | null;
+  commandBusy: boolean;
+  movement: MovementControl;
   onGoTo(id: string): boolean;
+  onSelectUnit(id: string | null): void;
+  onPlanningCommand(command: GameCommand): void;
 }
 
 export function SidePanel(props: SidePanelProps) {
   const [goTo, setGoTo] = useState("");
   const [goToError, setGoToError] = useState(false);
+  const activeSideId = props.currentStep?.actor.type === "side" ? props.currentStep.actor.sideId : undefined;
+  const planning = props.currentStep?.phaseId === "battlePlanning";
+  const selectedUnit = props.units.find((unit) => unit.id === props.selectedUnitId) ?? null;
 
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
     const id = goTo.trim().padStart(4, "0");
-    const ok = hexesById.has(id) && props.onGoTo(id);
+    const ok = props.map.hexes.some((hex) => hex.id === id) && props.onGoTo(id);
     setGoToError(!ok);
   };
 
+  if (selectedUnit) {
+    return (
+      <aside className="side-panel">
+        <section className="panel control-panel">
+          <UnitDetails
+            unit={selectedUnit}
+            plan={props.battlePlan}
+            activeSideId={activeSideId}
+            planning={planning}
+            busy={props.commandBusy}
+            movement={props.movement}
+            onBack={() => props.onSelectUnit(null)}
+            onCommand={props.onPlanningCommand}
+          />
+        </section>
+      </aside>
+    );
+  }
+
+  const hex = props.selected;
+  const primary = hex ? (hex.city ? CITY_KIND_NAMES[hex.city.kind] : TERRAIN_NAMES[hex.terrain]) : null;
+  const occupyingUnits = hex
+    ? props.units.filter((unit) => unit.location.type === "hex" && unit.location.hexId === hex.id)
+    : [];
+  const reserveUnits = planning && activeSideId
+    ? props.units.filter((unit) => unit.sideId === activeSideId && unit.location.type === "strategicReserve")
+    : [];
+  const attackSelected = Boolean(hex && props.battlePlan?.attackTargets.includes(hex.id));
+  const canTarget = Boolean(hex && props.attackTargets.has(hex.id));
+  const city = hex ? props.cities.find((entry) => entry.hexId === hex.id) : undefined;
+
   return (
     <aside className="side-panel">
-      <section className="panel">
+      <section className="panel control-panel">
         <h2>Control Panel</h2>
-        <div className="panel-block">
-          <h3>Selected hex</h3>
-          <HexDetails hex={props.selected} />
-        </div>
-        <div className="panel-block">
-          <h3>View</h3>
-          <div className="view-controls">
-            <button type="button" onClick={() => props.onZoom(1 / 1.25)} aria-label="Zoom out">
-              −
-            </button>
-            <span className="zoom-readout">{Math.round(props.zoom * 100)}%</span>
-            <button type="button" onClick={() => props.onZoom(1.25)} aria-label="Zoom in">
-              +
-            </button>
-            <button type="button" className="wide" onClick={props.onFit}>
-              Fit map
-            </button>
+        <form className="goto primary-goto" onSubmit={submit}>
+          <input value={goTo} onChange={(event) => { setGoTo(event.currentTarget.value); setGoToError(false); }} placeholder="Go to hex, e.g. 2417" inputMode="numeric" maxLength={4} className={goToError ? "error" : ""} />
+          <button type="submit">Go</button>
+        </form>
+
+        {hex ? (
+          <div className="hex-context">
+            <div className="hex-context-title">
+              <div><span className="detail-eyebrow">Selected hex</span><strong>{hex.id}</strong></div>
+              <span>{hex.city?.name ?? hex.town ?? ""}</span>
+            </div>
+            <dl>
+              <div><dt>Terrain</dt><dd>{primary}</dd></div>
+              {hex.city && <div><dt>Underlying</dt><dd>{TERRAIN_NAMES[hex.terrain]}</dd></div>}
+              {hex.commandZone && <div><dt>Command zone</dt><dd>{hex.commandZone}</dd></div>}
+              {city && (
+                <div>
+                  <dt>Control</dt>
+                  <dd className={`side-${city.controller === "nato" ? "nato" : "pact"}`}>
+                    {sideName(city.controller)} · {city.free ? "Free City" : `Conquered (${sideName(city.owner)} city)`}
+                  </dd>
+                </div>
+              )}
+              {hex.city && <div><dt>Organic defense</dt><dd>{city && !city.free ? "None (conquered)" : hex.city.defense}</dd></div>}
+              {hex.port && <div><dt>Port capacity</dt><dd>{hex.port}</dd></div>}
+              {hex.coastal && <div><dt>Coastal</dt><dd>Yes</dd></div>}
+            </dl>
+            {hexsideSummary(props.map, hex.id).length > 0 && <div className="hex-feature-list">{hexsideSummary(props.map, hex.id).map((feature) => <span key={feature}>{feature}</span>)}</div>}
+            {planning && props.battlePlan && (
+              <button
+                type="button"
+                className={attackSelected ? "hex-objective active" : "hex-objective"}
+                disabled={props.commandBusy || (!attackSelected && !canTarget)}
+                onClick={() => props.onPlanningCommand({ type: "setAttackTarget", hexId: hex.id, selected: !attackSelected })}
+              >
+                {attackSelected ? "Undo attack objective" : "Set as attack objective"}
+              </button>
+            )}
+            <div className="unit-list context-units">
+              <h3>Units in hex ({occupyingUnits.length})</h3>
+              {occupyingUnits.length > 0
+                ? occupyingUnits.map((unit) => <UnitRow key={unit.id} unit={unit} onSelect={() => props.onSelectUnit(unit.id)} />)
+                : <p className="empty">No units in this hex.</p>}
+            </div>
           </div>
-          <form className="goto" onSubmit={submit}>
-            <input
-              value={goTo}
-              onChange={(e) => {
-                setGoTo(e.currentTarget.value);
-                setGoToError(false);
-              }}
-              placeholder="Go to hex, e.g. 2417"
-              inputMode="numeric"
-              maxLength={4}
-              className={goToError ? "error" : ""}
-            />
-            <button type="submit">Go</button>
-          </form>
-        </div>
-        <div className="panel-block">
-          <h3>Layers</h3>
-          <div className="layer-list">
-            {(Object.keys(LAYER_LABELS) as MapLayerId[]).map((id) => (
-              <label key={id} className="layer-toggle">
-                <input
-                  type="checkbox"
-                  checked={props.layers[id]}
-                  onChange={(e) => props.onToggleLayer(id, e.currentTarget.checked)}
-                />
-                {LAYER_LABELS[id]}
-              </label>
-            ))}
+        ) : <p className="empty select-prompt">Select a hex on the map to inspect terrain and units.</p>}
+
+        {reserveUnits.length > 0 && (
+          <div className="unit-list reserve-list">
+            <h3>Strategic Reserve ({reserveUnits.length})</h3>
+            {reserveUnits.map((unit) => <UnitRow key={unit.id} unit={unit} onSelect={() => props.onSelectUnit(unit.id)} />)}
           </div>
-        </div>
-      </section>
-      <section className="panel combat-log">
-        <h2>Combat Log</h2>
-        <p className="empty">No battles resolved yet.</p>
+        )}
       </section>
     </aside>
   );

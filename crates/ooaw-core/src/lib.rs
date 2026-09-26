@@ -6,23 +6,30 @@
 
 #![deny(missing_docs)]
 
+mod cities;
 mod command;
 mod engine;
 mod error;
 mod event;
 /// Domain data for sides, phases, scenarios, and units.
 pub mod model;
+mod movement;
 mod phase;
+mod planning;
 mod state;
 
 pub use command::{CommandOutcome, GameCommand};
 pub use error::RuleError;
-pub use event::GameEvent;
+pub use event::{GameEvent, UnitSupplyCheck};
 pub use model::{
-    find_scenario, list_scenarios, FormationId, HexId, NationId, PhaseActor, PhaseDefinition,
-    PhaseExecution, PhaseId, ReinforcementDefinition, ScenarioDefinition, ScenarioSummary,
-    SideDefinition, SideId, StepId, UnitDefinition, UnitId, UnitLocation, UnitState,
-    UnitStepDefinition, UnitTraitId, UnitTypeId,
+    find_scenario, list_scenarios, BattlePlan, BattlePlanningRules, Causeway, CityControlChange,
+    CityControlState, CityKind, CityOutline, CommandLine, CommandZone, FormationId, HexId,
+    HexsideFeature, LabelKind, LineKind, MapCity, MapDefinition, MapGrid, MapHex, MapHexside,
+    MapLabel, MapLine, MapSymbol, MovementMode, MovementModeOptions, MovementOption, NationId,
+    PhaseActor, PhaseDefinition, PhaseExecution, PhaseId, PlannedMovement, ReinforcementDefinition,
+    ScenarioDefinition, ScenarioSummary, SideDefinition, SideId, StepId, SupplyStatus, Terrain,
+    TrainStatus, UnitDefinition, UnitId, UnitLocation, UnitState, UnitStepDefinition,
+    UnitSupplyState, UnitTraitId, UnitTypeId, WaterArea,
 };
 pub use state::{GameId, GameSnapshot, GameState, GameStatus, PendingDecision, TurnState};
 

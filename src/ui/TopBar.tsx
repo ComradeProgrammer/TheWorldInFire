@@ -1,7 +1,16 @@
 import type { HudState } from "./hudPreview";
 
-export function TopBar({ hud }: { hud: HudState }) {
-  const sideClass = hud.activePlayer === "NATO" ? "nato" : "pact";
+export interface TopBarProps {
+  hud: HudState;
+  canEndPhase: boolean;
+  phaseActionLabel: string;
+  phaseActionBusy: boolean;
+  onOpenSettings(): void;
+  onEndPhase(): void;
+}
+
+export function TopBar({ hud, canEndPhase, phaseActionLabel, phaseActionBusy, onOpenSettings, onEndPhase }: TopBarProps) {
+  const sideClass = hud.activePlayer === "NATO" ? "nato" : hud.activePlayer === "Warsaw Pact" ? "pact" : "neutral";
   return (
     <header className="top-bar">
       <div className="brand">
@@ -33,9 +42,15 @@ export function TopBar({ hud }: { hud: HudState }) {
           </div>
         ))}
       </div>
-      <div className="scenario-tag" title="Game state will come from the Rust core">
+      <div className="scenario-tag" title="Authoritative game state from the Rust core">
         {hud.scenario}
       </div>
+      <button className="settings-action" type="button" onClick={onOpenSettings} aria-label="Open display settings">
+        <span aria-hidden="true">⚙</span> Settings
+      </button>
+      <button className="phase-action" type="button" disabled={!canEndPhase || phaseActionBusy} onClick={onEndPhase}>
+        {phaseActionBusy ? "Resolving…" : phaseActionLabel}
+      </button>
     </header>
   );
 }

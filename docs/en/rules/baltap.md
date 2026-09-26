@@ -15,4 +15,6 @@ Later units also enter the Strategic Reserve automatically during the Joint Rein
 | 6 | 1 |
 | 7 | 0 |
 
+Airlift Commands: the Warsaw Pact has three and NATO has one.
+
 The game ends after all seven turns are completed.

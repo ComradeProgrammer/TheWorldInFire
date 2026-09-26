@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::SideId;
+use super::{SideId, TrainStatus};
 
 /// Stable identifier for a physical military unit in a scenario.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -43,7 +43,7 @@ pub struct FormationId(
 );
 
 /// Stable board coordinate identifying one map hex.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct HexId(
     /// Scenario map's external hex label, such as `2806`.
@@ -60,6 +60,48 @@ pub struct UnitStepDefinition {
     pub defense: u16,
     /// Movement-point allowance currently represented by this step.
     pub movement: u16,
+}
+
+/// Whether a unit currently has access to one kind of supply.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SupplyStatus {
+    /// The unit can use the capabilities governed by this supply type.
+    Supplied,
+    /// The unit is subject to the restrictions of this supply type.
+    OutOfSupply,
+}
+
+/// Supply state carried by a unit in the authoritative game state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnitSupplyState {
+    /// HQ supply status; present only for headquarters units.
+    pub headquarters: Option<SupplyStatus>,
+    /// Movement supply status; present only for combat units.
+    pub movement: Option<SupplyStatus>,
+    /// Combat supply status; present only for combat units.
+    pub combat: Option<SupplyStatus>,
+}
+
+impl UnitSupplyState {
+    /// Creates the initial fully supplied state of a headquarters unit.
+    pub fn supplied_headquarters() -> Self {
+        Self {
+            headquarters: Some(SupplyStatus::Supplied),
+            movement: None,
+            combat: None,
+        }
+    }
+
+    /// Creates the initial fully supplied state of a combat unit.
+    pub fn supplied_combat_unit() -> Self {
+        Self {
+            headquarters: None,
+            movement: Some(SupplyStatus::Supplied),
+            combat: Some(SupplyStatus::Supplied),
+        }
+    }
 }
 
 /// Scenario-independent identity and capabilities of a military unit.
@@ -112,6 +154,10 @@ pub struct UnitState {
     pub strength_step_index: usize,
     /// Current map or off-map position.
     pub location: UnitLocation,
+    /// Current HQ, movement, and combat supply statuses applicable to this unit.
+    pub supply: UnitSupplyState,
+    /// Rail-loading state that persists between player turns.
+    pub train_status: Option<TrainStatus>,
 }
 
 impl UnitState {
@@ -123,5 +169,44 @@ impl UnitState {
     /// Returns the combat values for the unit's current strength step.
     pub fn current_step(&self) -> Option<&UnitStepDefinition> {
         self.definition.steps.get(self.strength_step_index)
+    }
+
+    /// Marks every applicable supply type as supplied.
+    pub(crate) fn mark_fully_supplied(&mut self) {
+        if let Some(status) = &mut self.supply.headquarters {
+            *status = SupplyStatus::Supplied;
+        }
+        if let Some(status) = &mut self.supply.movement {
+            *status = SupplyStatus::Supplied;
+        }
+        if let Some(status) = &mut self.supply.combat {
+            *status = SupplyStatus::Supplied;
+        }
+    }
+
+    /// Number of surviving physical steps represented by this unit.
+    pub(crate) fn step_count(&self) -> u16 {
+        self.definition
+            .steps
+            .len()
+            .saturating_sub(self.strength_step_index) as u16
+    }
+
+    /// Whether the unit is a headquarters rather than a maneuver unit.
+    pub(crate) fn is_headquarters(&self) -> bool {
+        self.supply.headquarters.is_some()
+    }
+
+    /// Whether the unit may continue through enemy zones of control.
+    pub(crate) fn is_hard(&self) -> bool {
+        self.definition.traits.iter().any(|item| item.0 == "hard")
+    }
+
+    /// Whether the unit is eligible to be carried by an Airlift Command.
+    pub(crate) fn is_air_transportable(&self) -> bool {
+        self.definition
+            .traits
+            .iter()
+            .any(|item| item.0 == "airTransportable")
     }
 }

@@ -1,7 +1,8 @@
 use std::sync::Mutex;
 
 use ooaw_core::{
-    find_scenario, GameCommand, GameId, GameSnapshot, GameState, RuleError, ScenarioSummary,
+    find_scenario, GameCommand, GameId, GameSnapshot, GameState, HexId, MapDefinition,
+    MovementModeOptions, RuleError, ScenarioSummary, UnitId,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -51,13 +52,20 @@ struct CommandResponse {
     snapshot: GameSnapshot,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NewGameResponse {
+    snapshot: GameSnapshot,
+    map: MapDefinition,
+}
+
 #[tauri::command]
 fn list_scenarios() -> Vec<ScenarioSummary> {
     ooaw_core::list_scenarios()
 }
 
 #[tauri::command]
-fn new_game(scenario_id: String, state: State<'_, AppState>) -> Result<GameSnapshot, ApiError> {
+fn new_game(scenario_id: String, state: State<'_, AppState>) -> Result<NewGameResponse, ApiError> {
     let scenario = find_scenario(&scenario_id).ok_or_else(|| {
         ApiError::new(
             "scenarioNotFound",
@@ -66,12 +74,13 @@ fn new_game(scenario_id: String, state: State<'_, AppState>) -> Result<GameSnaps
     })?;
     let game = GameState::new(GameId(uuid::Uuid::new_v4().to_string()), scenario)?;
     let snapshot = game.snapshot();
+    let map = game.map().clone();
     let mut session = state
         .game
         .lock()
         .map_err(|_| ApiError::new("sessionUnavailable", "Game session lock is poisoned"))?;
     *session = Some(game);
-    Ok(snapshot)
+    Ok(NewGameResponse { snapshot, map })
 }
 
 #[tauri::command]
@@ -116,6 +125,68 @@ fn submit_game_command(
     })
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MovementOptionsRequest {
+    unit_id: UnitId,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MovementOptionsResponse {
+    revision: u64,
+    unit_id: UnitId,
+    modes: Vec<MovementModeOptions>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AttackTargetOptionsResponse {
+    revision: u64,
+    hex_ids: Vec<HexId>,
+}
+
+fn with_game<T>(
+    state: &State<'_, AppState>,
+    read: impl FnOnce(&GameState) -> Result<T, RuleError>,
+) -> Result<T, ApiError> {
+    let session = state
+        .game
+        .lock()
+        .map_err(|_| ApiError::new("sessionUnavailable", "Game session lock is poisoned"))?;
+    let game = session
+        .as_ref()
+        .ok_or_else(|| ApiError::new("gameNotStarted", "No game has been started"))?;
+    Ok(read(game)?)
+}
+
+/// Read-only movement preview: availability and legal destinations for every
+/// movement system of one unit.
+#[tauri::command]
+fn movement_options(
+    request: MovementOptionsRequest,
+    state: State<'_, AppState>,
+) -> Result<MovementOptionsResponse, ApiError> {
+    with_game(&state, |game| {
+        Ok(MovementOptionsResponse {
+            revision: game.snapshot().revision,
+            modes: game.movement_modes(&request.unit_id)?,
+            unit_id: request.unit_id,
+        })
+    })
+}
+
+/// Read-only preview of the hexes the planning side may mark as attack objectives.
+#[tauri::command]
+fn attack_target_options(state: State<'_, AppState>) -> Result<AttackTargetOptionsResponse, ApiError> {
+    with_game(&state, |game| {
+        Ok(AttackTargetOptionsResponse {
+            revision: game.snapshot().revision,
+            hex_ids: game.attack_target_options()?,
+        })
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Builds and starts the Tauri desktop application.
 pub fn run() {
@@ -126,7 +197,9 @@ pub fn run() {
             list_scenarios,
             new_game,
             get_game_snapshot,
-            submit_game_command
+            submit_game_command,
+            movement_options,
+            attack_target_options
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

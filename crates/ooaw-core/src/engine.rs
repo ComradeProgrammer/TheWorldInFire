@@ -13,7 +13,20 @@ impl GameState {
 
         let events = match command {
             GameCommand::EndPhase => self.end_phase(),
-        };
+            GameCommand::SetResupplyTarget { unit_id } => self.set_resupply_target(unit_id),
+            GameCommand::SetAttackTarget { hex_id, selected } => {
+                self.set_attack_target(hex_id, selected)
+            }
+            GameCommand::MoveUnit {
+                unit_id,
+                destination,
+                mode,
+            } => self.move_unit(unit_id, destination, mode),
+            GameCommand::UndoUnitMovement { unit_id } => self.undo_unit_movement(unit_id),
+            GameCommand::EntrainUnit { unit_id } => self.entrain_unit(unit_id),
+            GameCommand::DetrainUnit { unit_id } => self.detrain_unit(unit_id),
+            GameCommand::UndoDetrainUnit { unit_id } => self.undo_detrain_unit(unit_id),
+        }?;
         self.revision += 1;
         Ok(CommandOutcome {
             revision: self.revision,
@@ -22,9 +35,12 @@ impl GameState {
         })
     }
 
-    fn end_phase(&mut self) -> Vec<GameEvent> {
+    fn end_phase(&mut self) -> Result<Vec<GameEvent>, RuleError> {
         let mut events = Vec::new();
         if let Some(step) = self.current_step().cloned() {
+            if step.phase_id.0 == "battlePlanning" {
+                self.finish_battle_plan(&mut events);
+            }
             events.push(GameEvent::PhaseEnded {
                 game_turn: self.game_turn,
                 step,
@@ -44,7 +60,7 @@ impl GameState {
             });
             self.move_to_next_step(&mut events);
         }
-        events
+        Ok(events)
     }
 
     fn move_to_next_step(&mut self, events: &mut Vec<GameEvent>) {

@@ -6,7 +6,7 @@ export interface HudState {
   scenario: string;
   turn: number;
   lastTurn: number;
-  activePlayer: "NATO" | "Warsaw Pact";
+  activePlayer: "NATO" | "Warsaw Pact" | "Both";
   phase: string;
   resources: { label: string; value: string; side: "nato" | "pact" | "neutral" }[];
 }

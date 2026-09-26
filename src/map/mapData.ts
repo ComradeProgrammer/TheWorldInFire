@@ -1,12 +1,4 @@
-import rawMap from "./data/natoMap.json";
-import { HexGrid } from "./hexGrid";
-import type { HexData, MapData } from "./mapTypes";
-
-export const natoMap = rawMap as unknown as MapData;
-
-export const natoGrid = new HexGrid(natoMap.grid);
-
-export const hexesById: ReadonlyMap<string, HexData> = new Map(natoMap.hexes.map((h) => [h.id, h]));
+import type { HexData } from "./mapTypes";
 
 export const TERRAIN_NAMES: Record<HexData["terrain"], string> = {
   sea: "All-Sea",
