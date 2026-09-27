@@ -75,3 +75,11 @@ export function hexId(row: number, col: number): string {
 export function parseHexId(id: string): { row: number; col: number } {
   return { row: Number(id.slice(0, 2)), col: Number(id.slice(2)) };
 }
+
+/** Row/column of the six adjacent hexes (odd rows sit half a hex to the right). */
+export function neighborCoords(row: number, col: number): { row: number; col: number }[] {
+  const diagonal = row % 2 === 0
+    ? [[row - 1, col], [row - 1, col + 1], [row + 1, col], [row + 1, col + 1]]
+    : [[row - 1, col - 1], [row - 1, col], [row + 1, col - 1], [row + 1, col]];
+  return [[row, col - 1], [row, col + 1], ...diagonal].map(([r, c]) => ({ row: r, col: c }));
+}

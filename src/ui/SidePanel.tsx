@@ -14,7 +14,7 @@ import type {
   UnitState,
 } from "../gameApi";
 import { AirStrikePanel } from "./AirStrikePanel";
-import { CombatPanel } from "./CombatPanel";
+import { readableId, sideName, unitSymbol } from "./unitFormat";
 import { MOVEMENT_MODES, type MovementPreviewStatus } from "./movementModes";
 import { CITY_KIND_NAMES, TERRAIN_NAMES } from "../map/mapData";
 import type { HexData, HexsideFeature, MapData } from "../map/mapTypes";
@@ -30,16 +30,6 @@ const HEXSIDE_NAMES: Record<HexsideFeature, string> = {
   danishFerry: "Danish Ferry",
 };
 
-function sideName(sideId: string): string {
-  return sideId === "nato" ? "NATO" : sideId === "warsawPact" ? "Warsaw Pact" : sideId;
-}
-
-function readableId(value: string): string {
-  return value
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/^./, (letter) => letter.toUpperCase());
-}
-
 function hexsideSummary(map: MapData, id: string): string[] {
   const out: string[] = [];
   for (const side of map.hexsides) {
@@ -48,16 +38,6 @@ function hexsideSummary(map: MapData, id: string): string[] {
     for (const feature of side.features) out.push(`${HEXSIDE_NAMES[feature]} · ${other}`);
   }
   return out;
-}
-
-function unitSymbol(unit: UnitState): string {
-  const type = unit.unitTypeId.toLowerCase();
-  if (type === "headquarters") return "HQ";
-  if (type.includes("tank") || type.includes("armored")) return "◉";
-  if (type.includes("mechanized") || type.includes("motorrifle")) return "ⓧ";
-  if (type.includes("airborne") || type.includes("airmobile")) return "⌁";
-  if (type.includes("marine")) return "M";
-  return "╳";
 }
 
 function UnitCounter({ unit }: { unit: UnitState }) {
@@ -258,6 +238,38 @@ export interface StrikeContext {
   ready: boolean;
 }
 
+/** Combat Phase: the Attack button, enabled only for hexes the core lists as objectives. */
+function AttackAction({ hexId, combat, busy, onOpen }: {
+  hexId: string;
+  combat: CombatContext;
+  busy: boolean;
+  onOpen(): void;
+}) {
+  const objective = combat.objectives.get(hexId);
+  const report = combat.state.battles.find((battle) => battle.hexId === hexId);
+  const pending = combat.state.pendingAdvance;
+  let reason: string | null = null;
+  if (!combat.ready) reason = "Checking attack options…";
+  else if (pending) reason = `Decide the advance into ${pending.hexId} first.`;
+  else if (report) reason = "This hex has already been attacked this phase.";
+  else if (!objective) reason = "None of your units can attack this hex now.";
+  return (
+    <div className="attack-action">
+      <button type="button" className="attack-button" disabled={busy || reason !== null} title={reason ?? undefined} onClick={onOpen}>
+        Attack
+      </button>
+      {objective?.mandatory && <p className="attack-note must">Marked objective: it must be attacked this phase.</p>}
+      {objective?.breakthroughOnly && <p className="attack-note">Breakthrough hex: no defenders, the attackers advance in.</p>}
+      {reason && combat.ready && <p className="attack-note">{reason}</p>}
+      {report?.result && (
+        <p className="attack-note result">
+          {report.odds?.finalOdds} · rolled {report.dieRoll} → <strong>{report.result.code}</strong>
+        </p>
+      )}
+    </div>
+  );
+}
+
 function airspaceOf(strike: StrikeContext, hexId: string): Airspace | null {
   if (!strike.ready) return null;
   if (strike.friendlyHexes.has(hexId)) return "friendly";
@@ -283,6 +295,8 @@ export interface SidePanelProps {
   onGoTo(id: string): boolean;
   onSelectUnit(id: string | null): void;
   onPlanningCommand(command: GameCommand): void;
+  /** Opens the Battle Planner for an Objective hex. */
+  onOpenBattle(hexId: string): void;
 }
 
 export function SidePanel(props: SidePanelProps) {
@@ -386,15 +400,7 @@ export function SidePanel(props: SidePanelProps) {
               />
             )}
             {props.combat && (
-              <CombatPanel
-                hex={hex}
-                units={props.units}
-                combat={props.combat.state}
-                objective={props.combat.objectives.get(hex.id)}
-                revision={props.combat.revision}
-                busy={props.commandBusy || !props.combat.ready}
-                onCommand={props.onPlanningCommand}
-              />
+              <AttackAction hexId={hex.id} combat={props.combat} busy={props.commandBusy} onOpen={() => props.onOpenBattle(hex.id)} />
             )}
             <div className="unit-list context-units">
               <h3>Units in hex ({occupyingUnits.length})</h3>

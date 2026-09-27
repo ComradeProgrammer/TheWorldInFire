@@ -350,7 +350,7 @@ Command variant names and their fields are both camelCase. Battle-planning comma
 
 ## Desktop UI
 
-The right-hand Control Panel is the primary view. With no unit selected it shows Go to Hex, then the selected hex's terrain, command zone, city/port data, hexside features, and occupying units; during Battle Planning it also lists the active side's Strategic Reserve and offers a toggle that adds the selected enemy-occupied hex as an attack objective or removes it. Choosing a unit (from the list or by clicking its counter on the map) switches the panel to a unit detail view with a drawn counter, identity, strength values, supply, rail status, traits, and, for the planning side's own units, planning actions. Every action button becomes an Undo button once its order is in the plan; the frontend derives that state from the authoritative `battlePlan`, never from local bookkeeping. Left-clicking a counter selects that unit, and left-clicking elsewhere returns the panel to the hex view.
+The right-hand Control Panel is the primary view. With no unit selected it shows Go to Hex, then the selected hex's terrain, command zone, city/port data, hexside features, and occupying units; during Battle Planning it also lists the active side's Strategic Reserve and offers a toggle that adds the selected enemy-occupied hex as an attack objective or removes it. Choosing a unit (from the list, or by clicking its counter once its hex is already selected) switches the panel to a unit detail view with a drawn counter, identity, strength values, supply, rail status, traits, and, for the planning side's own units, planning actions. Every action button becomes an Undo button once its order is in the plan; the frontend derives that state from the authoritative `battlePlan`, never from local bookkeeping. The first left-click on a hex, counters included, only selects the hex and shows the hex view; clicking a counter in the already-selected hex opens that unit. Left-clicking elsewhere returns the panel to the hex view.
 
 Movement is ordered on the map. While the planning side's own unit is selected, the panel shows a movement-mode selector (Tactical, March, Rail, Air transport). After a unit has moved, the other systems are disabled. The frontend calls `movement_options` once for the selected unit and again after each accepted command, never per pointer move. Mode buttons are enabled and explained only from that response. The objective toggle is enabled only for hexes in `attack_target_options`. The hex view shows each city's controller and whether it is Free or Conquered. Hovering a listed destination draws a red arrow along the core-chosen route. Right-clicking it submits `moveUnit`. Hexes not in the list show no arrow and ignore right-clicks. The selected unit stays selected after a move so that it can continue or be undone.
 
@@ -365,14 +365,17 @@ While missions are pending, the top-bar action reads "Resolve Air Strikes" (`res
 
 During the Combat Phase the frontend fetches `combat_options` once per revision. The map outlines attackable hexes: red for mandatory WP objectives, orange for optional ones. Hexes already fought over get a small cross.
 
-The hex view gains a Battle section:
+The hex view gains a red Attack button. It is enabled only for hexes listed in `combat_options` (so WP is limited to its marked objectives and Breakthrough hexes, while NATO may attack any eligible hex); otherwise it is grey with the reason as a tooltip (already attacked, another advance pending, or no unit able to attack). The view also notes mandatory objectives and shows the result of a battle already fought there.
 
-- eligible attackers with checkboxes (all checked by default);
-- an Offensive Support checkbox for each HQ the core lists (unchecked by default, since each HQ supports once per phase);
-- a `battle_preview` odds breakdown, re-fetched when the selection changes: each unit's adjusted strength and modifiers, the column shifts, the final odds, and the six possible results;
-- a Resolve battle button;
-- the battle's report once fought;
-- the advance choice (Advance or Stay in place) when the hex is cleared.
+Attack opens the Battle Planner dialog (`src/ui/BattlePlanner.tsx`), titled "Battle Planner at <hex>":
+
+- left: the defending units, each with its `battle_preview` adjusted Defense Strength and modifiers, plus a Free City's organic defense;
+- centre: an SVG mini-map of the objective hex (outlined in red) and its six neighbours, with terrain, cities, rivers on shared hexsides, and a chip for every unit; below it the odds (totals, column shifts, final odds, and the six possible results);
+- right: eligible attackers with checkboxes (all checked by default) and adjusted Attack Strengths, then an Offensive Support checkbox for each HQ the core lists (unchecked by default, since each HQ supports once per phase);
+- each listed unit is joined to its chip on the mini-map by a polyline measured from the rendered layout; unticked attackers draw dimmed and dashed;
+- Attack (`resolveBattle`) and Cancel buttons.
+
+After the battle the dialog stays open with the die roll, result, and Counterattacks, and each unit's new status (eliminated, retreated, Disrupted). When the hex is cleared, the right column becomes the advance choice (Advance or Stay in place), and the dialog cannot be closed until that decision is made. It reopens automatically if a pending advance exists.
 
 After a battle the objective hex is selected automatically. The top-bar action reads "N Marked Attacks Left" and is disabled while WP objectives remain. Battles appear in the Battle Plan pane. The Combat Log lists odds, rolls, Counterattacks, losses, retreats, advances, and captured cities. A client-side roster keeps eliminated units' names.
 

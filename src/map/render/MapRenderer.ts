@@ -1,7 +1,7 @@
 import { Application, Container, CullerPlugin, extensions, Graphics } from "pixi.js";
 import type { AirInterdictionZone, AirMission, BattlePlan, MovementOption, UnitState } from "../../gameApi";
 import type { HexGrid } from "../hexGrid";
-import { hexId } from "../hexGrid";
+import { hexId, neighborCoords } from "../hexGrid";
 import type { HexData, MapData } from "../mapTypes";
 import { Camera, type Rect } from "./camera";
 import {
@@ -267,8 +267,10 @@ export class MapRenderer {
         const hex = this.hexAtScreen(p.x, p.y);
         const w = this.camera.screenToWorld(p.x, p.y);
         const unitId = counterAt(this.counterHits, w.x, w.y);
-        if (unitId) {
+        // The first click shows the hex; a counter opens only once its hex is selected.
+        if (unitId && hex && hex !== this.selected) {
           this.select(hex);
+        } else if (unitId) {
           this.callbacks.onUnitSelect(unitId);
         } else {
           this.select(hex && hex === this.selected ? null : hex);
@@ -485,12 +487,7 @@ export class MapRenderer {
     const zoneHexes = (centerId: string) => {
       const hex = this.hexByKey.get(centerId);
       if (!hex) return [];
-      const { row, col } = hex;
-      const diagonal = row % 2 === 0
-        ? [[row - 1, col], [row - 1, col + 1], [row + 1, col], [row + 1, col + 1]]
-        : [[row - 1, col - 1], [row - 1, col], [row + 1, col - 1], [row + 1, col]];
-      return [[row, col], [row, col - 1], [row, col + 1], ...diagonal]
-        .map(([r, c]) => this.hexByKey.get(hexId(r, c)))
+      return [hex, ...neighborCoords(hex.row, hex.col).map(({ row, col }) => this.hexByKey.get(hexId(row, col)))]
         .filter((candidate): candidate is HexData => Boolean(candidate));
     };
     const drawZone = (hexId: string, alpha: number) => {

@@ -23,6 +23,7 @@ import {
   type StrikeOverlay,
   type CombatOverlay,
 } from "./map/render/MapRenderer";
+import { BattlePlanner } from "./ui/BattlePlanner";
 import { BottomBar } from "./ui/BottomBar";
 import { describeCombatEvents, type CombatLogEntry } from "./ui/combatLog";
 import { PREVIEW_HUD } from "./ui/hudPreview";
@@ -72,6 +73,7 @@ function App() {
   const [strikeOptions, setStrikeOptions] = useState<AirStrikeOptionsResponse | null>(null);
   const [combatOptions, setCombatOptions] = useState<CombatOptionsResponse | null>(null);
   const [combatLog, setCombatLog] = useState<CombatLogEntry[]>([]);
+  const [battleHexId, setBattleHexId] = useState<string | null>(null);
   // Every unit ever seen, so eliminated units keep their names in logs and plans.
   const [roster, setRoster] = useState<ReadonlyMap<string, UnitState>>(new Map());
   const movementPreviewRef = useRef<MovementPreview | null>(null);
@@ -249,6 +251,12 @@ function App() {
     };
   }, [combatPhase, revision]);
 
+  // The Battle Planner stays open while an advance decision is pending.
+  useEffect(() => {
+    if (!combatPhase) setBattleHexId(null);
+  }, [combatPhase]);
+  const plannerHexId = combatPhase && snapshot?.combat ? (snapshot.combat.pendingAdvance?.hexId ?? battleHexId) : null;
+
   const combat = useMemo<CombatContext | null>(() => {
     if (!combatPhase || !snapshot?.combat) return null;
     // Options from an older revision are ignored until the fresh ones arrive.
@@ -349,7 +357,7 @@ function App() {
     void submitCommand(strikesPending ? { type: "resolveAirStrikes" } : { type: "endPhase" });
   }, [strikesPending, submitCommand]);
 
-  // Clicking a hex shows it in the Control Panel; clicking a counter then selects that unit.
+  // Clicking a hex shows it in the Control Panel; clicking a counter in the selected hex then selects that unit.
   const onSelect = useCallback((hex: HexData | null) => {
     setSelected(hex);
     setSelectedUnitId(null);
@@ -429,6 +437,22 @@ function App() {
           }}
           onSelectUnit={setSelectedUnitId}
           onPlanningCommand={(command) => void submitCommand(command)}
+          onOpenBattle={setBattleHexId}
+        />
+      )}
+      {snapshot?.combat && map && combat && plannerHexId && (
+        <BattlePlanner
+          key={plannerHexId}
+          map={map}
+          hexId={plannerHexId}
+          units={snapshot.units}
+          roster={roster}
+          combat={snapshot.combat}
+          objective={combat.objectives.get(plannerHexId)}
+          revision={snapshot.revision}
+          busy={commandBusy || !combat.ready}
+          onCommand={(command) => void submitCommand(command)}
+          onClose={() => setBattleHexId(null)}
         />
       )}
       {commandNotice && <div className="command-toast" role="alert"><strong>Command rejected</strong><span>{commandNotice}</span><button type="button" onClick={() => setCommandNotice(null)}>×</button></div>}
