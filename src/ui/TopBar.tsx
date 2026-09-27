@@ -17,22 +17,24 @@ export function TopBar({ hud, canEndPhase, phaseActionLabel, phaseActionBusy, on
         <span className="brand-mark">OOAW</span>
         <span className="brand-sub">NATO: The Cold War Goes Hot</span>
       </div>
-      <div className="hud-group">
-        <div className="hud-item">
-          <span className="hud-label">Turn</span>
-          <span className="hud-value">
-            {hud.turn}
-            <span className="hud-dim"> / {hud.lastTurn}</span>
-          </span>
-        </div>
-        <div className="hud-item">
-          <span className="hud-label">Player</span>
-          <span className={`hud-value side-${sideClass}`}>{hud.activePlayer}</span>
-        </div>
-        <div className="hud-item">
-          <span className="hud-label">Phase</span>
+      <div className={`phase-track track-${sideClass}`} aria-label="Turn progress">
+        <span className={`phase-side side-${sideClass}`}>{hud.activePlayer === "Both" ? "Joint" : hud.activePlayer}</span>
+        <span className="phase-round">
+          Round {hud.turn}
+          <span className="hud-dim"> / {hud.lastTurn}</span>
+        </span>
+        {hud.steps.length > 0 ? (
+          <ol className="phase-steps">
+            {hud.steps.map((step) => (
+              <li key={step.id} className={step.state} aria-current={step.state === "current" ? "step" : undefined}>
+                {step.state === "done" && <span aria-hidden="true">✓ </span>}
+                {step.label}
+              </li>
+            ))}
+          </ol>
+        ) : (
           <span className="hud-value">{hud.phase}</span>
-        </div>
+        )}
       </div>
       <div className="hud-group resources">
         {hud.resources.map((r) => (

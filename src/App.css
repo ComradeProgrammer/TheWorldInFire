@@ -93,6 +93,72 @@ select {
   gap: 20px;
 }
 
+.phase-track {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.phase-side {
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.phase-round {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.phase-steps {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Chevron segments; each overlaps the previous one's point. */
+.phase-steps li {
+  padding: 5px 16px 5px 20px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%, 10px 50%);
+}
+
+.phase-steps li + li {
+  margin-left: -6px;
+}
+
+.phase-steps li:first-child {
+  padding-left: 12px;
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%);
+}
+
+.phase-steps li.done {
+  background: #26303a;
+  color: #9fb0bf;
+}
+
+.phase-steps li.current {
+  background: var(--accent);
+  color: #11151a;
+  font-weight: 800;
+}
+
+.track-nato .phase-steps li.current {
+  background: var(--nato);
+}
+
+.track-pact .phase-steps li.current {
+  background: var(--pact);
+}
+
 .hud-group.resources {
   padding-left: 20px;
   border-left: 1px solid var(--border);

@@ -220,11 +220,15 @@ new_game("nato-1983-standard")
     "grid": {},
     "hexes": [],
     "hexsides": []
-  }
+  },
+  "turnSequence": [
+    { "id": "joint.jointStatus", "phaseId": "jointStatus", "actor": { "type": "all" }, "execution": "interactive" },
+    { "id": "warsawPact.battlePlanning", "phaseId": "battlePlanning", "actor": { "type": "side", "sideId": "warsawPact" }, "execution": "interactive" }
+  ]
 }
 ```
 
-示例省略了地图的完整网格、地形和绘制数据。地图只在创建游戏时随启动响应下发；后续命令返回的快照不重复携带地图。
+示例省略了地图的完整网格、地形和绘制数据。地图和场景的 `turnSequence`（一个游戏回合内按顺序排列的步骤，来自 `GameState::turn_sequence`）只在创建游戏时随启动响应下发；后续命令返回的快照不重复携带它们，而是用 `turn.stepIndex` 定位当前步骤。
 
 列出可用场景：
 
@@ -378,6 +382,8 @@ battle_preview({ "request": { "hexId": "2415", "unitIds": ["..."], "supportingHq
 战斗结算后对话框保持打开，显示骰点、结果与反击，以及各单位的新状态（被消灭、撤退、混乱）。格子被清空时，右栏变为推进选择（推进或原地不动），在作出决定前对话框不能关闭；若存在待决定的推进，对话框会自动重新打开。
 
 战斗后会自动选中目标格。仍有华约必须进攻的目标时，顶栏按钮显示“N Marked Attacks Left”并禁用。战斗计划面板列出各场战斗；战斗日志列出战斗比、骰点、反击、损失、撤退、推进与夺取的城市。客户端名册保留被消灭单位的名称。
+
+顶栏显示回合进度：行动方（或“Joint”联合）、“Round X / N”，以及由启动数据 `turnSequence` 中该行动者的非自动步骤组成的箭头进度条（Plan、Strike、Combat、Reserve）。`turn.stepIndex` 之前的步骤打勾，当前步骤以该方颜色填充，之后的步骤显示为暗色。
 
 显示选项（镜头缩放、适配地图和地图图层开关）位于右上角“设置”按钮打开的模态设置窗口中。底栏可折叠，并分为两个只读区域：左侧“战斗计划”实时渲染 `snapshot.battlePlan`，右侧“战斗日志”在战斗结算实现之前保持为空。
 

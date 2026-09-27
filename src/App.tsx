@@ -12,6 +12,7 @@ import {
   type UnitState,
   type GameSnapshot,
   type MovementMode,
+  type PhaseSnapshot,
 } from "./gameApi";
 import { MapCanvas } from "./map/MapCanvas";
 import type { HexData, MapData } from "./map/mapTypes";
@@ -44,6 +45,15 @@ const PHASE_NAMES: Record<string, string> = {
   postBattle: "Post-Battle",
 };
 
+/** Short labels for the top-bar phase track. */
+const PHASE_TRACK_LABELS: Record<string, string> = {
+  jointStatus: "Joint Status",
+  battlePlanning: "Plan",
+  offensiveStrike: "Strike",
+  combat: "Combat",
+  reserve: "Reserve",
+};
+
 function phaseName(id: string): string {
   return PHASE_NAMES[id] ?? id;
 }
@@ -61,6 +71,7 @@ function App() {
   const [layers, setLayers] = useState(DEFAULT_LAYERS);
   const [snapshot, setSnapshot] = useState<GameSnapshot | null>(null);
   const [map, setMap] = useState<MapData | null>(null);
+  const [turnSequence, setTurnSequence] = useState<PhaseSnapshot[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [commandBusy, setCommandBusy] = useState(false);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
@@ -87,6 +98,7 @@ function App() {
         if (!active) return;
         setSnapshot(next.snapshot);
         setMap(next.map);
+        setTurnSequence(next.turnSequence);
       },
       (error: unknown) => {
         if (!active) return;
@@ -101,7 +113,17 @@ function App() {
 
   const hud = useMemo(() => {
     if (!snapshot) return PREVIEW_HUD;
-    const actor = snapshot.turn.currentStep?.actor;
+    const current = snapshot.turn.currentStep;
+    const actor = current?.actor;
+    // The acting side's (or the joint) steps that wait for player input.
+    const steps = !current
+      ? []
+      : turnSequence.flatMap((step, index) => {
+        const sameActor = step.actor.type === actor?.type && step.actor.sideId === actor?.sideId;
+        if (!sameActor || step.execution === "automatic") return [];
+        const state = index < snapshot.turn.stepIndex ? "done" : index === snapshot.turn.stepIndex ? "current" : "upcoming";
+        return [{ id: step.id, label: PHASE_TRACK_LABELS[step.phaseId] ?? phaseName(step.phaseId), state } as const];
+      });
     return {
       ...PREVIEW_HUD,
       scenario: snapshot.scenario.name,
@@ -109,14 +131,15 @@ function App() {
       lastTurn: snapshot.scenario.maxGameTurns,
       activePlayer:
         actor?.type === "all" ? ("Both" as const) : actor?.sideId === "nato" ? ("NATO" as const) : ("Warsaw Pact" as const),
-      phase: snapshot.turn.currentStep ? phaseName(snapshot.turn.currentStep.phaseId) : "Complete",
+      phase: current ? phaseName(current.phaseId) : "Game over",
+      steps,
       resources: snapshot.airPoints.map((points) => ({
         label: `${points.sideId === "nato" ? "NATO" : "WP"} Air`,
         value: `${points.tactical}T · ${points.operational}O${points.bonusTactical > 0 ? ` · +${points.bonusTactical}` : ""}`,
         side: points.sideId === "nato" ? ("nato" as const) : ("pact" as const),
       })),
     };
-  }, [snapshot]);
+  }, [snapshot, turnSequence]);
 
   // The selected unit, when it belongs to the side currently planning.
   const planningUnit = useMemo(() => {

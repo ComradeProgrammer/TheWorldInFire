@@ -220,11 +220,15 @@ new_game("nato-1983-standard")
     "grid": {},
     "hexes": [],
     "hexsides": []
-  }
+  },
+  "turnSequence": [
+    { "id": "joint.jointStatus", "phaseId": "jointStatus", "actor": { "type": "all" }, "execution": "interactive" },
+    { "id": "warsawPact.battlePlanning", "phaseId": "battlePlanning", "actor": { "type": "side", "sideId": "warsawPact" }, "execution": "interactive" }
+  ]
 }
 ```
 
-The example omits the full grid, terrain, and rendering data. The map is sent once in the game-creation bootstrap; snapshots returned by later commands do not repeat it.
+The example omits the full grid, terrain, and rendering data. The map and the scenario's `turnSequence` (the ordered steps of one game turn, from `GameState::turn_sequence`) are sent once in the game-creation bootstrap; snapshots returned by later commands do not repeat them and locate the current step by `turn.stepIndex`.
 
 List available scenarios:
 
@@ -378,6 +382,8 @@ Attack opens the Battle Planner dialog (`src/ui/BattlePlanner.tsx`), titled "Bat
 After the battle the dialog stays open with the die roll, result, and Counterattacks, and each unit's new status (eliminated, retreated, Disrupted). When the hex is cleared, the right column becomes the advance choice (Advance or Stay in place), and the dialog cannot be closed until that decision is made. It reopens automatically if a pending advance exists.
 
 After a battle the objective hex is selected automatically. The top-bar action reads "N Marked Attacks Left" and is disabled while WP objectives remain. Battles appear in the Battle Plan pane. The Combat Log lists odds, rolls, Counterattacks, losses, retreats, advances, and captured cities. A client-side roster keeps eliminated units' names.
+
+The top bar shows the turn progress: the acting side (or Joint), "Round X / N", and a chevron track of that actor's non-automatic steps from the bootstrap `turnSequence` (Plan, Strike, Combat, Reserve). Steps before `turn.stepIndex` are ticked, the current one is filled in the side's colour, and later ones are dim.
 
 Display options (camera zoom, fit, and map-layer toggles) live in a modal Settings dialog opened from the top-right Settings button. The bottom bar is collapsible and split into two read-only panes: Battle Plan, rendered live from `snapshot.battlePlan`, and Combat Log, which stays empty until combat resolution exists.
 

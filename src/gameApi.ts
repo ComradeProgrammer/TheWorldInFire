@@ -361,6 +361,8 @@ export interface CommandResponse {
 export interface NewGameResponse {
   snapshot: GameSnapshot;
   map: MapData;
+  /** The scenario's steps for one game turn, in order; sent once with the map. */
+  turnSequence: PhaseSnapshot[];
 }
 
 let initialGame: Promise<NewGameResponse> | null = null;

@@ -202,6 +202,11 @@ impl GameState {
     pub fn map(&self) -> &MapDefinition {
         &self.scenario.map
     }
+
+    /// Returns the ordered steps of every game turn in this game's scenario.
+    pub fn turn_sequence(&self) -> &[PhaseDefinition] {
+        &self.scenario.turn_sequence
+    }
 }
 
 fn validate_scenario(scenario: &ScenarioDefinition) -> Result<(), RuleError> {

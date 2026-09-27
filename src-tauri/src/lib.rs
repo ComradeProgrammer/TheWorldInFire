@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use ooaw_core::{
     find_scenario, AirStrikeOptions, BattleOdds, CombatOptions, GameCommand, GameId, GameSnapshot, GameState, HexId, MapDefinition,
-    MovementModeOptions, RuleError, ScenarioSummary, UnitId,
+    MovementModeOptions, PhaseDefinition, RuleError, ScenarioSummary, UnitId,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -57,6 +57,7 @@ struct CommandResponse {
 struct NewGameResponse {
     snapshot: GameSnapshot,
     map: MapDefinition,
+    turn_sequence: Vec<PhaseDefinition>,
 }
 
 #[tauri::command]
@@ -75,12 +76,17 @@ fn new_game(scenario_id: String, state: State<'_, AppState>) -> Result<NewGameRe
     let game = GameState::new(GameId(uuid::Uuid::new_v4().to_string()), scenario)?;
     let snapshot = game.snapshot();
     let map = game.map().clone();
+    let turn_sequence = game.turn_sequence().to_vec();
     let mut session = state
         .game
         .lock()
         .map_err(|_| ApiError::new("sessionUnavailable", "Game session lock is poisoned"))?;
     *session = Some(game);
-    Ok(NewGameResponse { snapshot, map })
+    Ok(NewGameResponse {
+        snapshot,
+        map,
+        turn_sequence,
+    })
 }
 
 #[tauri::command]
