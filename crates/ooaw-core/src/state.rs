@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::dice::Dice;
 use crate::model::{
-    AirInterdictionZone, AirPoints, BattlePlan, CityControlState, HexId, MapDefinition, PhaseActor,
-    PhaseDefinition, ScenarioDefinition, ScenarioSummary, SideId, StrikePlan, UnitId, UnitState,
+    AirInterdictionZone, AirPoints, BattlePlan, CityControlState, CombatState, HexId,
+    MapDefinition, PhaseActor, PhaseDefinition, ScenarioDefinition, ScenarioSummary, SideId,
+    StrikePlan, UnitId, UnitState,
 };
 
 use crate::error::RuleError;
@@ -72,6 +73,8 @@ pub struct GameSnapshot {
     pub breakthrough_markers: Vec<HexId>,
     /// Units eliminated so far, in order of elimination.
     pub eliminated_unit_ids: Vec<UnitId>,
+    /// Battles and restrictions of the current Combat Phase.
+    pub combat: Option<CombatState>,
     /// Player decision that must be resolved before automatic play can continue.
     pub pending_decision: Option<PendingDecision>,
 }
@@ -100,6 +103,7 @@ pub struct GameState {
     pub(super) air_interdiction_zones: Vec<AirInterdictionZone>,
     pub(super) breakthrough_markers: Vec<HexId>,
     pub(super) eliminated_units: Vec<UnitId>,
+    pub(super) combat: Option<CombatState>,
     /// Seeded dice; saves must persist this state to replay identically.
     pub(super) dice: Dice,
 }
@@ -148,6 +152,7 @@ impl GameState {
             air_interdiction_zones: Vec::new(),
             breakthrough_markers: Vec::new(),
             eliminated_units: Vec::new(),
+            combat: None,
             dice,
         })
     }
@@ -155,7 +160,7 @@ impl GameState {
     /// Returns the serializable game state exposed to clients.
     pub fn snapshot(&self) -> GameSnapshot {
         GameSnapshot {
-            protocol_version: 11,
+            protocol_version: 13,
             game_id: self.game_id.clone(),
             revision: self.revision,
             scenario: ScenarioSummary::from(&self.scenario),
@@ -173,7 +178,15 @@ impl GameState {
             air_interdiction_zones: self.air_interdiction_zones.clone(),
             breakthrough_markers: self.breakthrough_markers.clone(),
             eliminated_unit_ids: self.eliminated_units.clone(),
-            pending_decision: None,
+            combat: self.combat.clone(),
+            // The Attacker must decide on an advance before fighting on (25.8).
+            pending_decision: self
+                .combat
+                .as_ref()
+                .and_then(|combat| combat.pending_advance.as_ref())
+                .map(|_| PendingDecision {
+                    kind: "advanceAfterCombat".to_owned(),
+                }),
         }
     }
 

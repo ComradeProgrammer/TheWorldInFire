@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { AirMission, BattlePlan, MovementMode, StrikePlan, UnitState } from "../gameApi";
+import type { AirMission, BattlePlan, BattleReport, MovementMode, StrikePlan, UnitState } from "../gameApi";
 import type { CombatLogEntry } from "./combatLog";
 
 function unitName(units: UnitState[], id: string): string {
@@ -28,9 +28,16 @@ function fromLabel(movement: BattlePlan["movements"][number]): string {
   return movement.from.type === "hex" ? movement.from.hexId : "Strategic Reserve";
 }
 
-export function BottomBar({ plan, strikePlan, units, combatLog, collapsed, onToggleCollapsed }: {
+function battleText(battle: BattleReport, units: UnitState[]): string {
+  const attackers = battle.attackingUnitIds.map((id) => unitName(units, id)).join(", ");
+  if (!battle.result || battle.dieRoll === null) return `${battle.hexId} · Breakthrough advance · ${attackers}`;
+  return `${battle.hexId} · ${battle.odds?.finalOdds ?? ""} · rolled ${battle.dieRoll} → ${battle.result.code} · ${attackers}`;
+}
+
+export function BottomBar({ plan, strikePlan, battles, units, combatLog, collapsed, onToggleCollapsed }: {
   plan: BattlePlan | null;
   strikePlan: StrikePlan | null;
+  battles: BattleReport[];
   units: UnitState[];
   combatLog: CombatLogEntry[];
   collapsed: boolean;
@@ -43,6 +50,7 @@ export function BottomBar({ plan, strikePlan, units, combatLog, collapsed, onTog
       + plan.entrainingUnitIds.length
       + plan.detrainedUnitIds.length
       + (strikePlan?.missions.length ?? 0)
+      + battles.length
     : 0;
   const logRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -75,6 +83,12 @@ export function BottomBar({ plan, strikePlan, units, combatLog, collapsed, onTog
             ))}
             {plan?.entrainingUnitIds.map((id) => <p key={`entrain-${id}`}><b>Entrain</b><span>{unitName(units, id)}</span></p>)}
             {plan?.detrainedUnitIds.map((id) => <p key={`detrain-${id}`}><b>Detrain</b><span>{unitName(units, id)}</span></p>)}
+            {battles.map((battle) => (
+              <p key={`battle-${battle.id}`}>
+                <b>Battle</b>
+                <span>{battleText(battle, units)}</span>
+              </p>
+            ))}
             {strikePlan?.missions.map((mission) => (
               <p key={`mission-${mission.id}`}>
                 <b>{mission.kind.type === "strike" ? "Strike" : "Interdict"}</b>

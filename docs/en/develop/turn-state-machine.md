@@ -39,7 +39,7 @@ Not implemented yet:
 - the complete unit roster and road/river movement modifiers not yet represented in map data;
 - dynamic line-of-supply calculation based on map control, countries, cities, enemy zones of control, HQ support ranges, and blocked edges;
 - interception, air-transport losses, and the complete Lift Command order of battle;
-- Nuclear, Chemical, and Artillery Strikes, NATO Deep Interdiction, NATO Defensive Air Strikes, and ground combat;
+- Nuclear, Chemical, and Artillery Strikes, NATO Deep Interdiction, NATO Defensive Air Strikes, and the parts of ground combat listed under "Combat Phase" below;
 - reserve movement;
 - concrete automatic work for `postBattle`;
 - deployments and victory conditions for the remaining official scenarios;
@@ -135,6 +135,28 @@ Joint phases use actor `all`; later phases use the corresponding side as actor.
 
 Not implemented in this phase: Nuclear and Chemical Strikes (with Armageddon and war-crimes penalties), WP Artillery divisions (BALTAP has none), NATO Deep Interdiction, strikes on Reforger Sites, Fortified hexes, and the Danish Airspace exception.
 
+### Combat Phase
+
+`src/combat.rs` implements a simplified Combat Phase (25) in which only the Attacker makes choices. The WP must attack every Battle Marker objective it still can (`mandatoryAttacksRemaining` rejects `endPhase` until then). NATO may attack any eligible hex.
+
+- **Commands:** `resolveBattle { hexId, unitIds, supportingHqId? }` commits adjacent Maneuver units, optionally with one HQ's Offensive Support, and resolves the battle at once. `advanceAfterCombat { unitIds }` advances survivors into a cleared hex, or declines with an empty list. While an advance is pending, the snapshot's `pendingDecision.kind` is `advanceAfterCombat`, no other battle may start, and `endPhase` declines it.
+- **Strengths** are computed in sixty-fourths so fractions stay exact.
+  - Attack: Disrupted ½, Out of Combat Supply ½, Armored into a City or Mountain ½, Minor River ¾, Major River ½.
+  - Defense: Disrupted ½, Out of Combat Supply ½, Soft units in cover ×2, the Free City's Organic Defense, and a Provisional HQ only when no Maneuver unit defends.
+  - Units under a train marker and Engaged units add nothing.
+- **Offensive Support** (25.4): `ScenarioDefinition::offensive_support_hqs` lists each HQ able to support and its Subordinate formations. The HQ's first-step Attack value is its Support Range (3.4.1). It must be supplied, not Suppressed, not under a train marker, and unused this phase (`combat.supportingHqIds`). A breadth-first search from the HQ must reach a committed Subordinate unit within the range, not through enemy units, enemy-controlled cities, unnegated EZOC hexes, All-Sea hexes, or Blocked/All-Sea hexsides (the Danish Ferry excepted). `combat_options` lists `supportHqIds` per objective, assuming every eligible unit attacks. `battle_preview` and `resolveBattle` re-validate against the actual commitment.
+- **BALTAP** (36.4.2.4, 36.4.2.6): the NEGF HQ supports the NEGF and 2nd Guards Tank Army formations. It carries the `immobile` trait (all movement and entraining rejected with `unitImmobile`) and is removed at the start of Game Turn 4 through `ScenarioDefinition::withdrawals` (`unitWithdrawn` event).
+- **Odds:** the attack total rounds down and the defense total rounds up; odds below 1:1 round in the Defender's favour. Column shifts come from terrain, Flank (+1) and Concentric (+2, map edges never count as surrounded), Offensive Support (+1), and Surprise (+1 WP). They are capped at ±2, except the WP's upward shifts on the Surprise turn. The CRT and Counterattack Table are transcribed from the map.
+- **Automated Defender decisions:**
+  - defending losses: Maneuver units first, strongest first; HQs are Suppressed instead;
+  - Counterattack targets: the strongest attacker not yet Disrupted; NATO Counterattacks with its most numerous nationality;
+  - the attacking step lost to A1: the strongest attacker;
+  - the Defender never trades steps to shorten a retreat;
+  - the retreat route follows the 25.7.4 priorities, with "toward the friendly rear" approximated as farthest from the attackers.
+- **Results** (25.6): steps lost, retreats with EZOC and unfulfilled-hex losses, Disruption, Engaged markers, Consolidation advance up to the stacking limit, city capture by advancing, and Breakthrough Markers after the advance decision. An empty Breakthrough Marker hex is an advance-only battle.
+
+Not implemented: Attack Helicopters, Defender Reaction, NATO Defensive Strikes, Exploitation, Assaults, Coordination (26), the WP multi-Front Counterattack restriction, the Defender's choice of losses and retreat and the "They shall not pass!" option, the Joint Combat Supply check, and the true friendly-rear retreat direction.
+
 ## Core module layout
 
 The game state machine is split by responsibility while the crate root provides a stable public API:
@@ -145,6 +167,7 @@ src/model/
 ├─ map.rs               map, terrain, city, grid, and hexside models
 ├─ planning.rs          battle plans, objectives, and movement records
 ├─ strike.rs            Air Points, air missions, Airspace, Disruption, strike previews
+├─ combat.rs            battle reports, odds, CRT results, combat previews
 ├─ side.rs              side identifiers and definitions
 ├─ phase.rs             phase identifiers, execution, and actors
 ├─ rules.rs             movement modes, train status, and scenario rule parameters
@@ -161,6 +184,7 @@ src/
 ├─ phase.rs     phase-entry handlers
 ├─ planning.rs  battle-planning commands and plan bookkeeping
 ├─ strikes.rs   Offensive Strike Phase: air missions, Strike Table, markers
+├─ combat.rs    Combat Phase: odds, CRT, results, retreat, advance
 ├─ airspace.rs  Airspace from each side's point of view
 ├─ dice.rs      seeded, reproducible dice
 ├─ movement.rs  movement rules, pathfinding, and movement previews
@@ -189,7 +213,7 @@ new_game("nato-1983-standard")
 
 ```json
 {
-  "snapshot": { "protocolVersion": 11, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
+  "snapshot": { "protocolVersion": 13, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
   "map": {
     "id": "nato-central-europe",
     "version": 1,
@@ -218,7 +242,7 @@ Current snapshot example:
 
 ```json
 {
-  "protocolVersion": 11,
+  "protocolVersion": 13,
   "gameId": "generated-uuid",
   "revision": 0,
   "scenario": {
@@ -295,6 +319,21 @@ Offensive Strike commands:
 { "type": "resolveAirStrikes" }
 ```
 
+Combat queries and commands:
+
+```text
+combat_options()  →  { "revision": 9, "mandatoryRemaining": ["2415"],
+  "objectives": [{ "hexId": "2415", "eligibleUnitIds": ["..."], "mandatory": true, "breakthroughOnly": false }] }
+battle_preview({ "request": { "hexId": "2415", "unitIds": ["..."], "supportingHqId": null } })  →  { "revision": 9, "odds": { "totalAttack": 8, "totalDefense": 3, "shifts": [...], "finalOdds": "3:1", "possibleResults": [...] } }
+```
+
+```json
+{ "type": "resolveBattle", "hexId": "2415", "unitIds": ["soviet.2gta.21motorRifleDivision"], "supportingHqId": "soviet.northernEastGermanyFront.hq" }
+{ "type": "advanceAfterCombat", "unitIds": ["soviet.2gta.21motorRifleDivision"] }
+```
+
+Protocol 12 adds the snapshot's `combat` (battles, attacked units and hexes, Engaged units, pending advance) and the events `battleResolved`, `unitRetreated`, `advanceOffered`, and `unitsAdvanced`. Protocol 13 adds Offensive Support: `supportHqIds` on combat objectives, `supportingHqId` on battle reports, `combat.supportingHqIds`, and the `unitWithdrawn` event.
+
 The snapshot adds `airPoints`, `strikePlan`, `airInterdictionZones`, `breakthroughMarkers`, `eliminatedUnitIds`, and each unit's `disruption`. New events: `airPointsReset`, `airMissionPlanned`, `airMissionCancelled`, `airStrikeResolved` (die roll, modifier, result), `airInterdictionZonePlaced`, `airInterdictionZonesRemoved`, `unitDisruptionChanged`, `unitStepLost`, `unitEliminated`, `breakthroughMarkerPlaced`, and `breakthroughMarkersRemoved`. The snapshot's `cities` array gives `{ hexId, owner, controller, free }` for every city hex. `CityControlChanged` events accompany movements that take or liberate a city, and their undo; each `PlannedMovement` records its `cityControlChanges`.
 
 Command variant names and their fields are both camelCase. Battle-planning commands:
@@ -323,6 +362,19 @@ During the Offensive Strike Phase the frontend fetches `air_strike_options` once
 - each committed mission with an Undo button, replaced by its dice result once resolved.
 
 While missions are pending, the top-bar action reads "Resolve Air Strikes" (`resolveAirStrikes`), then "End Phase". The map outlines strikeable hexes (red where Tactical points may be used, grey otherwise) and draws crosshairs for committed strikes, a purple seven-hex area for Air Interdiction Zones (lighter while pending), and stars for Breakthrough Markers. Counters show a D or S badge when Disrupted or Suppressed. The Battle Plan pane lists air missions and their results. The Combat Log is built on the client from strike events (die roll, modifier, result, step losses, eliminations, Disruption, Breakthroughs, interdiction); it is presentation only.
+
+During the Combat Phase the frontend fetches `combat_options` once per revision. The map outlines attackable hexes: red for mandatory WP objectives, orange for optional ones. Hexes already fought over get a small cross.
+
+The hex view gains a Battle section:
+
+- eligible attackers with checkboxes (all checked by default);
+- an Offensive Support checkbox for each HQ the core lists (unchecked by default, since each HQ supports once per phase);
+- a `battle_preview` odds breakdown, re-fetched when the selection changes: each unit's adjusted strength and modifiers, the column shifts, the final odds, and the six possible results;
+- a Resolve battle button;
+- the battle's report once fought;
+- the advance choice (Advance or Stay in place) when the hex is cleared.
+
+After a battle the objective hex is selected automatically. The top-bar action reads "N Marked Attacks Left" and is disabled while WP objectives remain. Battles appear in the Battle Plan pane. The Combat Log lists odds, rolls, Counterattacks, losses, retreats, advances, and captured cities. A client-side roster keeps eliminated units' names.
 
 Display options (camera zoom, fit, and map-layer toggles) live in a modal Settings dialog opened from the top-right Settings button. The bottom bar is collapsible and split into two read-only panes: Battle Plan, rendered live from `snapshot.battlePlan`, and Combat Log, which stays empty until combat resolution exists.
 

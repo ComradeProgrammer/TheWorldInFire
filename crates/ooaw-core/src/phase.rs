@@ -25,6 +25,21 @@ impl GameState {
 
     fn resolve_joint_reinforcement(&mut self, events: &mut Vec<GameEvent>) {
         self.reset_air_points(events);
+        let withdrawn: Vec<_> = self
+            .scenario
+            .withdrawals
+            .iter()
+            .filter(|withdrawal| withdrawal.game_turn == self.game_turn)
+            .map(|withdrawal| withdrawal.unit_id.clone())
+            .filter(|unit_id| self.units.contains_key(unit_id))
+            .collect();
+        for unit_id in withdrawn {
+            self.units.remove(&unit_id);
+            events.push(GameEvent::UnitWithdrawn {
+                game_turn: self.game_turn,
+                unit_id,
+            });
+        }
 
         let arriving_units: Vec<_> = self
             .scenario
@@ -88,7 +103,9 @@ impl GameState {
         self.start_strike_plan();
     }
 
-    fn resolve_combat(&mut self, _events: &mut Vec<GameEvent>) {}
+    fn resolve_combat(&mut self, _events: &mut Vec<GameEvent>) {
+        self.start_combat();
+    }
 
     fn resolve_reserve(&mut self, _events: &mut Vec<GameEvent>) {}
 

@@ -39,7 +39,7 @@
 - 完整单位序列与尚未进入地图数据的道路、河流通行修正；
 - 基于地图控制、国家、城市、敌方控制区、HQ 支援范围和阻断边的动态补给线判定；
 - 拦截、空运损失与升降机司令部完整编制；
-- 核打击、化学打击、炮兵打击、北约纵深遮断、北约防御性空中打击和地面战斗；
+- 核打击、化学打击、炮兵打击、北约纵深遮断、北约防御性空中打击，以及下文“战斗阶段”所列的地面战斗未实现部分；
 - 预备队移动；
 - `postBattle` 的具体自动结算；
 - 其余正式剧本的部署与胜利条件；
@@ -135,6 +135,28 @@ jointStatus
 
 本阶段尚未实现：核打击与化学打击（及末日与战争罪惩罚）、华约炮兵师（BALTAP 中没有）、北约纵深遮断、对 Reforger 地点的打击、筑垒格，以及丹麦空域例外。
 
+### 战斗阶段
+
+`src/combat.rs` 实现简化的战斗阶段（25），只有进攻方作出选择。华约必须攻击所有仍能攻击的战斗标记目标（在此之前 `endPhase` 会以 `mandatoryAttacksRemaining` 拒绝）；北约可以攻击任何合格的格子。
+
+- **命令：**`resolveBattle { hexId, unitIds, supportingHqId? }` 投入相邻机动单位（可选一个 HQ 的进攻支援）并立即结算战斗；`advanceAfterCombat { unitIds }` 让存活单位推进进入已清空的格子，空列表表示放弃推进。有待决定的推进时，快照的 `pendingDecision.kind` 为 `advanceAfterCombat`，不能开始其他战斗，`endPhase` 会放弃推进。
+- **战力**以六十四分之一为单位计算，保证小数精确。
+  - 攻击：混乱 ½、缺乏战斗补给 ½、装甲攻击城市或山地 ½、小河 ¾、大河 ½。
+  - 防御：混乱 ½、缺乏战斗补给 ½、软目标单位在掩护地形 ×2、自由城市固有防御，以及仅在没有机动单位防守时的 HQ 临时防御。
+  - 铁路标记单位和已交战单位不提供防御。
+- **进攻支援**（25.4）：`ScenarioDefinition::offensive_support_hqs` 列出可提供支援的 HQ 及其下属编制。HQ 第一个战力面的攻击值即其支援范围（3.4.1）。HQ 必须有补给、未被压制、不在铁路标记下，且本阶段尚未使用（`combat.supportingHqIds`）。从 HQ 出发的广度优先搜索须在支援范围内到达一个所投入的下属单位，且不经过敌方单位、敌方控制的城市、未被抵消的敌控格、全海格，也不跨越阻断或全海格边（丹麦渡轮除外）。`combat_options` 按“所有合格单位都进攻”的假设，为每个目标列出 `supportHqIds`；`battle_preview` 和 `resolveBattle` 会按实际投入重新校验。
+- **BALTAP**（36.4.2.4、36.4.2.6）：NEGF HQ 支援 NEGF 与近卫坦克第 2 集团军编制。它带有 `immobile` 特性（所有移动和装车都以 `unitImmobile` 拒绝），并通过 `ScenarioDefinition::withdrawals` 在第四回合开始时移出游戏（`unitWithdrawn` 事件）。
+- **战斗比：**攻击向下取整，防御向上取整；低于 1:1 的比值按有利于防守方的方式取整。移栏来自地形、侧翼（+1）、包围（+2，地图边缘不算被包围）、进攻支援（+1）和奇袭（华约 +1），并限制在 ±2 以内（奇袭回合华约的向上移栏除外）。战斗结果表和反击表抄录自地图。
+- **自动完成的防守方决定：**
+  - 防守损失：先由机动单位承受，从最强的开始；HQ 改为被压制；
+  - 反击目标：尚未混乱的最强进攻单位；北约以人数最多的国籍反击；
+  - A1 损失的进攻战力面：最强的进攻单位；
+  - 防守方从不以战力面换取缩短撤退；
+  - 撤退路线遵循 25.7.4 的优先级，“朝向己方后方”近似为离进攻方最远。
+- **结果**（25.6）：战力面损失、撤退（含敌控格和未完成格的损失）、混乱、交战标记、受堆叠限制的巩固推进、推进夺取城市，以及推进决定后放置突破标记。攻击只有突破标记的空格是只推进的战斗。
+
+尚未实现：武装直升机、防守方反应、北约防御性打击、扩张、强攻、协同（26）、华约多方面军反击限制、防守方自行选择损失与撤退及“决不后退”选项、联合战斗补给检查，以及真正的“朝向己方后方”撤退方向。
+
 ## 内核模块结构
 
 游戏状态机按职责拆分，同时由 crate 根统一导出公共类型：
@@ -145,6 +167,7 @@ src/model/
 ├─ map.rs               地图、地形、城市、网格和六角边模型
 ├─ planning.rs          战斗计划、攻击目标与移动记录
 ├─ strike.rs            空中点数、空中任务、空域、混乱与打击预览
+├─ combat.rs            战斗报告、战斗比、战斗结果与战斗预览
 ├─ side.rs              阵营标识与定义
 ├─ phase.rs             阶段标识、执行方式与行动方
 ├─ rules.rs             移动方式、装车状态与剧本规则参数
@@ -161,6 +184,7 @@ src/
 ├─ phase.rs     阶段入口处理器
 ├─ planning.rs  战斗计划命令与计划记录
 ├─ strikes.rs   进攻打击阶段：空中任务、打击表与标记
+├─ combat.rs    战斗阶段：战斗比、战斗结果表、结果、撤退与推进
 ├─ airspace.rs  各方视角的空域
 ├─ dice.rs      带种子、可复现的骰子
 ├─ movement.rs  移动规则、寻路与移动预览
@@ -189,7 +213,7 @@ new_game("nato-1983-standard")
 
 ```json
 {
-  "snapshot": { "protocolVersion": 11, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
+  "snapshot": { "protocolVersion": 13, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
   "map": {
     "id": "nato-central-europe",
     "version": 1,
@@ -218,7 +242,7 @@ new_game("nato-baltap-1983")
 
 ```json
 {
-  "protocolVersion": 11,
+  "protocolVersion": 13,
   "gameId": "generated-uuid",
   "revision": 0,
   "scenario": {
@@ -295,6 +319,21 @@ air_strike_options()  →  { "revision": 5, "tacticalHexes": [...], "friendlyHex
 { "type": "resolveAirStrikes" }
 ```
 
+战斗查询与命令：
+
+```text
+combat_options()  →  { "revision": 9, "mandatoryRemaining": ["2415"],
+  "objectives": [{ "hexId": "2415", "eligibleUnitIds": ["..."], "mandatory": true, "breakthroughOnly": false }] }
+battle_preview({ "request": { "hexId": "2415", "unitIds": ["..."], "supportingHqId": null } })  →  { "revision": 9, "odds": { "totalAttack": 8, "totalDefense": 3, "shifts": [...], "finalOdds": "3:1", "possibleResults": [...] } }
+```
+
+```json
+{ "type": "resolveBattle", "hexId": "2415", "unitIds": ["soviet.2gta.21motorRifleDivision"], "supportingHqId": "soviet.northernEastGermanyFront.hq" }
+{ "type": "advanceAfterCombat", "unitIds": ["soviet.2gta.21motorRifleDivision"] }
+```
+
+协议 12 在快照中新增 `combat`（战斗、已进攻的单位与格子、已交战单位、待决定的推进），并新增事件 `battleResolved`、`unitRetreated`、`advanceOffered` 和 `unitsAdvanced`。协议 13 加入进攻支援：战斗目标的 `supportHqIds`、战斗报告的 `supportingHqId`、`combat.supportingHqIds`，以及 `unitWithdrawn` 事件。
+
 快照新增 `airPoints`、`strikePlan`、`airInterdictionZones`、`breakthroughMarkers`、`eliminatedUnitIds` 以及每个单位的 `disruption`。新增事件：`airPointsReset`、`airMissionPlanned`、`airMissionCancelled`、`airStrikeResolved`（骰点、修正与结果）、`airInterdictionZonePlaced`、`airInterdictionZonesRemoved`、`unitDisruptionChanged`、`unitStepLost`、`unitEliminated`、`breakthroughMarkerPlaced` 和 `breakthroughMarkersRemoved`。快照的 `cities` 数组为每个城市格给出 `{ hexId, owner, controller, free }`。占领或解放城市的移动及其撤销会附带 `CityControlChanged` 事件；每条 `PlannedMovement` 记录其 `cityControlChanges`。
 
 命令的变体名和字段名都使用 camelCase。战斗计划命令：
@@ -323,6 +362,19 @@ air_strike_options()  →  { "revision": 5, "tacticalHexes": [...], "friendlyHex
 - 每个已下达任务的撤销按钮，结算后替换为骰子结果。
 
 有待结算任务时，顶栏按钮显示“Resolve Air Strikes”（`resolveAirStrikes`），之后显示“End Phase”。地图会勾勒可打击的格子（可用战术点数处为红色，否则为灰色），并为已下达的打击绘制准星、为空中遮断区绘制紫色七格区域（待结算时较浅）、为突破标记绘制星形。混乱或被压制的算子显示 D 或 S 徽标。战斗计划面板列出空中任务及其结果。战斗日志由客户端根据打击事件生成（骰点、修正、结果、战力面损失、消灭、混乱、突破与遮断），仅用于展示。
+
+战斗阶段中，前端在每个 revision 获取一次 `combat_options`。地图勾勒可进攻的格子：华约必须进攻的目标为红色，可选目标为橙色；已发生战斗的格子带有小叉。
+
+格子视图增加“战斗”区域，其中包括：
+
+- 可勾选的合格进攻单位（默认全选）；
+- 内核列出的每个 HQ 的进攻支援复选框（默认不勾选，因为每个 HQ 每阶段只能支援一次）；
+- 选择变化时重新获取的 `battle_preview` 战斗比分解：各单位调整后的战力与修正、移栏、最终战斗比，以及六种可能结果；
+- “结算战斗”按钮；
+- 战斗后的战斗报告；
+- 格子被清空时的推进选择（推进或原地不动）。
+
+战斗后会自动选中目标格。仍有华约必须进攻的目标时，顶栏按钮显示“N Marked Attacks Left”并禁用。战斗计划面板列出各场战斗；战斗日志列出战斗比、骰点、反击、损失、撤退、推进与夺取的城市。客户端名册保留被消灭单位的名称。
 
 显示选项（镜头缩放、适配地图和地图图层开关）位于右上角“设置”按钮打开的模态设置窗口中。底栏可折叠，并分为两个只读区域：左侧“战斗计划”实时渲染 `snapshot.battlePlan`，右侧“战斗日志”在战斗结算实现之前保持为空。
 

@@ -4,6 +4,8 @@ import type {
   Airspace,
   BattlePlan,
   CityControlState,
+  CombatObjective,
+  CombatState,
   GameCommand,
   MovementMode,
   PhaseSnapshot,
@@ -12,6 +14,7 @@ import type {
   UnitState,
 } from "../gameApi";
 import { AirStrikePanel } from "./AirStrikePanel";
+import { CombatPanel } from "./CombatPanel";
 import { MOVEMENT_MODES, type MovementPreviewStatus } from "./movementModes";
 import { CITY_KIND_NAMES, TERRAIN_NAMES } from "../map/mapData";
 import type { HexData, HexsideFeature, MapData } from "../map/mapTypes";
@@ -237,6 +240,14 @@ function UnitDetails({ unit, plan, activeSideId, planning, busy, movement, onBac
   );
 }
 
+export interface CombatContext {
+  state: CombatState;
+  objectives: ReadonlyMap<string, CombatObjective>;
+  revision: number;
+  /** False until the core preview for the current revision has arrived. */
+  ready: boolean;
+}
+
 export interface StrikeContext {
   plan: StrikePlan;
   points: AirPoints | undefined;
@@ -267,6 +278,8 @@ export interface SidePanelProps {
   movement: MovementControl;
   /** Offensive Strike Phase context; present only during that phase. */
   strike: StrikeContext | null;
+  /** Combat Phase context; present only during that phase. */
+  combat: CombatContext | null;
   onGoTo(id: string): boolean;
   onSelectUnit(id: string | null): void;
   onPlanningCommand(command: GameCommand): void;
@@ -369,6 +382,17 @@ export function SidePanel(props: SidePanelProps) {
                 plan={props.strike.plan}
                 points={props.strike.points}
                 busy={props.commandBusy || !props.strike.ready}
+                onCommand={props.onPlanningCommand}
+              />
+            )}
+            {props.combat && (
+              <CombatPanel
+                hex={hex}
+                units={props.units}
+                combat={props.combat.state}
+                objective={props.combat.objectives.get(hex.id)}
+                revision={props.combat.revision}
+                busy={props.commandBusy || !props.combat.ready}
                 onCommand={props.onPlanningCommand}
               />
             )}

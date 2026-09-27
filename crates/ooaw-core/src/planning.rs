@@ -177,6 +177,12 @@ impl GameState {
                 "An out-of-supply unit may not entrain",
             ));
         }
+        if unit.has_trait("immobile") {
+            return Err(RuleError::new(
+                "unitImmobile",
+                "The scenario does not allow this unit to move",
+            ));
+        }
         // 13.1 (3), 25.6.4 (4): Disrupted or Suppressed units may not entrain.
         if unit.disruption.is_some() {
             return Err(RuleError::new(

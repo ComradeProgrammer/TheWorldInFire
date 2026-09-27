@@ -31,7 +31,7 @@ fn new_game_starts_at_first_scenario_defined_step() {
     let step = snapshot.turn.current_step.unwrap();
 
     assert_eq!(snapshot.revision, 0);
-    assert_eq!(snapshot.protocol_version, 11);
+    assert_eq!(snapshot.protocol_version, 13);
     assert_eq!(snapshot.turn.game_turn, 1);
     assert_eq!(step.phase_id.0, "jointStatus");
     assert_eq!(step.actor, PhaseActor::All);
@@ -43,7 +43,7 @@ fn new_game_starts_at_first_scenario_defined_step() {
 fn snapshot_identifies_the_scenario_map_without_repeating_its_data() {
     let json = serde_json::to_value(new_game().snapshot()).unwrap();
 
-    assert_eq!(json["protocolVersion"], 11);
+    assert_eq!(json["protocolVersion"], 13);
     assert_eq!(json["scenario"]["mapId"], "nato-central-europe");
     assert!(json.get("map").is_none());
 }
@@ -388,7 +388,12 @@ fn baltap_ends_after_seven_turns() {
     }
 
     assert_eq!(game.snapshot().status, GameStatus::Completed);
-    assert_eq!(game.snapshot().units.len(), 44);
+    // All 44 units arrive; the NEGF HQ is withdrawn at the start of turn 4 (36.4.2.4).
+    let units = game.snapshot().units;
+    assert_eq!(units.len(), 43);
+    assert!(units
+        .iter()
+        .all(|unit| unit.id().0 != "soviet.northernEastGermanyFront.hq"));
 }
 
 #[test]
@@ -1419,4 +1424,405 @@ fn west_berlin_does_not_contest_airspace() {
     let airspace = game.airspace_map(&SideId("warsawPact".to_owned()));
     // Next to West Berlin, with no NATO unit nearby, the Airspace is WP-friendly.
     assert_eq!(airspace.of("3006"), Airspace::Friendly);
+}
+
+// ------------------------------------------------------------------ combat
+
+/// BALTAP WP Combat Phase with isolated units, after marking `objective`.
+fn baltap_combat(placements: &[(&str, &str)], objective: &str) -> GameState {
+    let mut game = baltap_planning("warsawPact", placements);
+    game.execute(GameCommand::SetAttackTarget {
+        hex_id: HexId(objective.to_owned()),
+        selected: true,
+    })
+    .unwrap();
+    advance_to(&mut game, "warsawPact", "combat");
+    game
+}
+
+fn battle(hex: &str, units: &[&str]) -> GameCommand {
+    GameCommand::ResolveBattle {
+        hex_id: HexId(hex.to_owned()),
+        unit_ids: units.iter().map(|id| UnitId((*id).to_owned())).collect(),
+        supporting_hq_id: None,
+    }
+}
+
+fn report(outcome: &crate::CommandOutcome) -> crate::BattleReport {
+    outcome
+        .events
+        .iter()
+        .find_map(|event| match event {
+            GameEvent::BattleResolved { report, .. } => Some(report.clone()),
+            _ => None,
+        })
+        .unwrap()
+}
+
+const EAST_GERMAN: &str = "eastGermany.2gta.8motorRifleDivision";
+
+#[test]
+fn combat_results_parse_from_printed_codes() {
+    use crate::combat::parse_result;
+    let r = parse_result("A1*/-");
+    assert_eq!(
+        (
+            r.attacker_steps,
+            r.attacker_disrupted,
+            r.defender_steps,
+            r.retreat
+        ),
+        (1, true, 0, 0)
+    );
+    let r = parse_result("-/CAD1R1");
+    assert!(r.counterattack && r.attacker_steps == 0);
+    assert_eq!(
+        (r.defender_steps, r.retreat, r.defender_disrupted),
+        (1, 1, false)
+    );
+    let r = parse_result("A1/D2*R2");
+    assert_eq!(
+        (
+            r.attacker_steps,
+            r.defender_steps,
+            r.defender_disrupted,
+            r.retreat
+        ),
+        (1, 2, true, 2)
+    );
+}
+
+#[test]
+fn a_marked_objective_must_be_attacked_and_odds_follow_the_rules() {
+    let mut game = baltap_combat(&[(SOVIET, "4009"), (GERMAN, "4010")], "4010");
+    let options = game.combat_options().unwrap();
+    assert_eq!(options.mandatory_remaining, vec![HexId("4010".to_owned())]);
+    assert_eq!(
+        game.execute(GameCommand::EndPhase).unwrap_err().code,
+        "mandatoryAttacksRemaining"
+    );
+    // 8 against a Hard brigade's 3 in Clear terrain is 2:1; Surprise makes it 3:1.
+    let odds = game
+        .battle_preview(
+            &HexId("4010".to_owned()),
+            &[UnitId(SOVIET.to_owned())],
+            None,
+        )
+        .unwrap();
+    assert_eq!((odds.total_attack, odds.total_defense), (8, 3));
+    assert_eq!(crate::ODDS_COLUMNS[odds.basic_column], "2:1");
+    assert_eq!(odds.final_odds, "3:1");
+    assert_eq!(odds.possible_results[5], "-/D1R1");
+}
+
+#[test]
+fn a_destroyed_defender_lets_the_attacker_advance_and_leaves_a_breakthrough() {
+    let mut game = baltap_combat(&[(SOVIET, "4009"), (GERMAN, "4010")], "4010");
+    game.dice = dice_rolling(6); // 3:1, roll 6: -/D1R1
+    let outcome = game.execute(battle("4010", &[SOVIET])).unwrap();
+    assert_eq!(report(&outcome).result.unwrap().code, "-/D1R1");
+    assert!(outcome
+        .snapshot
+        .eliminated_unit_ids
+        .contains(&UnitId(GERMAN.to_owned())));
+    assert_eq!(
+        outcome.snapshot.pending_decision.unwrap().kind,
+        "advanceAfterCombat"
+    );
+    // Another battle may not start before the advance decision.
+    assert_eq!(
+        game.execute(battle("4010", &[SOVIET])).unwrap_err().code,
+        "advancePending"
+    );
+    let outcome = game
+        .execute(GameCommand::AdvanceAfterCombat {
+            unit_ids: vec![UnitId(SOVIET.to_owned())],
+        })
+        .unwrap();
+    let soviet = outcome
+        .snapshot
+        .units
+        .iter()
+        .find(|unit| unit.id().0 == SOVIET)
+        .unwrap();
+    assert_eq!(
+        soviet.location,
+        UnitLocation::Hex {
+            hex_id: HexId("4010".to_owned())
+        }
+    );
+    assert!(outcome
+        .snapshot
+        .breakthrough_markers
+        .contains(&HexId("4010".to_owned())));
+    game.execute(GameCommand::EndPhase).unwrap();
+}
+
+#[test]
+fn attacker_losses_and_defender_retreats_are_applied() {
+    let mut game = baltap_combat(&[(SOVIET, "4009"), (GERMAN, "4010")], "4010");
+    game.dice = dice_rolling(2); // 3:1, roll 2: A1/R1
+    let outcome = game.execute(battle("4010", &[SOVIET])).unwrap();
+    assert_eq!(report(&outcome).result.unwrap().code, "A1/R1");
+    let unit = |id: &str| {
+        outcome
+            .snapshot
+            .units
+            .iter()
+            .find(|unit| unit.id().0 == id)
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(unit(SOVIET).strength_step_index, 1);
+    let UnitLocation::Hex { hex_id } = unit(GERMAN).location else {
+        panic!("retreated off map");
+    };
+    assert_ne!(hex_id.0, "4010");
+    assert!(outcome
+        .events
+        .iter()
+        .any(|event| matches!(event, GameEvent::UnitRetreated { .. })));
+    // Declining the advance still leaves a Breakthrough Marker in the empty hex.
+    let outcome = game
+        .execute(GameCommand::AdvanceAfterCombat { unit_ids: vec![] })
+        .unwrap();
+    assert!(outcome
+        .snapshot
+        .breakthrough_markers
+        .contains(&HexId("4010".to_owned())));
+}
+
+#[test]
+fn a_counterattack_result_rolls_for_each_eligible_defending_step() {
+    let mut game = baltap_combat(&[(SOVIET, "4009"), (GERMAN, "4010")], "4010");
+    game.dice = dice_rolling(5); // 3:1, roll 5: -/CAD1R1
+    let outcome = game.execute(battle("4010", &[SOVIET])).unwrap();
+    let report = report(&outcome);
+    assert_eq!(report.result.unwrap().code, "-/CAD1R1");
+    assert_eq!(report.counterattacks.len(), 1);
+    let roll = &report.counterattacks[0];
+    // West German Counterattacks Disrupt on 3 or more.
+    assert_eq!(roll.disrupted, roll.die_roll >= 3);
+    let soviet = outcome
+        .snapshot
+        .units
+        .iter()
+        .find(|unit| unit.id().0 == SOVIET)
+        .unwrap();
+    assert_eq!(soviet.disruption.is_some(), roll.disrupted);
+}
+
+#[test]
+fn an_undefended_free_city_is_conquered_by_advancing() {
+    let mut game = baltap_combat(&[(SOVIET, "2314")], "2214");
+    let odds = game
+        .battle_preview(
+            &HexId("2214".to_owned()),
+            &[UnitId(SOVIET.to_owned())],
+            None,
+        )
+        .unwrap();
+    assert_eq!(odds.city_defense, 1);
+    let outcome = game.execute(battle("2214", &[SOVIET])).unwrap();
+    // Every result at these odds inflicts a step loss, which breaks the city's defense.
+    assert!(
+        outcome
+            .snapshot
+            .combat
+            .unwrap()
+            .pending_advance
+            .unwrap()
+            .conquers_free_city
+    );
+    let outcome = game
+        .execute(GameCommand::AdvanceAfterCombat {
+            unit_ids: vec![UnitId(SOVIET.to_owned())],
+        })
+        .unwrap();
+    let city = outcome
+        .snapshot
+        .cities
+        .iter()
+        .find(|city| city.hex_id.0 == "2214")
+        .unwrap();
+    assert_eq!(
+        (city.controller.0.as_str(), city.free),
+        ("warsawPact", false)
+    );
+}
+
+#[test]
+fn surrounded_defenders_suffer_concentric_or_flank_shifts() {
+    let placements = [(SOVIET, "4009"), (EAST_GERMAN, "4011"), (GERMAN, "4010")];
+    let game = baltap_combat(&placements, "4010");
+    let odds = game
+        .battle_preview(
+            &HexId("4010".to_owned()),
+            &[UnitId(SOVIET.to_owned())],
+            None,
+        )
+        .unwrap();
+    assert!(odds.shifts.iter().any(|shift| shift.reason
+        == crate::ColumnShiftReason::ConcentricAttack
+        && shift.shift == 2));
+    // Surprise lifts the two-column cap for the WP: +2 Concentric +1 Surprise.
+    assert_eq!(odds.net_shift, 3);
+
+    let mut placements = placements.to_vec();
+    placements.push((PZG_17, "3910"));
+    let game = baltap_combat(&placements, "4010");
+    let odds = game
+        .battle_preview(
+            &HexId("4010".to_owned()),
+            &[UnitId(SOVIET.to_owned())],
+            None,
+        )
+        .unwrap();
+    assert!(odds
+        .shifts
+        .iter()
+        .any(|shift| shift.reason == crate::ColumnShiftReason::FlankAttack));
+}
+
+#[test]
+fn units_and_hexes_fight_only_once_per_combat_phase() {
+    let mut game = baltap_combat(&[(SOVIET, "4009"), (GERMAN, "4010")], "4010");
+    game.dice = dice_rolling(1); // 3:1, roll 1: A1/-
+    game.execute(battle("4010", &[SOVIET])).unwrap();
+    assert_eq!(
+        game.execute(battle("4010", &[SOVIET])).unwrap_err().code,
+        "invalidObjective"
+    );
+    assert!(game
+        .combat_options()
+        .unwrap()
+        .mandatory_remaining
+        .is_empty());
+    game.execute(GameCommand::EndPhase).unwrap();
+}
+
+// ------------------------------------------------------------------ offensive support
+
+const NEGF_HQ: &str = "soviet.northernEastGermanyFront.hq";
+const BALTIC_CORPS_TANKS: &str = "soviet.balticCorps.138tankRegiment";
+
+fn supported_battle(hex: &str, units: &[&str], hq: &str) -> GameCommand {
+    GameCommand::ResolveBattle {
+        hex_id: HexId(hex.to_owned()),
+        unit_ids: units.iter().map(|id| UnitId((*id).to_owned())).collect(),
+        supporting_hq_id: Some(UnitId(hq.to_owned())),
+    }
+}
+
+/// BALTAP WP Combat Phase after marking every hex in `objectives`.
+fn baltap_combat_marking(placements: &[(&str, &str)], objectives: &[&str]) -> GameState {
+    let mut game = baltap_planning("warsawPact", placements);
+    for objective in objectives {
+        game.execute(GameCommand::SetAttackTarget {
+            hex_id: HexId((*objective).to_owned()),
+            selected: true,
+        })
+        .unwrap();
+    }
+    advance_to(&mut game, "warsawPact", "combat");
+    game
+}
+
+#[test]
+fn a_front_hq_gives_one_battle_a_column_of_offensive_support() {
+    let placements = [
+        (SOVIET, "4009"),
+        (GERMAN, "4010"),
+        (EAST_GERMAN, "4013"),
+        (PZG_17, "4012"),
+        (NEGF_HQ, "4007"),
+    ];
+    let mut game = baltap_combat_marking(&placements, &["4010", "4012"]);
+    let options = game.combat_options().unwrap();
+    let objective = options
+        .objectives
+        .iter()
+        .find(|objective| objective.hex_id.0 == "4010")
+        .unwrap();
+    assert_eq!(objective.support_hq_ids, vec![UnitId(NEGF_HQ.to_owned())]);
+
+    let hq = UnitId(NEGF_HQ.to_owned());
+    let odds = game
+        .battle_preview(
+            &HexId("4010".to_owned()),
+            &[UnitId(SOVIET.to_owned())],
+            Some(&hq),
+        )
+        .unwrap();
+    assert!(odds.shifts.iter().any(|shift| shift.reason
+        == crate::ColumnShiftReason::OffensiveSupport
+        && shift.shift == 1));
+    // 2:1, +1 Surprise, +1 Offensive Support.
+    assert_eq!(odds.final_odds, "4:1");
+
+    let outcome = game
+        .execute(supported_battle("4010", &[SOVIET], NEGF_HQ))
+        .unwrap();
+    assert_eq!(report(&outcome).supporting_hq_id, Some(hq.clone()));
+    if outcome.snapshot.pending_decision.is_some() {
+        game.execute(GameCommand::AdvanceAfterCombat { unit_ids: vec![] })
+            .unwrap();
+    }
+    // The HQ has supported its one battle this phase.
+    assert_eq!(
+        game.execute(supported_battle("4012", &[EAST_GERMAN], NEGF_HQ))
+            .unwrap_err()
+            .code,
+        "supportUnavailable"
+    );
+    game.execute(battle("4012", &[EAST_GERMAN])).unwrap();
+}
+
+#[test]
+fn offensive_support_needs_a_subordinate_in_range_and_a_ready_hq() {
+    let hq = UnitId(NEGF_HQ.to_owned());
+    // The Baltic Corps is not subordinate to the NEGF HQ.
+    let game = baltap_combat(
+        &[
+            (BALTIC_CORPS_TANKS, "4009"),
+            (GERMAN, "4010"),
+            (NEGF_HQ, "4007"),
+        ],
+        "4010",
+    );
+    let preview = game.battle_preview(
+        &HexId("4010".to_owned()),
+        &[UnitId(BALTIC_CORPS_TANKS.to_owned())],
+        Some(&hq),
+    );
+    assert_eq!(preview.unwrap_err().code, "supportUnavailable");
+
+    // Seven hexes away is beyond the Support Range of 6.
+    let game = baltap_combat(
+        &[(SOVIET, "4009"), (GERMAN, "4010"), (NEGF_HQ, "4002")],
+        "4010",
+    );
+    assert!(game.combat_options().unwrap().objectives[0]
+        .support_hq_ids
+        .is_empty());
+
+    // A Suppressed HQ cannot support.
+    let mut game = baltap_combat(
+        &[(SOVIET, "4009"), (GERMAN, "4010"), (NEGF_HQ, "4007")],
+        "4010",
+    );
+    game.units.get_mut(&hq).unwrap().disruption = Some(Disruption::Suppressed);
+    assert!(game.combat_options().unwrap().objectives[0]
+        .support_hq_ids
+        .is_empty());
+}
+
+#[test]
+fn the_negf_hq_may_not_move_in_baltap() {
+    let game = baltap_planning("warsawPact", &[(NEGF_HQ, "2613")]);
+    let modes = game.movement_modes(&UnitId(NEGF_HQ.to_owned())).unwrap();
+    assert!(modes.iter().all(|mode| mode
+        .unavailable
+        .as_ref()
+        .is_some_and(|error| error.code == "unitImmobile")));
 }

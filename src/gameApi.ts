@@ -39,6 +39,7 @@ export interface GameSnapshot {
   airInterdictionZones: AirInterdictionZone[];
   breakthroughMarkers: string[];
   eliminatedUnitIds: string[];
+  combat: CombatState | null;
   pendingDecision: { kind: string } | null;
 }
 
@@ -129,6 +130,110 @@ export interface StrikeTargetHex {
   units: StrikeTargetUnit[];
 }
 
+export interface CombatResult {
+  code: string;
+  attackerSteps: number;
+  attackerDisrupted: boolean;
+  counterattack: boolean;
+  defenderSteps: number;
+  defenderDisrupted: boolean;
+  retreat: number;
+}
+
+export type StrengthModifier =
+  | "disrupted"
+  | "outOfCombatSupply"
+  | "armorIntoCityOrMountain"
+  | "minorRiver"
+  | "majorRiver"
+  | "softUnitCover"
+  | "provisionalDefense";
+
+export interface UnitStrength {
+  unitId: string;
+  printed: number;
+  /** Adjusted strength in sixty-fourths. */
+  adjusted64ths: number;
+  modifiers: StrengthModifier[];
+}
+
+export interface ColumnShift {
+  reason: "terrain" | "flankAttack" | "concentricAttack" | "surprise" | "offensiveSupport";
+  shift: number;
+}
+
+export interface BattleOdds {
+  attackers: UnitStrength[];
+  defenders: UnitStrength[];
+  cityDefense: number;
+  totalAttack: number;
+  totalDefense: number;
+  basicColumn: number;
+  shifts: ColumnShift[];
+  netShift: number;
+  finalColumn: number;
+  finalOdds: string;
+  possibleResults: string[];
+}
+
+export interface CounterattackRoll {
+  unitId: string;
+  targetUnitId: string;
+  dieRoll: number;
+  disrupted: boolean;
+}
+
+export interface BattleReport {
+  id: number;
+  hexId: string;
+  attackingUnitIds: string[];
+  odds: BattleOdds | null;
+  dieRoll: number | null;
+  result: CombatResult | null;
+  counterattacks: CounterattackRoll[];
+  supportingHqId: string | null;
+}
+
+export interface PendingAdvance {
+  battleId: number;
+  hexId: string;
+  eligibleUnitIds: string[];
+  conquersFreeCity: boolean;
+}
+
+export interface CombatState {
+  sideId: string;
+  battles: BattleReport[];
+  attackedUnitIds: string[];
+  attackedHexIds: string[];
+  engagedUnitIds: string[];
+  supportingHqIds: string[];
+  pendingAdvance: PendingAdvance | null;
+}
+
+export interface CombatObjective {
+  hexId: string;
+  eligibleUnitIds: string[];
+  mandatory: boolean;
+  breakthroughOnly: boolean;
+  /** HQs able to give Offensive Support if every eligible unit attacks. */
+  supportHqIds: string[];
+}
+
+export interface CombatOptionsResponse {
+  revision: number;
+  objectives: CombatObjective[];
+  mandatoryRemaining: string[];
+}
+
+export interface BattlePreviewResponse {
+  revision: number;
+  odds: BattleOdds;
+}
+
+/** Combat Results Table columns, weakest to strongest. */
+export const ODDS_COLUMNS = ["1:4", "1:3", "1:2", "1:1", "2:1", "3:1", "4:1", "5:1", "6:1", "7:1", "8:1", "9:1", "10:1"];
+
 export interface AirStrikeOptionsResponse {
   revision: number;
   tacticalHexes: string[];
@@ -212,7 +317,9 @@ export type GameCommand =
   | { type: "planAirStrike"; hexId: string; unitIds: string[]; airPoint: AirPointKind }
   | { type: "planAirInterdiction"; hexId: string; airPoint: AirPointKind }
   | { type: "cancelAirMission"; missionId: number }
-  | { type: "resolveAirStrikes" };
+  | { type: "resolveAirStrikes" }
+  | { type: "resolveBattle"; hexId: string; unitIds: string[]; supportingHqId: string | null }
+  | { type: "advanceAfterCombat"; unitIds: string[] };
 
 export type GameEvent =
   | { type: "phaseEnded"; gameTurn: number; step: PhaseSnapshot }
@@ -238,6 +345,11 @@ export type GameEvent =
   | { type: "unitEliminated"; unitId: string; hexId: string }
   | { type: "breakthroughMarkerPlaced"; hexId: string }
   | { type: "breakthroughMarkersRemoved"; hexIds: string[] }
+  | { type: "unitWithdrawn"; gameTurn: number; unitId: string }
+  | { type: "battleResolved"; sideId: string; report: BattleReport }
+  | { type: "unitRetreated"; unitId: string; from: string; path: string[] }
+  | { type: "advanceOffered"; pending: PendingAdvance }
+  | { type: "unitsAdvanced"; sideId: string; hexId: string; unitIds: string[] }
   | { type: "gameCompleted"; gameTurn: number };
 
 export interface CommandResponse {
@@ -279,4 +391,14 @@ export function fetchAttackTargetOptions(): Promise<AttackTargetOptionsResponse>
 /** Read-only preview of the phasing side's Air Strike Segment choices. */
 export function fetchAirStrikeOptions(): Promise<AirStrikeOptionsResponse> {
   return invoke<AirStrikeOptionsResponse>("air_strike_options");
+}
+
+/** Read-only preview of the Combat Phase: attackable hexes and eligible attackers. */
+export function fetchCombatOptions(): Promise<CombatOptionsResponse> {
+  return invoke<CombatOptionsResponse>("combat_options");
+}
+
+/** Read-only odds for a proposed attack. */
+export function fetchBattlePreview(hexId: string, unitIds: string[], supportingHqId: string | null): Promise<BattlePreviewResponse> {
+  return invoke<BattlePreviewResponse>("battle_preview", { request: { hexId, unitIds, supportingHqId } });
 }

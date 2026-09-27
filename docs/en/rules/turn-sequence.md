@@ -36,7 +36,7 @@ Until the Battle Planning Phase ends, any order given during it can be taken bac
 
 When the Battle Planning Phase ends, the acting side's Disrupted markers are removed.
 
-In the Offensive Strike Phase, the acting side commits and resolves air missions: Air Strikes against enemy units and Air Interdiction Zones (see [Air power](air-power.md)). The Combat Phase follows; ground combat is not part of the current implementation.
+In the Offensive Strike Phase, the acting side commits and resolves air missions: Air Strikes against enemy units and Air Interdiction Zones (see [Air power](air-power.md)). In the Combat Phase, the acting side attacks enemy-held hexes with adjacent units (see [Combat](combat.md)); the Warsaw Pact must attack every objective it marked during Battle Planning.
 
 At the end of the Reserve Phase, the acting side's Breakthrough Markers and the enemy's Air Interdiction Zones are removed. The Post-Battle Phase resolves automatically and removes the acting side's Suppressed markers.
 

@@ -36,6 +36,12 @@ impl GameState {
             }
             GameCommand::CancelAirMission { mission_id } => self.cancel_air_mission(mission_id),
             GameCommand::ResolveAirStrikes => self.resolve_air_strikes(),
+            GameCommand::ResolveBattle {
+                hex_id,
+                unit_ids,
+                supporting_hq_id,
+            } => self.resolve_battle(hex_id, unit_ids, supporting_hq_id),
+            GameCommand::AdvanceAfterCombat { unit_ids } => self.advance_after_combat(unit_ids),
         }?;
         self.revision += 1;
         Ok(CommandOutcome {
@@ -48,9 +54,13 @@ impl GameState {
     fn end_phase(&mut self) -> Result<Vec<GameEvent>, RuleError> {
         let mut events = Vec::new();
         if let Some(step) = self.current_step().cloned() {
+            if step.phase_id.0 == "combat" {
+                self.check_combat_can_end()?;
+            }
             match step.phase_id.0.as_str() {
                 "battlePlanning" => self.finish_battle_plan(&mut events),
                 "offensiveStrike" => self.finish_offensive_strike(&mut events),
+                "combat" => self.finish_combat(&mut events),
                 "reserve" => self.finish_reserve(&mut events),
                 _ => {}
             }

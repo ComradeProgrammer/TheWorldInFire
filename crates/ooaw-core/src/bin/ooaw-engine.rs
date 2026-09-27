@@ -1,0 +1,161 @@
+//! Line-oriented JSON adapter for driving the OOAW rules engine as a process.
+//!
+//! Each line on stdin is one request and produces exactly one response on
+//! stdout. Diagnostics belong on stderr so stdout remains machine-readable.
+
+use std::io::{self, BufRead, Write};
+
+use ooaw_core::{
+    find_scenario, GameCommand, GameEvent, GameId, GameSnapshot, GameState, MapDefinition,
+    ScenarioSummary,
+};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum EngineRequest {
+    ListScenarios,
+    NewGame {
+        scenario_id: String,
+        game_id: String,
+    },
+    GetSnapshot,
+    SubmitCommand {
+        expected_revision: u64,
+        command: GameCommand,
+    },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum EngineResponse {
+    Scenarios {
+        scenarios: Vec<ScenarioSummary>,
+    },
+    GameStarted {
+        snapshot: GameSnapshot,
+        map: MapDefinition,
+    },
+    Snapshot {
+        snapshot: GameSnapshot,
+    },
+    CommandAccepted {
+        revision: u64,
+        events: Vec<GameEvent>,
+        snapshot: GameSnapshot,
+    },
+    Error {
+        code: String,
+        message: String,
+    },
+}
+
+impl EngineResponse {
+    fn error(code: &str, message: impl Into<String>) -> Self {
+        Self::Error {
+            code: code.to_owned(),
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct EngineSession {
+    game: Option<GameState>,
+}
+
+impl EngineSession {
+    fn handle(&mut self, request: EngineRequest) -> EngineResponse {
+        match request {
+            EngineRequest::ListScenarios => EngineResponse::Scenarios {
+                scenarios: ooaw_core::list_scenarios(),
+            },
+            EngineRequest::NewGame {
+                scenario_id,
+                game_id,
+            } => {
+                let Some(scenario) = find_scenario(&scenario_id) else {
+                    return EngineResponse::error(
+                        "scenarioNotFound",
+                        format!("Unknown scenario: {scenario_id}"),
+                    );
+                };
+                match GameState::new(GameId(game_id), scenario) {
+                    Ok(game) => {
+                        let response = EngineResponse::GameStarted {
+                            snapshot: game.snapshot(),
+                            map: game.map().clone(),
+                        };
+                        self.game = Some(game);
+                        response
+                    }
+                    Err(error) => EngineResponse::error(&error.code, error.message),
+                }
+            }
+            EngineRequest::GetSnapshot => match &self.game {
+                Some(game) => EngineResponse::Snapshot {
+                    snapshot: game.snapshot(),
+                },
+                None => EngineResponse::error("gameNotStarted", "No game has been started"),
+            },
+            EngineRequest::SubmitCommand {
+                expected_revision,
+                command,
+            } => {
+                let Some(game) = &mut self.game else {
+                    return EngineResponse::error("gameNotStarted", "No game has been started");
+                };
+                let actual_revision = game.snapshot().revision;
+                if expected_revision != actual_revision {
+                    return EngineResponse::error(
+                        "revisionMismatch",
+                        format!(
+                            "Expected revision {expected_revision}, but the current revision is {actual_revision}"
+                        ),
+                    );
+                }
+                match game.execute(command) {
+                    Ok(outcome) => EngineResponse::CommandAccepted {
+                        revision: outcome.revision,
+                        events: outcome.events,
+                        snapshot: outcome.snapshot,
+                    },
+                    Err(error) => EngineResponse::error(&error.code, error.message),
+                }
+            }
+        }
+    }
+}
+
+fn main() -> io::Result<()> {
+    let stdin = io::stdin();
+    let mut stdout = io::BufWriter::new(io::stdout().lock());
+    let mut session = EngineSession::default();
+
+    for line in stdin.lock().lines() {
+        let response = match line {
+            Ok(line) => match serde_json::from_str::<EngineRequest>(&line) {
+                Ok(request) => session.handle(request),
+                Err(error) => EngineResponse::error("invalidRequest", error.to_string()),
+            },
+            Err(error) => {
+                eprintln!("failed to read engine request: {error}");
+                return Err(error);
+            }
+        };
+
+        serde_json::to_writer(&mut stdout, &response)?;
+        stdout.write_all(b"\n")?;
+        stdout.flush()?;
+    }
+
+    Ok(())
+}

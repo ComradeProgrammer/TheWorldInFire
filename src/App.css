@@ -1065,3 +1065,137 @@ select {
 .readonly-log-body p.log-info span {
   color: #d4c2ff;
 }
+
+/* ---------------------------------------------------------------- combat */
+
+.combat-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 10px;
+  border: 1px solid #6b5230;
+  border-radius: 5px;
+  background: rgba(255, 166, 64, 0.06);
+}
+
+.combat-panel header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.combat-panel h3,
+.combat-panel h4 {
+  margin: 0;
+}
+
+.combat-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.combat-tag.mandatory {
+  border-color: #7a3431;
+  color: #ffb0a7;
+}
+
+.attack-setup,
+.advance-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.battle-odds {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+}
+
+.odds-headline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.odds-headline strong {
+  color: #ffc46b;
+  font-size: 18px;
+}
+
+.strength-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.strength-row small {
+  color: var(--muted);
+  font-size: 10px;
+  text-align: right;
+}
+
+.strength-row strong {
+  min-width: 28px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.odds-shifts {
+  margin: 4px 0 0;
+  color: #f1d48c;
+}
+
+.crt-column {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2px 8px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.crt-column li span {
+  display: inline-block;
+  width: 16px;
+  color: var(--muted);
+}
+
+.battle-report {
+  margin: 0;
+  padding: 6px 8px;
+  border-left: 3px solid #ffa640;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 12px;
+}
+
+.battle-report p {
+  margin: 0;
+}
+
+.battle-report .counterattack {
+  color: #ffb45c;
+}
+
+.strike-buttons.single {
+  grid-template-columns: 1fr;
+}
+
+.battle-report .support-note {
+  color: #f1d48c;
+}

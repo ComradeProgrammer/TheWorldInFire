@@ -1,3 +1,4 @@
+mod combat;
 mod map;
 mod phase;
 mod planning;
@@ -8,6 +9,11 @@ mod side;
 mod strike;
 mod unit;
 
+pub use combat::{
+    BattleOdds, BattleReport, ColumnShift, ColumnShiftReason, CombatObjective, CombatOptions,
+    CombatResult, CombatState, CounterattackRoll, PendingAdvance, StrengthModifier, UnitStrength,
+    ODDS_COLUMNS,
+};
 pub use map::{
     Causeway, CityKind, CityOutline, CommandLine, CommandZone, HexsideFeature, LabelKind, LineKind,
     MapCity, MapDefinition, MapGrid, MapHex, MapHexside, MapLabel, MapLine, MapSymbol, Terrain,
@@ -20,7 +26,8 @@ pub use planning::{
 };
 pub use rules::{BattlePlanningRules, MovementMode, TrainStatus};
 pub use scenario::{
-    find_scenario, list_scenarios, ReinforcementDefinition, ScenarioDefinition, ScenarioSummary,
+    find_scenario, list_scenarios, OffensiveSupportHq, ReinforcementDefinition, ScenarioDefinition,
+    ScenarioSummary, Withdrawal,
 };
 pub use side::{SideDefinition, SideId};
 pub use strike::{

@@ -61,7 +61,16 @@ export interface StrikeOverlay {
   breakthroughs: string[];
 }
 
+/** Combat Phase state drawn on the map, from the core. */
+export interface CombatOverlay {
+  objectives: { hexId: string; mandatory: boolean }[];
+  /** Hexes already attacked this Combat Phase. */
+  fought: string[];
+}
+
 const STRIKE_COLOR = 0xff625c;
+const MANDATORY_OBJECTIVE_COLOR = 0xff3b30;
+const OPTIONAL_OBJECTIVE_COLOR = 0xffa640;
 const RESOLVED_STRIKE_COLOR = 0xf0bf58;
 const INTERDICTION_COLOR = 0xb58cff;
 const BREAKTHROUGH_COLOR = 0xffd23f;
@@ -104,6 +113,7 @@ export class MapRenderer {
   private readonly moveArrow = new Graphics({ label: "move-preview" });
   private readonly strikeZones = new Graphics({ label: "air-interdiction" });
   private readonly strikeMarks = new Graphics({ label: "air-strikes" });
+  private readonly combatMarks = new Graphics({ label: "combat" });
   private movePreview: MovementPreview | null = null;
   private counterHits: CounterHit[] = [];
   private readonly camera: Camera;
@@ -183,6 +193,7 @@ export class MapRenderer {
       this.strikeZones,
       this.unitLayer,
       this.strikeMarks,
+      this.combatMarks,
       this.highlight,
       this.moveArrow,
     );
@@ -440,6 +451,29 @@ export class MapRenderer {
       if (!hex) continue;
       const corners = this.grid.corners(hex.row, hex.col, 0.9);
       g.poly(corners).fill({ color: 0xd94b46, alpha: 0.2 }).stroke({ color: 0xff625c, width: 9, alpha: 0.95 });
+    }
+  }
+
+  setCombatOverlay(overlay: CombatOverlay): void {
+    const g = this.combatMarks.clear();
+    for (const objective of overlay.objectives) {
+      const hex = this.hexByKey.get(objective.hexId);
+      if (!hex) continue;
+      g.poly(this.grid.corners(hex.row, hex.col, 0.94)).stroke({
+        color: objective.mandatory ? MANDATORY_OBJECTIVE_COLOR : OPTIONAL_OBJECTIVE_COLOR,
+        width: objective.mandatory ? 7 : 5,
+        alpha: 0.85,
+      });
+    }
+    // A small cross in the lower-right corner marks hexes already fought over.
+    for (const hexId of overlay.fought) {
+      const hex = this.hexByKey.get(hexId);
+      if (!hex) continue;
+      const { x, y } = this.grid.center(hex.row, hex.col);
+      const cx = x + 42;
+      const cy = y + 46;
+      g.circle(cx, cy, 16).fill({ color: 0x05080c, alpha: 0.8 }).stroke({ color: 0xd8dee5, width: 2 });
+      g.moveTo(cx - 8, cy - 8).lineTo(cx + 8, cy + 8).moveTo(cx + 8, cy - 8).lineTo(cx - 8, cy + 8).stroke({ color: 0xd8dee5, width: 3 });
     }
   }
 

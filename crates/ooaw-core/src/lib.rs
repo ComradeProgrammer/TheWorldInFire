@@ -8,6 +8,7 @@
 
 mod airspace;
 mod cities;
+mod combat;
 mod command;
 mod dice;
 mod engine;
@@ -26,16 +27,18 @@ pub use error::RuleError;
 pub use event::{GameEvent, UnitSupplyCheck};
 pub use model::{
     find_scenario, list_scenarios, AirInterdictionZone, AirMission, AirMissionKind, AirPointKind,
-    AirPointSource, AirPoints, AirPowerRules, AirStrikeOptions, Airspace, BattlePlan,
-    BattlePlanningRules, Causeway, CityControlChange, CityControlState, CityKind, CityOutline,
-    CommandLine, CommandZone, Disruption, FormationId, HexId, HexsideFeature, LabelKind, LineKind,
-    MapCity, MapDefinition, MapGrid, MapHex, MapHexside, MapLabel, MapLine, MapSymbol,
-    MovementMode, MovementModeOptions, MovementOption, NationId, PhaseActor, PhaseDefinition,
-    PhaseExecution, PhaseId, PlannedMovement, ReinforcementDefinition, ScenarioDefinition,
-    ScenarioSummary, SideAirPower, SideDefinition, SideId, StepId, StrikePlan, StrikeResolution,
-    StrikeResult, StrikeTargetHex, StrikeTargetUnit, SupplyStatus, Terrain, TrainStatus,
-    UnitDefinition, UnitId, UnitLocation, UnitState, UnitStepDefinition, UnitSupplyState,
-    UnitTraitId, UnitTypeId, WaterArea,
+    AirPointSource, AirPoints, AirPowerRules, AirStrikeOptions, Airspace, BattleOdds, BattlePlan,
+    BattlePlanningRules, BattleReport, Causeway, CityControlChange, CityControlState, CityKind,
+    CityOutline, ColumnShift, ColumnShiftReason, CombatObjective, CombatOptions, CombatResult,
+    CombatState, CommandLine, CommandZone, CounterattackRoll, Disruption, FormationId, HexId,
+    HexsideFeature, LabelKind, LineKind, MapCity, MapDefinition, MapGrid, MapHex, MapHexside,
+    MapLabel, MapLine, MapSymbol, MovementMode, MovementModeOptions, MovementOption, NationId,
+    OffensiveSupportHq, PendingAdvance, PhaseActor, PhaseDefinition, PhaseExecution, PhaseId,
+    PlannedMovement, ReinforcementDefinition, ScenarioDefinition, ScenarioSummary, SideAirPower,
+    SideDefinition, SideId, StepId, StrengthModifier, StrikePlan, StrikeResolution, StrikeResult,
+    StrikeTargetHex, StrikeTargetUnit, SupplyStatus, Terrain, TrainStatus, UnitDefinition, UnitId,
+    UnitLocation, UnitState, UnitStepDefinition, UnitStrength, UnitSupplyState, UnitTraitId,
+    UnitTypeId, WaterArea, ODDS_COLUMNS,
 };
 pub use state::{GameId, GameSnapshot, GameState, GameStatus, PendingDecision, TurnState};
 

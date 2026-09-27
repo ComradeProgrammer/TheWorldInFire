@@ -1,4 +1,4 @@
-import type { GameEvent, StrikeResolution, UnitState } from "../gameApi";
+import { ODDS_COLUMNS, type GameEvent, type StrikeResolution, type UnitState } from "../gameApi";
 
 /** One read-only line in the Combat Log pane. */
 export interface CombatLogEntry {
@@ -38,6 +38,42 @@ export function describeCombatEvents(events: GameEvent[], units: UnitState[], fi
         });
         break;
       }
+      case "battleResolved": {
+        const { report } = event;
+        const attackers = report.attackingUnitIds.map(name).join(", ");
+        if (!report.odds || report.dieRoll === null || !report.result) {
+          lines.push({ tone: "roll", text: `${sideLabel(event.sideId)} advances into Breakthrough hex ${report.hexId} (${attackers})` });
+          break;
+        }
+        const { odds } = report;
+        const shift = odds.netShift !== 0 ? `, shift ${signed(odds.netShift)}` : "";
+        const support = report.supportingHqId ? ` with Offensive Support from ${name(report.supportingHqId)}` : "";
+        lines.push({
+          tone: "roll",
+          text: `${sideLabel(event.sideId)} attacks ${report.hexId} with ${attackers}${support}: ${odds.totalAttack} vs ${odds.totalDefense} (${ODDS_COLUMNS[odds.basicColumn]}${shift}) → ${odds.finalOdds}; rolled ${report.dieRoll}: ${report.result.code}`,
+        });
+        for (const roll of report.counterattacks) {
+          lines.push({
+            tone: "hit",
+            text: `Counterattack by ${name(roll.unitId)} on ${name(roll.targetUnitId)}: rolled ${roll.dieRoll} → ${roll.disrupted ? "Disrupted" : "no effect"}`,
+          });
+        }
+        break;
+      }
+      case "unitWithdrawn":
+        lines.push({ tone: "info", text: `${name(event.unitId)} withdrawn from play by the scenario` });
+        break;
+      case "unitRetreated":
+        lines.push({ tone: "hit", text: `${name(event.unitId)} retreats from ${event.from} to ${event.path[event.path.length - 1] ?? event.from}` });
+        break;
+      case "unitsAdvanced":
+        lines.push({ tone: "info", text: `${event.unitIds.map(name).join(", ")} advance into ${event.hexId}` });
+        break;
+      case "cityControlChanged":
+        // Only cities taken by advancing after combat belong in the Combat Log.
+        if (!events.some((candidate) => candidate.type === "unitsAdvanced")) break;
+        lines.push({ tone: "info", text: `${sideLabel(event.controller)} takes the city in ${event.hexId}${event.free ? " (liberated)" : ""}` });
+        break;
       case "unitStepLost":
         lines.push({ tone: "hit", text: `${name(event.unitId)} loses a step` });
         break;

@@ -78,6 +78,22 @@ pub enum GameCommand {
     },
     /// Resolves every committed air mission; no more may be added this phase.
     ResolveAirStrikes,
+    /// Commits adjacent units against an Objective hex and resolves the battle (25.1).
+    ResolveBattle {
+        /// Objective hex.
+        hex_id: HexId,
+        /// Committed attacking units.
+        unit_ids: Vec<UnitId>,
+        /// HQ committing Offensive Support (25.4), if any.
+        #[serde(default)]
+        supporting_hq_id: Option<UnitId>,
+    },
+    /// Advances surviving attackers into the cleared Objective hex; an empty
+    /// list declines the advance (25.8.1).
+    AdvanceAfterCombat {
+        /// Units that advance.
+        unit_ids: Vec<UnitId>,
+    },
 }
 
 /// The events and current snapshot produced by an accepted game command.

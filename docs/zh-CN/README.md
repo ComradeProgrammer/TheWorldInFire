@@ -8,6 +8,7 @@
 - [移动](rules/movement.md)
 - [城市](rules/cities.md)
 - [空中力量与进攻打击阶段](rules/air-power.md)
+- [战斗](rules/combat.md)
 - [联合增援](rules/reinforcements.md)
 - [BALTAP 1983](rules/baltap.md)
 

@@ -27,6 +27,28 @@ pub struct ScenarioDefinition {
     pub turn_sequence: Vec<PhaseDefinition>,
     /// Opening units and later arrivals scheduled by game turn.
     pub reinforcements: Vec<ReinforcementDefinition>,
+    /// HQs that may give Offensive Support, with their Subordinate formations (25.4).
+    pub offensive_support_hqs: Vec<OffensiveSupportHq>,
+    /// Units the scenario removes from play at the start of a game turn.
+    pub withdrawals: Vec<Withdrawal>,
+}
+
+/// An HQ able to provide Offensive Support and the formations it commands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OffensiveSupportHq {
+    /// The HQ unit; its first step's Attack value is its Support Range (3.4.1).
+    pub hq_id: UnitId,
+    /// Formations whose units are Subordinate to the HQ.
+    pub formations: Vec<FormationId>,
+}
+
+/// A unit removed from play by the scenario.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Withdrawal {
+    /// Game turn at whose Joint Reinforcement Phase the unit leaves play.
+    pub game_turn: u16,
+    /// Unit removed.
+    pub unit_id: UnitId,
 }
 
 /// A unit scheduled to enter authoritative state on a specific game turn.
@@ -197,6 +219,8 @@ pub fn find_scenario(id: &str) -> Option<ScenarioDefinition> {
             battle_planning_rules: BattlePlanningRules::nato_standard(),
             sides: vec![side("warsawPact", "Warsaw Pact"), side("nato", "NATO")],
             turn_sequence: standard_turn_sequence(),
+            offensive_support_hqs: Vec::new(),
+            withdrawals: Vec::new(),
             reinforcements: vec![
                 reinforcement(
                     1,

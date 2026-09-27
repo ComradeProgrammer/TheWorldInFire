@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use ooaw_core::{
-    find_scenario, AirStrikeOptions, GameCommand, GameId, GameSnapshot, GameState, HexId, MapDefinition,
+    find_scenario, AirStrikeOptions, BattleOdds, CombatOptions, GameCommand, GameId, GameSnapshot, GameState, HexId, MapDefinition,
     MovementModeOptions, RuleError, ScenarioSummary, UnitId,
 };
 use serde::{Deserialize, Serialize};
@@ -207,6 +207,59 @@ fn air_strike_options(state: State<'_, AppState>) -> Result<AirStrikeOptionsResp
     })
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CombatOptionsResponse {
+    revision: u64,
+    #[serde(flatten)]
+    options: CombatOptions,
+}
+
+/// Read-only preview of the Combat Phase: attackable hexes and eligible attackers.
+#[tauri::command]
+fn combat_options(state: State<'_, AppState>) -> Result<CombatOptionsResponse, ApiError> {
+    with_game(&state, |game| {
+        Ok(CombatOptionsResponse {
+            revision: game.snapshot().revision,
+            options: game.combat_options()?,
+        })
+    })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BattlePreviewRequest {
+    hex_id: HexId,
+    unit_ids: Vec<UnitId>,
+    #[serde(default)]
+    supporting_hq_id: Option<UnitId>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BattlePreviewResponse {
+    revision: u64,
+    odds: BattleOdds,
+}
+
+/// Read-only odds for a proposed attack; the battle itself is `resolveBattle`.
+#[tauri::command]
+fn battle_preview(
+    request: BattlePreviewRequest,
+    state: State<'_, AppState>,
+) -> Result<BattlePreviewResponse, ApiError> {
+    with_game(&state, |game| {
+        Ok(BattlePreviewResponse {
+            revision: game.snapshot().revision,
+            odds: game.battle_preview(
+                &request.hex_id,
+                &request.unit_ids,
+                request.supporting_hq_id.as_ref(),
+            )?,
+        })
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Builds and starts the Tauri desktop application.
 pub fn run() {
@@ -220,7 +273,9 @@ pub fn run() {
             submit_game_command,
             movement_options,
             attack_target_options,
-            air_strike_options
+            air_strike_options,
+            combat_options,
+            battle_preview
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

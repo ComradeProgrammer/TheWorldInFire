@@ -1,8 +1,8 @@
 use super::map::nato_map;
 use super::scenario::{reinforcement, side, standard_turn_sequence};
 use super::{
-    AirPowerRules, BattlePlanningRules, HexId, ReinforcementDefinition, ScenarioDefinition,
-    SideAirPower, UnitLocation,
+    AirPowerRules, BattlePlanningRules, FormationId, HexId, OffensiveSupportHq,
+    ReinforcementDefinition, ScenarioDefinition, SideAirPower, UnitId, UnitLocation, Withdrawal,
 };
 
 fn hex(id: &str) -> UnitLocation {
@@ -72,6 +72,21 @@ pub(crate) fn baltap_scenario() -> ScenarioDefinition {
         sides: vec![side("warsawPact", "Warsaw Pact"), side("nato", "NATO")],
         turn_sequence: standard_turn_sequence(),
         reinforcements: baltap_units(),
+        // 36.4.2.6: the NEGF HQ gives the WP one Offensive Support column shift
+        // while on the map; the Baltic Front and Baltic Corps HQs never do (29.5.2,
+        // 26.6.3), and NATO has no U.S. Corps HQ here (25.4.2).
+        offensive_support_hqs: vec![OffensiveSupportHq {
+            hq_id: UnitId("soviet.northernEastGermanyFront.hq".to_owned()),
+            formations: vec![
+                FormationId("soviet.northernEastGermanyFront".to_owned()),
+                FormationId("soviet.2ndGuardsTankArmy".to_owned()),
+            ],
+        }],
+        // 36.4.2.4: the NEGF HQ is removed at the start of Game Turn 4.
+        withdrawals: vec![Withdrawal {
+            game_turn: 4,
+            unit_id: UnitId("soviet.northernEastGermanyFront.hq".to_owned()),
+        }],
     }
 }
 
@@ -434,7 +449,8 @@ fn baltap_units() -> Vec<ReinforcementDefinition> {
             "headquarters",
             Some("soviet.northernEastGermanyFront"),
             hex("2613"),
-            &["headquarters"],
+            // 36.4.2.4: tethered to operations further south; it may not move.
+            &["headquarters", "immobile"],
             &[(6, 1, 4)],
         ),
         unit(

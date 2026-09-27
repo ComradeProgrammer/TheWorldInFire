@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    AirMission, AirPoints, Disruption, HexId, MovementMode, PhaseDefinition, PlannedMovement,
-    SideId, StrikeResolution, TrainStatus, UnitId, UnitLocation, UnitState, UnitSupplyState,
+    AirMission, AirPoints, BattleReport, Disruption, HexId, MovementMode, PendingAdvance,
+    PhaseDefinition, PlannedMovement, SideId, StrikeResolution, TrainStatus, UnitId, UnitLocation,
+    UnitState, UnitSupplyState,
 };
 
 /// Supply result recorded for one unit during automatic pre-battle resolution.
@@ -195,6 +196,43 @@ pub enum GameEvent {
     BreakthroughMarkersRemoved {
         /// Hexes cleared.
         hex_ids: Vec<HexId>,
+    },
+    /// The scenario removed a unit from play.
+    UnitWithdrawn {
+        /// Game turn of the withdrawal.
+        game_turn: u16,
+        /// Unit removed.
+        unit_id: UnitId,
+    },
+    /// A battle was fought (25.1); consequences follow as separate events.
+    BattleResolved {
+        /// Attacking side.
+        side_id: SideId,
+        /// Strengths, odds, roll, and result.
+        report: BattleReport,
+    },
+    /// A defending unit retreated after combat (25.7).
+    UnitRetreated {
+        /// Unit.
+        unit_id: UnitId,
+        /// Objective hex it left.
+        from: HexId,
+        /// Hexes entered, ending where it stopped.
+        path: Vec<HexId>,
+    },
+    /// The Attacker may advance into a cleared Objective hex.
+    AdvanceOffered {
+        /// Advance decision now pending.
+        pending: PendingAdvance,
+    },
+    /// Attacking units advanced into the Objective hex (25.8.1).
+    UnitsAdvanced {
+        /// Attacking side.
+        side_id: SideId,
+        /// Objective hex.
+        hex_id: HexId,
+        /// Units that advanced.
+        unit_ids: Vec<UnitId>,
     },
     /// The scenario has reached its final turn and phase.
     GameCompleted {

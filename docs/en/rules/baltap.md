@@ -19,6 +19,8 @@ Airlift Commands: the Warsaw Pact has three and NATO has one.
 
 Air power: each side receives one Tactical Air Point every turn, plus one extra Tactical Air Point that it may spend on any single turn of its choice. Neither side has Operational Air Points.
 
-Surprise: NATO is Surprised on Game Turn 1, so Warsaw Pact Air Strikes add one to the die roll that turn.
+Surprise: NATO is Surprised on Game Turn 1, so Warsaw Pact Air Strikes add one to the die roll that turn and Warsaw Pact attacks gain one column.
+
+Northern East Germany Front HQ: it gives the Warsaw Pact Offensive Support for units of the Northern East Germany Front and the 2nd Guards Tank Army. It may not move, and it is removed from play at the start of Game Turn 4. The Baltic Front HQ, the Baltic Corps HQ, and NATO's HQs never give Offensive Support in this scenario.
 
 The game ends after all seven turns are completed.

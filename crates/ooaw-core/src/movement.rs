@@ -16,15 +16,15 @@ use crate::model::{
 use crate::state::GameState;
 
 /// Precomputed map and unit lookups for one movement query.
-struct MovementContext<'a> {
-    hexes: HashMap<&'a str, &'a MapHex>,
-    hexsides: HashMap<(&'a str, &'a str), &'a [HexsideFeature]>,
-    enemy_zoc: HashSet<String>,
-    enemy_occupied: HashSet<&'a str>,
-    friendly_occupied: HashSet<&'a str>,
-    enemy_free_cities: HashSet<&'a str>,
-    enemy_conquered_cities: HashSet<&'a str>,
-    friendly_free_cities: HashSet<&'a str>,
+pub(crate) struct MovementContext<'a> {
+    pub(crate) hexes: HashMap<&'a str, &'a MapHex>,
+    pub(crate) hexsides: HashMap<(&'a str, &'a str), &'a [HexsideFeature]>,
+    pub(crate) enemy_zoc: HashSet<String>,
+    pub(crate) enemy_occupied: HashSet<&'a str>,
+    pub(crate) friendly_occupied: HashSet<&'a str>,
+    pub(crate) enemy_free_cities: HashSet<&'a str>,
+    pub(crate) enemy_conquered_cities: HashSet<&'a str>,
+    pub(crate) friendly_free_cities: HashSet<&'a str>,
     /// Airspace from the moving side's point of view.
     airspace: AirspaceMap,
     /// Hexes inside an enemy Air Interdiction Zone (23.8).
@@ -32,7 +32,7 @@ struct MovementContext<'a> {
 }
 
 impl<'a> MovementContext<'a> {
-    fn new(state: &'a GameState, side_id: &SideId) -> Self {
+    pub(crate) fn new(state: &'a GameState, side_id: &SideId) -> Self {
         let hexes: HashMap<_, _> = state
             .scenario
             .map
@@ -119,7 +119,7 @@ impl<'a> MovementContext<'a> {
     }
 
     /// Adjacent on-map hexes (pointy-top rows, odd rows shifted right).
-    fn neighbors(&self, id: &str) -> Vec<&'a str> {
+    pub(crate) fn neighbors(&self, id: &str) -> Vec<&'a str> {
         let Some(hex) = self.hexes.get(id) else {
             return Vec::new();
         };
@@ -152,19 +152,19 @@ impl<'a> MovementContext<'a> {
             .collect()
     }
 
-    fn side_features(&self, a: &str, b: &str) -> &'a [HexsideFeature] {
+    pub(crate) fn side_features(&self, a: &str, b: &str) -> &'a [HexsideFeature] {
         self.hexsides.get(&(a, b)).copied().unwrap_or(&[])
     }
 
     /// 12.1.1: Blocked hexsides and All-Sea hexsides without a causeway.
-    fn prohibited_hexside(&self, a: &str, b: &str) -> bool {
+    pub(crate) fn prohibited_hexside(&self, a: &str, b: &str) -> bool {
         let features = self.side_features(a, b);
         features.contains(&HexsideFeature::Blocked)
             || (features.contains(&HexsideFeature::AllSea)
                 && !features.contains(&HexsideFeature::Causeway))
     }
 
-    fn in_enemy_zoc(&self, id: &str) -> bool {
+    pub(crate) fn in_enemy_zoc(&self, id: &str) -> bool {
         self.enemy_zoc.contains(id)
     }
 
@@ -174,7 +174,7 @@ impl<'a> MovementContext<'a> {
 
     /// 8.5 (5), 30.2.3: a friendly unit or friendly Free City in the hex lets a
     /// Soft unit enter it directly from another EZOC hex.
-    fn negates_ezoc_for_entry(&self, id: &str) -> bool {
+    pub(crate) fn negates_ezoc_for_entry(&self, id: &str) -> bool {
         self.friendly_occupied.contains(id) || self.friendly_free_cities.contains(id)
     }
 }
@@ -454,6 +454,12 @@ impl GameState {
             UnitLocation::StrategicReserve => None,
         };
         let origin_zoc = origin.is_some_and(|id| context.in_enemy_zoc(id));
+        if unit.has_trait("immobile") {
+            return Err(RuleError::new(
+                "unitImmobile",
+                "The scenario does not allow this unit to move",
+            ));
+        }
         // 25.6.4 (1): a Disrupted or Suppressed unit may use only Minimum movement.
         if unit.disruption.is_some() && mode != MovementMode::Tactical {
             return Err(RuleError::new(

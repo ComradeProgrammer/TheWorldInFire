@@ -8,6 +8,7 @@ This directory contains OOAW's English rules and development notes. All content 
 - [Movement](rules/movement.md)
 - [Cities](rules/cities.md)
 - [Air power and the Offensive Strike Phase](rules/air-power.md)
+- [Combat](rules/combat.md)
 - [Joint reinforcements](rules/reinforcements.md)
 - [BALTAP 1983](rules/baltap.md)
 

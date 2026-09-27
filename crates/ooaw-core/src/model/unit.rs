@@ -200,6 +200,11 @@ impl UnitState {
         self.supply.headquarters.is_some()
     }
 
+    /// Whether the unit carries a scenario or rules trait.
+    pub(crate) fn has_trait(&self, name: &str) -> bool {
+        self.definition.traits.iter().any(|item| item.0 == name)
+    }
+
     /// Whether the unit may continue through enemy zones of control.
     pub(crate) fn is_hard(&self) -> bool {
         self.definition.traits.iter().any(|item| item.0 == "hard")

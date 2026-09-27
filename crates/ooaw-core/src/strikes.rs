@@ -511,7 +511,7 @@ impl GameState {
     }
 
     /// 25.6.4: Disrupted (Suppressed for HQs); a Disrupted unit loses any train marker.
-    fn disrupt(&mut self, unit_id: &UnitId, events: &mut Vec<GameEvent>) {
+    pub(crate) fn disrupt(&mut self, unit_id: &UnitId, events: &mut Vec<GameEvent>) {
         let Some(unit) = self.units.get_mut(unit_id) else {
             return;
         };
@@ -536,10 +536,28 @@ impl GameState {
     }
 
     /// Flips a two-step unit to its reduced side and Disrupts it, or eliminates
-    /// a unit on its last step.
-    fn lose_step(&mut self, unit_id: &UnitId, hex_id: &HexId, events: &mut Vec<GameEvent>) {
+    /// a unit on its last step (23.3.2).
+    pub(crate) fn lose_step(
+        &mut self,
+        unit_id: &UnitId,
+        hex_id: &HexId,
+        events: &mut Vec<GameEvent>,
+    ) {
+        if self.remove_step(unit_id, hex_id, events) {
+            self.disrupt(unit_id, events);
+        }
+    }
+
+    /// Removes one step: flips a multi-step unit or eliminates a unit on its
+    /// last step. Returns whether the unit is still in play.
+    pub(crate) fn remove_step(
+        &mut self,
+        unit_id: &UnitId,
+        hex_id: &HexId,
+        events: &mut Vec<GameEvent>,
+    ) -> bool {
         let Some(unit) = self.units.get_mut(unit_id) else {
-            return;
+            return false;
         };
         if unit.step_count() > 1 {
             unit.strength_step_index += 1;
@@ -547,7 +565,7 @@ impl GameState {
                 unit_id: unit_id.clone(),
                 strength_step_index: unit.strength_step_index,
             });
-            self.disrupt(unit_id, events);
+            true
         } else {
             self.units.remove(unit_id);
             self.eliminated_units.push(unit_id.clone());
@@ -555,6 +573,7 @@ impl GameState {
                 unit_id: unit_id.clone(),
                 hex_id: hex_id.clone(),
             });
+            false
         }
     }
 
@@ -593,7 +612,7 @@ impl GameState {
         }
     }
 
-    fn map_hex(&self, hex_id: &HexId) -> Result<MapHex, RuleError> {
+    pub(crate) fn map_hex(&self, hex_id: &HexId) -> Result<MapHex, RuleError> {
         self.scenario
             .map
             .hexes
@@ -603,7 +622,7 @@ impl GameState {
             .ok_or_else(|| RuleError::new("unknownHex", format!("Unknown hex: {}", hex_id.0)))
     }
 
-    fn enemy_units_in(&self, side_id: &SideId, hex_id: &HexId) -> usize {
+    pub(crate) fn enemy_units_in(&self, side_id: &SideId, hex_id: &HexId) -> usize {
         self.units
             .values()
             .filter(|unit| {

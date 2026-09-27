@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchAirStrikeOptions,
+  fetchCombatOptions,
   fetchAttackTargetOptions,
   fetchMovementOptions,
   loadInitialGame,
   submitGameCommand,
   type GameCommand,
   type AirStrikeOptionsResponse,
+  type CombatOptionsResponse,
+  type UnitState,
   type GameSnapshot,
   type MovementMode,
 } from "./gameApi";
@@ -18,13 +21,14 @@ import {
   type MapRenderer,
   type MovementPreview,
   type StrikeOverlay,
+  type CombatOverlay,
 } from "./map/render/MapRenderer";
 import { BottomBar } from "./ui/BottomBar";
 import { describeCombatEvents, type CombatLogEntry } from "./ui/combatLog";
 import { PREVIEW_HUD } from "./ui/hudPreview";
 import { defaultMovementMode, type MovementPreviewStatus } from "./ui/movementModes";
 import { SettingsDialog } from "./ui/SettingsDialog";
-import { SidePanel, type StrikeContext } from "./ui/SidePanel";
+import { SidePanel, type CombatContext, type StrikeContext } from "./ui/SidePanel";
 import { TopBar } from "./ui/TopBar";
 import "./App.css";
 
@@ -66,9 +70,13 @@ function App() {
   const [movementStatus, setMovementStatus] = useState<MovementPreviewStatus>({ state: "loading" });
   const [attackTargets, setAttackTargets] = useState<ReadonlySet<string>>(new Set());
   const [strikeOptions, setStrikeOptions] = useState<AirStrikeOptionsResponse | null>(null);
+  const [combatOptions, setCombatOptions] = useState<CombatOptionsResponse | null>(null);
   const [combatLog, setCombatLog] = useState<CombatLogEntry[]>([]);
+  // Every unit ever seen, so eliminated units keep their names in logs and plans.
+  const [roster, setRoster] = useState<ReadonlyMap<string, UnitState>>(new Map());
   const movementPreviewRef = useRef<MovementPreview | null>(null);
   const strikeOverlayRef = useRef<StrikeOverlay | null>(null);
+  const combatOverlayRef = useRef<CombatOverlay | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -121,6 +129,7 @@ function App() {
       rendererRef.current = renderer;
       renderer.setMovementPreview(movementPreviewRef.current);
       if (strikeOverlayRef.current) renderer.setStrikeOverlay(strikeOverlayRef.current);
+      if (combatOverlayRef.current) renderer.setCombatOverlay(combatOverlayRef.current);
       if (!snapshot) return;
       renderer.setUnits(snapshot.units);
       renderer.setBattlePlan(snapshot.battlePlan);
@@ -212,6 +221,55 @@ function App() {
     };
   }, [strikePhase, revision]);
 
+  useEffect(() => {
+    if (!snapshot) return;
+    setRoster((current) => {
+      const next = new Map(current);
+      for (const unit of snapshot.units) next.set(unit.id, unit);
+      return next;
+    });
+  }, [snapshot]);
+
+  // Combat Phase: attackable hexes and eligible attackers, once per revision.
+  const combatPhase = snapshot?.turn.currentStep?.phaseId === "combat";
+  useEffect(() => {
+    setCombatOptions(null);
+    if (!combatPhase || revision === undefined) return;
+    let active = true;
+    fetchCombatOptions().then(
+      (response) => {
+        if (active && response.revision === revision) setCombatOptions(response);
+      },
+      (error: unknown) => {
+        if (active) setCommandNotice(errorMessage(error));
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [combatPhase, revision]);
+
+  const combat = useMemo<CombatContext | null>(() => {
+    if (!combatPhase || !snapshot?.combat) return null;
+    // Options from an older revision are ignored until the fresh ones arrive.
+    const current = combatOptions?.revision === snapshot.revision ? combatOptions : null;
+    return {
+      state: snapshot.combat,
+      objectives: new Map((current?.objectives ?? []).map((objective) => [objective.hexId, objective])),
+      revision: snapshot.revision,
+      ready: current !== null,
+    };
+  }, [combatOptions, combatPhase, snapshot]);
+
+  useEffect(() => {
+    const overlay: CombatOverlay = {
+      objectives: combatOptions?.objectives.map((objective) => ({ hexId: objective.hexId, mandatory: objective.mandatory })) ?? [],
+      fought: snapshot?.combat?.attackedHexIds ?? [],
+    };
+    combatOverlayRef.current = overlay;
+    rendererRef.current?.setCombatOverlay(overlay);
+  }, [combatOptions, snapshot]);
+
   const strike = useMemo<StrikeContext | null>(() => {
     const plan = snapshot?.strikePlan;
     if (!strikePhase || !plan) return null;
@@ -221,7 +279,7 @@ function App() {
       targets: new Map((strikeOptions?.targets ?? []).map((target) => [target.hexId, target])),
       tacticalHexes: new Set(strikeOptions?.tacticalHexes ?? []),
       friendlyHexes: new Set(strikeOptions?.friendlyHexes ?? []),
-      ready: strikeOptions !== null,
+      ready: strikeOptions?.revision === snapshot.revision,
     };
   }, [snapshot, strikeOptions, strikePhase]);
 
@@ -266,6 +324,12 @@ function App() {
       };
       const movement = response.events.find((event) => event.type === "unitMoved");
       if (movement?.type === "unitMoved") followHex(movement.to);
+      // Show the Objective hex after a battle so its result and advance choice are visible.
+      const fought = response.events.find((event) => event.type === "battleResolved");
+      if (fought?.type === "battleResolved") {
+        followHex(fought.report.hexId);
+        setSelectedUnitId(null);
+      }
       const undone = response.events.find((event) => event.type === "unitMovementUndone");
       if (undone?.type === "unitMovementUndone" && undone.restoredLocation.type === "hex") {
         followHex(undone.restoredLocation.hexId);
@@ -308,13 +372,20 @@ function App() {
     <div className={logCollapsed ? "app log-collapsed" : "app"}>
       <TopBar
         hud={hud}
-        canEndPhase={snapshot?.status === "inProgress" && snapshot.turn.currentStep?.execution === "interactive"}
+        canEndPhase={
+          snapshot?.status === "inProgress"
+          && snapshot.turn.currentStep?.execution === "interactive"
+          // Wait for the core's combat options before offering to end the phase.
+          && !(combatPhase && (!combat?.ready || (combatOptions?.mandatoryRemaining.length ?? 0) > 0))
+        }
         phaseActionLabel={
           snapshot?.turn.gameTurn === 1 && snapshot.turn.currentStep?.phaseId === "jointStatus"
             ? "Resolve Opening Deployment"
             : strikesPending
               ? "Resolve Air Strikes"
-              : "End Phase"
+              : combatPhase && (combatOptions?.mandatoryRemaining.length ?? 0) > 0
+                ? `${combatOptions?.mandatoryRemaining.length} Marked Attack${combatOptions?.mandatoryRemaining.length === 1 ? "" : "s"} Left`
+                : "End Phase"
         }
         phaseActionBusy={commandBusy}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -350,6 +421,7 @@ function App() {
           cities={snapshot.cities}
           movement={{ mode: movementMode, status: movementStatus, onModeChange: setModeChoice }}
           strike={strike}
+          combat={combat}
           onGoTo={(id) => {
             if (!rendererRef.current) return false;
             rendererRef.current.selectById(id);
@@ -363,7 +435,8 @@ function App() {
       <BottomBar
         plan={snapshot?.battlePlan ?? null}
         strikePlan={snapshot?.strikePlan ?? null}
-        units={snapshot?.units ?? []}
+        battles={snapshot?.combat?.battles ?? []}
+        units={[...roster.values()]}
         combatLog={combatLog}
         collapsed={logCollapsed}
         onToggleCollapsed={() => setLogCollapsed((value) => !value)}
