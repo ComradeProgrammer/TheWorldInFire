@@ -2,28 +2,14 @@ import { Container, Graphics, Text, type TextStyleOptions } from "pixi.js";
 import type { UnitState } from "../../gameApi";
 import type { HexGrid } from "../hexGrid";
 import type { MapData } from "../mapTypes";
+import { COUNTER, counterPalette, FRAME, NATION_COLORS, nationCode, nationInk, toCounter, unitSymbol, type SymbolPath } from "../unitSymbols";
 import { COLORS, FONT_FAMILY } from "./style";
 
-const COUNTER_SIZE = 80;
+const COUNTER_SIZE = COUNTER.size;
 const STACK_OFFSET = 11;
 const MAX_VISIBLE_STACK = 3;
 
-const SIDE_COLORS = {
-  nato: { fill: 0x769bc5, edge: 0xc8e2ff, ink: 0x101923 },
-  warsawPact: { fill: 0xc86a5b, edge: 0xffc2b6, ink: 0x24110e },
-} as const;
-
 const DISRUPTION_COLOR = 0xff9f1c;
-
-const NATION_COLORS: Record<string, number> = {
-  denmark: 0xd82735,
-  eastGermany: 0x3f4650,
-  poland: 0xf2f2f0,
-  sovietUnion: 0xb5222c,
-  unitedKingdom: 0x274d83,
-  unitedStates: 0x4d6841,
-  westGermany: 0xd8ab32,
-};
 
 const TEXT_BASE: TextStyleOptions = {
   fontFamily: FONT_FAMILY,
@@ -38,34 +24,42 @@ function counterText(text: string, size: number, y: number, fill = 0x101923): Te
   return label;
 }
 
-function drawUnitSymbol(g: Graphics, unit: UnitState, ink: number): string | null {
-  const type = unit.unitTypeId.toLowerCase();
-  g.rect(-25, -21, 50, 32).stroke({ color: ink, width: 2.8 });
+function tracePaths(g: Graphics, paths: SymbolPath[]): void {
+  for (const path of paths) {
+    for (const [command, ...values] of path) {
+      const points = [] as number[];
+      for (let i = 0; i < values.length; i += 2) {
+        const p = toCounter(values[i], values[i + 1]);
+        points.push(p.x, p.y);
+      }
+      if (command === "M") g.moveTo(points[0], points[1]);
+      else if (command === "L") g.lineTo(points[0], points[1]);
+      else g.bezierCurveTo(points[0], points[1], points[2], points[3], points[4], points[5]);
+    }
+  }
+}
 
-  if (type === "headquarters") return "HQ";
-  if (type.includes("tank") || type.includes("armored")) {
-    g.ellipse(0, -5, 17, 9).stroke({ color: ink, width: 2.8 });
-    return null;
+/** Draws the unit's APP-6 symbol: frame, branch icon, modifier, echelon, and HQ staff. */
+function drawUnitSymbol(g: Graphics, unit: UnitState, ink: number): void {
+  const symbol = unitSymbol(unit);
+  const topLeft = toCounter(FRAME.x1, FRAME.y1);
+  const bottomRight = toCounter(FRAME.x2, FRAME.y2);
+  g.rect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y).stroke({ color: ink, width: 2.4 });
+  if (symbol.strokes.length > 0) {
+    tracePaths(g, symbol.strokes);
+    g.stroke({ color: ink, width: 2, cap: "round", join: "round" });
   }
-  if (type.includes("mechanized") || type.includes("motorRifle".toLowerCase())) {
-    g.moveTo(-23, -19).lineTo(23, 9).moveTo(23, -19).lineTo(-23, 9).stroke({ color: ink, width: 2.2 });
-    g.ellipse(0, -5, 16, 8).stroke({ color: ink, width: 2.2 });
-    return null;
+  if (symbol.echelon.length > 0) {
+    tracePaths(g, symbol.echelon);
+    g.stroke({ color: ink, width: 1.8, cap: "round" });
   }
-  if (type.includes("airborne") || type.includes("airmobile")) {
-    g.moveTo(-22, -17).lineTo(22, 9).moveTo(22, -17).lineTo(-22, 9).stroke({ color: ink, width: 2.2 });
-    g.moveTo(-15, -2).quadraticCurveTo(0, -19, 15, -2).stroke({ color: ink, width: 2.2 });
-    return null;
+  if (symbol.headquarters) {
+    g.moveTo(topLeft.x, bottomRight.y).lineTo(topLeft.x, bottomRight.y + COUNTER.staffLength).stroke({ color: ink, width: 2.4 });
   }
-  if (type.includes("marine")) return "M";
-  if (unit.traits.includes("territorial")) return "T";
-
-  g.moveTo(-23, -19).lineTo(23, 9).moveTo(23, -19).lineTo(-23, 9).stroke({ color: ink, width: 2.8 });
-  return null;
 }
 
 function buildCounter(unit: UnitState): Container {
-  const palette = SIDE_COLORS[unit.sideId === "nato" ? "nato" : "warsawPact"];
+  const palette = counterPalette(unit.sideId);
   const counter = new Container({ label: unit.id });
   counter.cullable = true;
   const g = new Graphics();
@@ -74,13 +68,15 @@ function buildCounter(unit: UnitState): Container {
     .fill(palette.fill)
     .stroke({ color: 0x05080c, width: 5, alpha: 0.72 })
     .stroke({ color: palette.edge, width: 2 });
-  g.rect(-half + 4, -half + 4, COUNTER_SIZE - 8, 8).fill(NATION_COLORS[unit.nationId] ?? palette.edge);
-  const symbolText = drawUnitSymbol(g, unit, palette.ink);
+  const nationColor = NATION_COLORS[unit.nationId] ?? palette.edge;
+  const { band } = COUNTER;
+  g.rect(band.x, band.y, band.width, band.height).fill(nationColor);
+  drawUnitSymbol(g, unit, palette.ink);
   counter.addChild(g);
-  if (symbolText) counter.addChild(counterText(symbolText, symbolText === "HQ" ? 17 : 21, -5, palette.ink));
+  counter.addChild(counterText(nationCode(unit.nationId), 10, band.y + band.height / 2, nationInk(nationColor)));
 
   const step = unit.steps[unit.strengthStepIndex];
-  if (step) counter.addChild(counterText(`${step.attack}  ${step.defense}  ${step.movement}`, 19, 27, palette.ink));
+  if (step) counter.addChild(counterText(`${step.attack}  ${step.defense}  ${step.movement}`, 18, COUNTER.valuesY, palette.ink));
 
   // Disrupted / Suppressed marker badge in the lower-left corner.
   if (unit.disruption) {

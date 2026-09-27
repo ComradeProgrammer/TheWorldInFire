@@ -545,56 +545,15 @@ select {
   font-size: 12px;
 }
 
-.detail-counter {
+.unit-counter-icon {
   flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: space-between;
-  width: 64px;
-  height: 64px;
-  padding: 4px 3px 3px;
-  border: 2px solid;
-  border-radius: 4px;
-  box-shadow: 0 0 0 2px rgba(5, 8, 12, 0.72);
-  color: #101923;
+}
+
+.counter-icon-text {
+  text-anchor: middle;
+  dominant-baseline: central;
+  font-family: "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
   font-weight: 700;
-}
-
-.detail-counter.nato {
-  background: #769bc5;
-  border-color: #c8e2ff;
-}
-
-.detail-counter.pact {
-  background: #c86a5b;
-  border-color: #ffc2b6;
-  color: #24110e;
-}
-
-.counter-nation {
-  max-width: 100%;
-  overflow: hidden;
-  font-size: 8px;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.counter-symbol {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 22px;
-  border: 2px solid currentColor;
-  font-size: 14px;
-  line-height: 1;
-}
-
-.counter-values {
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  white-space: pre;
 }
 
 .readonly-note {
@@ -1337,8 +1296,7 @@ label.force-row:hover {
 }
 
 .minimap-hex-id,
-.minimap-place,
-.minimap-chip {
+.minimap-place {
   text-anchor: middle;
   dominant-baseline: central;
   font-family: "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
@@ -1351,11 +1309,6 @@ label.force-row:hover {
 
 .minimap-place {
   fill: #ffe39a;
-}
-
-.minimap-chip {
-  fill: #05080c;
-  font-weight: 700;
 }
 
 .battle-note {

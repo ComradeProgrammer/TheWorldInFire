@@ -14,7 +14,8 @@ import type {
   UnitState,
 } from "../gameApi";
 import { AirStrikePanel } from "./AirStrikePanel";
-import { readableId, sideName, unitSymbol } from "./unitFormat";
+import { readableId, sideName } from "./unitFormat";
+import { UnitCounterIcon } from "./UnitCounterIcon";
 import { MOVEMENT_MODES, type MovementPreviewStatus } from "./movementModes";
 import { CITY_KIND_NAMES, TERRAIN_NAMES } from "../map/mapData";
 import type { HexData, HexsideFeature, MapData } from "../map/mapTypes";
@@ -38,17 +39,6 @@ function hexsideSummary(map: MapData, id: string): string[] {
     for (const feature of side.features) out.push(`${HEXSIDE_NAMES[feature]} · ${other}`);
   }
   return out;
-}
-
-function UnitCounter({ unit }: { unit: UnitState }) {
-  const step = unit.steps[unit.strengthStepIndex];
-  return (
-    <div className={`detail-counter ${unit.sideId === "nato" ? "nato" : "pact"}`} aria-label={`${unit.name} counter`}>
-      <span className="counter-nation">{readableId(unit.nationId)}</span>
-      <span className="counter-symbol">{unitSymbol(unit)}</span>
-      <span className="counter-values">{step ? `${step.attack}  ${step.defense}  ${step.movement}` : "—"}</span>
-    </div>
-  );
 }
 
 function UnitRow({ unit, onSelect }: { unit: UnitState; onSelect(): void }) {
@@ -194,7 +184,7 @@ function UnitDetails({ unit, plan, activeSideId, planning, busy, movement, onBac
     <div className="unit-detail-view">
       <button type="button" className="panel-back" onClick={onBack}>← Back to hex</button>
       <div className="unit-identity">
-        <UnitCounter unit={unit} />
+        <UnitCounterIcon unit={unit} size={72} />
         <div>
           <span className="detail-eyebrow">{readableId(unit.nationId)}</span>
           <h2>{unit.name}</h2>

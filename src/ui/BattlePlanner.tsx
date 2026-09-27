@@ -15,7 +15,8 @@ import { HexGrid, hexId as toHexId, neighborCoords } from "../map/hexGrid";
 import { CITY_KIND_NAMES, TERRAIN_NAMES } from "../map/mapData";
 import type { HexData, MapData } from "../map/mapTypes";
 import { COLORS } from "../map/render/style";
-import { sideName, unitSymbol } from "./unitFormat";
+import { sideName } from "./unitFormat";
+import { UnitSymbolPaths } from "./UnitCounterIcon";
 
 const MODIFIER_LABELS: Record<StrengthModifier, string> = {
   disrupted: "Disrupted ½",
@@ -144,7 +145,9 @@ function BattleMiniMap({ map, centerId, units, attackerSideId, activeIds }: {
                     stroke="#05080c"
                     strokeWidth={hw * 0.025}
                   />
-                  <text x={left + chipW / 2} y={chipTop + chipH / 2} className="minimap-chip" fontSize={hw * 0.2}>{unitSymbol(unit)}</text>
+                  <svg x={left} y={chipTop} width={chipW} height={chipH} viewBox="10 36 180 128" overflow="visible">
+                    <UnitSymbolPaths unit={unit} ink="#05080c" strokeScale={4} echelon={false} />
+                  </svg>
                 </g>
               );
             })}

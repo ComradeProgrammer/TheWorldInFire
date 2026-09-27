@@ -37,6 +37,7 @@ Date: 2026-09-23
 | `render/terrainLayer.ts` | Procedural terrain art (seeded per hex, deterministic) |
 | `render/featureLayers.ts` | Water, coast, rivers, grid, borders, hexside features, command zones |
 | `render/symbolLayers.ts` | Cities, defense boxes, ports, mobilization sites, labels, hex numbers |
+| `unitSymbols.ts` | APP-6 unit symbol geometry, counter layout, nation codes and colours, shared by the renderer and the React UI |
 | `render/unitLayer.ts` | Programmatically drawn unit counters and stack badges from authoritative unit state; returns counter footprints for click hit testing |
 | `render/camera.ts` | Pan and zoom (local view state only) |
 | `render/MapRenderer.ts` | Application lifecycle, layers, level of detail, hit testing, hover and selection |
@@ -47,6 +48,15 @@ The frontend contains no compiled-in copy of the NATO map. `App.tsx` creates the
 
 ## Unit counters
 
-Unit counters are generated at runtime with PixiJS primitives and text. NATO and Warsaw Pact counters use the application's own palette, while simple geometric symbols distinguish headquarters, armor, mechanized, airborne, marine, territorial, and other formations. Combat values come from the active strength step in the Rust snapshot. Multiple units in one hex are offset as a stack and receive a numeric stack badge. No scanned or extracted counter image from the reference game is loaded by the frontend.
+Unit counters are generated at runtime with PixiJS primitives and text. NATO and Warsaw Pact counters use the application's own palette. Each counter carries a nation band with a short code (USSR, GDR, PL, GER, US, UK, DK, …) and a NATO APP-6 friendly land-unit symbol drawn from vector parts:
+
+- infantry: the frame's diagonals (also used for territorial and home defence brigades);
+- armour: a track outline;
+- mechanized infantry and motor rifle: the diagonals plus the track;
+- mobility modifiers on the bottom edge: a double canopy arc for airborne, a rotor "V" for airmobile/air assault, and a wave for marines (amphibious);
+- headquarters: an empty frame with a staff down from its lower-left corner;
+- echelon marks above the frame: III for a regiment, X for a brigade, XX for a division.
+
+The symbol geometry lives in `src/map/unitSymbols.ts`, in the standard 200 × 200 symbol space. `render/unitLayer.ts` draws it with PixiJS, and `src/ui/UnitCounterIcon.tsx` renders the same counter as SVG for the unit detail view and the Battle Planner, so both always match. Combat values come from the active strength step in the Rust snapshot. Multiple units in one hex are offset as a stack and receive a numeric stack badge. No scanned or extracted counter image from the reference game is loaded by the frontend.
 
 When the player ends the opening Joint Status Phase, the frontend submits `EndPhase` to the Rust core. It consumes the returned `reinforcementsArrived` event and updated snapshot, redraws the unit layer, and focuses the camera on the deployed units. `setBattlePlan` draws the active plan's movement paths and attack-objective outlines. `setStrikeOverlay` draws Offensive Strike state from the core. Air Interdiction Zones (the marked hex and its six neighbours) go on the `air-interdiction` layer beneath the counters. Strikeable-hex outlines, strike crosshairs, and Breakthrough stars go on the `air-strikes` layer above them. Counters carry an orange D or S badge while Disrupted or Suppressed. `setCombatOverlay` outlines the Combat Phase's attackable hexes on the `combat` layer above the counters: red for mandatory WP objectives, orange for optional ones. Hexes already fought over get a small cross in the lower right.
