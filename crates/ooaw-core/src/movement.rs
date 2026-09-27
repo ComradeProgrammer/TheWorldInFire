@@ -7,10 +7,11 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
+use crate::airspace::AirspaceMap;
 use crate::error::RuleError;
 use crate::model::{
-    HexId, HexsideFeature, MapHex, MovementMode, MovementModeOptions, MovementOption, SideId,
-    SupplyStatus, Terrain, TrainStatus, UnitId, UnitLocation, UnitState,
+    Airspace, HexId, HexsideFeature, MapHex, MovementMode, MovementModeOptions, MovementOption,
+    SideId, SupplyStatus, Terrain, TrainStatus, UnitId, UnitLocation, UnitState,
 };
 use crate::state::GameState;
 
@@ -24,6 +25,10 @@ struct MovementContext<'a> {
     enemy_free_cities: HashSet<&'a str>,
     enemy_conquered_cities: HashSet<&'a str>,
     friendly_free_cities: HashSet<&'a str>,
+    /// Airspace from the moving side's point of view.
+    airspace: AirspaceMap,
+    /// Hexes inside an enemy Air Interdiction Zone (23.8).
+    enemy_interdiction: HashSet<String>,
 }
 
 impl<'a> MovementContext<'a> {
@@ -55,7 +60,19 @@ impl<'a> MovementContext<'a> {
             enemy_free_cities: HashSet::new(),
             enemy_conquered_cities: HashSet::new(),
             friendly_free_cities: HashSet::new(),
+            airspace: state.airspace_map(side_id),
+            enemy_interdiction: HashSet::new(),
         };
+        for zone in state
+            .air_interdiction_zones
+            .iter()
+            .filter(|zone| zone.side_id != *side_id)
+        {
+            context.enemy_interdiction.insert(zone.hex_id.0.clone());
+            for neighbor in context.neighbors(&zone.hex_id.0) {
+                context.enemy_interdiction.insert(neighbor.to_owned());
+            }
+        }
         for (hex_id, controller) in &state.city_control {
             let id = hex_id.0.as_str();
             let free = state.city_owner(hex_id) == Some(controller);
@@ -149,6 +166,10 @@ impl<'a> MovementContext<'a> {
 
     fn in_enemy_zoc(&self, id: &str) -> bool {
         self.enemy_zoc.contains(id)
+    }
+
+    fn friendly_airspace(&self, id: &str) -> bool {
+        self.airspace.of(id) == Airspace::Friendly
     }
 
     /// 8.5 (5), 30.2.3: a friendly unit or friendly Free City in the hex lets a
@@ -433,6 +454,13 @@ impl GameState {
             UnitLocation::StrategicReserve => None,
         };
         let origin_zoc = origin.is_some_and(|id| context.in_enemy_zoc(id));
+        // 25.6.4 (1): a Disrupted or Suppressed unit may use only Minimum movement.
+        if unit.disruption.is_some() && mode != MovementMode::Tactical {
+            return Err(RuleError::new(
+                "unitDisrupted",
+                "A Disrupted or Suppressed unit may move only one hex by Minimum movement",
+            ));
+        }
         match mode {
             MovementMode::Tactical | MovementMode::March => {
                 if origin.is_none() {
@@ -475,6 +503,13 @@ impl GameState {
                             "March movement may not start in an enemy zone of control",
                         ));
                     }
+                    // 12.4, 11.8.1: March starts and stays in friendly Airspace.
+                    if origin.is_some_and(|id| !context.friendly_airspace(id)) {
+                        return Err(RuleError::new(
+                            "marchUnavailable",
+                            "March movement must start in friendly Airspace",
+                        ));
+                    }
                 }
             }
             MovementMode::Rail => {
@@ -488,6 +523,13 @@ impl GameState {
                     return Err(RuleError::new(
                         "railEntryNotImplemented",
                         "Strategic Reserve rail entry requires a Reinforcement Box and cannot yet enter the map directly",
+                    ));
+                }
+                // 13.2 (5): rail movement may not leave contested or enemy Airspace.
+                if origin.is_some_and(|id| !context.friendly_airspace(id)) {
+                    return Err(RuleError::new(
+                        "notFriendlyAirspace",
+                        "Rail movement must start in friendly Airspace",
                     ));
                 }
                 // 13.2 (2): rail movement may not leave an EZOC.
@@ -528,6 +570,13 @@ impl GameState {
                         return Err(RuleError::new(
                             "invalidAirTransportOrigin",
                             "Air transport must start in a city or the Strategic Reserve",
+                        ));
+                    }
+                    // 16.1.1 (2): must start in friendly or contested Airspace.
+                    if context.airspace.of(origin) == Airspace::Enemy {
+                        return Err(RuleError::new(
+                            "enemyAirspace",
+                            "Air transport may not start in enemy Airspace",
                         ));
                     }
                     // 16.1.1 (5a): may not start in an EZOC; friendly units do not negate it.
@@ -580,6 +629,15 @@ impl GameState {
                 "An enemy Free City can be entered only by advancing after a battle",
             ));
         }
+        // 16.1.2: the flight may not enter enemy Airspace, so neither may its destination.
+        if mode == MovementMode::AirTransport
+            && context.airspace.of(&destination.0) == Airspace::Enemy
+        {
+            return Err(RuleError::new(
+                "enemyAirspace",
+                "Air transport may not enter enemy Airspace",
+            ));
+        }
         // 30.1.1: Air movement may never end in an enemy-controlled City.
         if mode == MovementMode::AirTransport
             && context
@@ -624,6 +682,8 @@ impl GameState {
             .ok_or_else(|| RuleError::new("invalidUnit", "Unit has no active strength step"))?
             .movement;
         let allowance = match mode {
+            // 25.6.4 (1): Disrupted units have only Minimum movement.
+            _ if unit.disruption.is_some() => 0,
             MovementMode::March => printed.saturating_mul(2),
             _ if unit.supply.movement == Some(SupplyStatus::OutOfSupply) => printed / 2,
             _ => printed,
@@ -652,9 +712,17 @@ impl GameState {
                 return None;
             }
             let next_zoc = context.in_enemy_zoc(next);
+            let interdicted = context.enemy_interdiction.contains(next);
             // 8.1.2 (3): March movement may never enter an EZOC.
             // 30.3.1: only Tactical movement may enter an enemy Conquered City.
-            if march && (next_zoc || context.enemy_conquered_cities.contains(next)) {
+            // 11.8.1: March stays in friendly Airspace. 23.8: nor may it enter an
+            // enemy Air Interdiction Zone.
+            if march
+                && (next_zoc
+                    || context.enemy_conquered_cities.contains(next)
+                    || !context.friendly_airspace(next)
+                    || interdicted)
+            {
                 return None;
             }
             // 12.3.2: Soft units move EZOC to EZOC only into a hex holding a
@@ -669,7 +737,8 @@ impl GameState {
                 cost += rules.minor_river_cost;
             }
             // 12.3 (1), (2): +1 to enter and +1 to leave an EZOC hex.
-            Some(cost + u16::from(current_zoc) + u16::from(next_zoc))
+            // 23.8: +1 to enter an enemy Air Interdiction Zone hex.
+            Some(cost + u16::from(current_zoc) + u16::from(next_zoc) + u16::from(interdicted))
         };
         let neighbors = |id: &str| -> Vec<String> {
             context
@@ -729,6 +798,9 @@ impl GameState {
                 || context.enemy_free_cities.contains(next)
                 || context.enemy_conquered_cities.contains(next)
                 || context.in_enemy_zoc(next)
+                // 13.2 (3), (5): only friendly Airspace, never an Air Interdiction Zone.
+                || !context.friendly_airspace(next)
+                || context.enemy_interdiction.contains(next)
             {
                 return None;
             }

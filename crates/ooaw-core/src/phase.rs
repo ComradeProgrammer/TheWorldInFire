@@ -24,6 +24,8 @@ impl GameState {
     fn resolve_joint_status(&mut self, _events: &mut Vec<GameEvent>) {}
 
     fn resolve_joint_reinforcement(&mut self, events: &mut Vec<GameEvent>) {
+        self.reset_air_points(events);
+
         let arriving_units: Vec<_> = self
             .scenario
             .reinforcements
@@ -82,11 +84,15 @@ impl GameState {
         self.start_battle_plan(events);
     }
 
-    fn resolve_offensive_strike(&mut self, _events: &mut Vec<GameEvent>) {}
+    fn resolve_offensive_strike(&mut self, _events: &mut Vec<GameEvent>) {
+        self.start_strike_plan();
+    }
 
     fn resolve_combat(&mut self, _events: &mut Vec<GameEvent>) {}
 
     fn resolve_reserve(&mut self, _events: &mut Vec<GameEvent>) {}
 
-    fn resolve_post_battle(&mut self, _events: &mut Vec<GameEvent>) {}
+    fn resolve_post_battle(&mut self, events: &mut Vec<GameEvent>) {
+        self.remove_suppression(events);
+    }
 }

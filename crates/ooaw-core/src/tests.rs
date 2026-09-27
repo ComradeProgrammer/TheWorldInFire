@@ -1,6 +1,8 @@
+use crate::dice::Dice;
 use crate::model::{
-    find_scenario, list_scenarios, HexId, MovementMode, PhaseActor, PhaseExecution, SideId,
-    SupplyStatus, TrainStatus, UnitId, UnitLocation, UnitState,
+    find_scenario, list_scenarios, AirPointKind, AirPointSource, Airspace, Disruption, HexId,
+    MovementMode, PhaseActor, PhaseExecution, SideId, StrikeResult, SupplyStatus, TrainStatus,
+    UnitId, UnitLocation, UnitState,
 };
 use crate::{GameCommand, GameEvent, GameId, GameState, GameStatus};
 
@@ -29,7 +31,7 @@ fn new_game_starts_at_first_scenario_defined_step() {
     let step = snapshot.turn.current_step.unwrap();
 
     assert_eq!(snapshot.revision, 0);
-    assert_eq!(snapshot.protocol_version, 10);
+    assert_eq!(snapshot.protocol_version, 11);
     assert_eq!(snapshot.turn.game_turn, 1);
     assert_eq!(step.phase_id.0, "jointStatus");
     assert_eq!(step.actor, PhaseActor::All);
@@ -41,7 +43,7 @@ fn new_game_starts_at_first_scenario_defined_step() {
 fn snapshot_identifies_the_scenario_map_without_repeating_its_data() {
     let json = serde_json::to_value(new_game().snapshot()).unwrap();
 
-    assert_eq!(json["protocolVersion"], 10);
+    assert_eq!(json["protocolVersion"], 11);
     assert_eq!(json["scenario"]["mapId"], "nato-central-europe");
     assert!(json.get("map").is_none());
 }
@@ -103,6 +105,7 @@ fn opening_units_arrive_through_the_first_joint_reinforcement_phase() {
         [
             GameEvent::PhaseEnded { step: ended, .. },
             GameEvent::PhaseStarted { step: reinforcement, .. },
+            GameEvent::AirPointsReset { .. },
             GameEvent::ReinforcementsArrived { .. },
             GameEvent::PhaseEnded {
                 step: reinforcement_ended,
@@ -835,7 +838,15 @@ fn a_soft_unit_must_stop_after_entering_an_enemy_zone_of_control() {
 fn every_movement_option_is_accepted_and_no_other_hex_is() {
     let mut game = baltap_planning("warsawPact", &[(SOVIET, "2412"), (GERMAN, "2415")]);
     let unit_id = UnitId(SOVIET.to_owned());
-    for mode in [MovementMode::Tactical, MovementMode::March] {
+    // March is unavailable in the contested Airspace around Schwerin, so the
+    // second pass checks it from the rear.
+    for (mode, origin) in [
+        (MovementMode::Tactical, "2412"),
+        (MovementMode::March, "2604"),
+    ] {
+        game.units.get_mut(&unit_id).unwrap().location = UnitLocation::Hex {
+            hex_id: HexId(origin.to_owned()),
+        };
         let options = game.movement_options(&unit_id, mode).unwrap();
         assert!(!options.is_empty());
         // Every hex within reach of a doubled allowance, plus a margin.
@@ -1028,6 +1039,12 @@ fn only_entrained_units_count_against_rail_capacity() {
             .map(UnitState::step_count)
             .sum()
     };
+    // Move the stack to the rear, in friendly Airspace, where it may entrain.
+    for unit_id in &stack {
+        game.units.get_mut(unit_id).unwrap().location = UnitLocation::Hex {
+            hex_id: HexId("2604".to_owned()),
+        };
+    }
     // Entraining markers do not count, so the whole stack may start loading.
     for unit_id in &stack {
         game.execute(GameCommand::EntrainUnit {
@@ -1098,4 +1115,308 @@ fn baltap_warsaw_pact_has_three_airlift_commands() {
         .code,
         "airliftCapacityExceeded"
     );
+}
+
+// ------------------------------------------------------------------ strikes
+
+fn baltap_at(side: &str, phase: &str) -> GameState {
+    let mut game = GameState::new(
+        GameId("strike-game".to_owned()),
+        find_scenario("nato-baltap-1983").unwrap(),
+    )
+    .unwrap();
+    advance_to(&mut game, side, phase);
+    game
+}
+
+fn advance_to(game: &mut GameState, side: &str, phase: &str) {
+    loop {
+        let step = game.snapshot().turn.current_step.unwrap();
+        if step.phase_id.0 == phase
+            && matches!(&step.actor, PhaseActor::Side { side_id } if side_id.0 == side)
+        {
+            return;
+        }
+        game.execute(GameCommand::EndPhase).unwrap();
+    }
+}
+
+fn air_strike(hex: &str, units: &[&str], air_point: AirPointKind) -> GameCommand {
+    GameCommand::PlanAirStrike {
+        hex_id: HexId(hex.to_owned()),
+        unit_ids: units.iter().map(|id| UnitId((*id).to_owned())).collect(),
+        air_point,
+    }
+}
+
+const PZG_16: &str = "westGermany.6panzergrenadierDivision.16panzergrenadierBrigade";
+const PZG_17: &str = "westGermany.6panzergrenadierDivision.17panzergrenadierBrigade";
+
+/// Dice whose next roll is `roll`.
+fn dice_rolling(roll: u8) -> Dice {
+    (0..)
+        .map(|seed: u32| Dice::from_seed_text(&seed.to_string()))
+        .find(|dice| dice.clone().d6() == roll)
+        .unwrap()
+}
+
+#[test]
+fn strike_table_matches_the_one_point_column() {
+    use crate::strikes::strike_table;
+    assert_eq!(strike_table(-1), StrikeResult::NoEffect);
+    assert_eq!(strike_table(1), StrikeResult::NoEffect);
+    assert_eq!(strike_table(2), StrikeResult::Disrupted);
+    assert_eq!(strike_table(4), StrikeResult::Disrupted);
+    assert_eq!(strike_table(5), StrikeResult::StepLoss);
+    assert_eq!(strike_table(8), StrikeResult::StepLoss);
+}
+
+#[test]
+fn baltap_air_points_reset_each_turn_and_the_bonus_is_kept() {
+    let game = baltap_at("warsawPact", "offensiveStrike");
+    for points in game.snapshot().air_points {
+        assert_eq!(
+            (points.tactical, points.operational, points.bonus_tactical),
+            (1, 0, 1)
+        );
+    }
+}
+
+#[test]
+fn air_strikes_respect_targeting_limits_and_refund_on_cancel() {
+    let mut game = baltap_at("warsawPact", "offensiveStrike");
+    // Two one-step brigades in one strike.
+    game.execute(air_strike(
+        "2415",
+        &[PZG_16, PZG_17],
+        AirPointKind::Tactical,
+    ))
+    .unwrap();
+    // No unit may be struck twice in the segment.
+    assert_eq!(
+        game.execute(air_strike("2415", &[PZG_16], AirPointKind::Tactical))
+            .unwrap_err()
+            .code,
+        "unitAlreadyTargeted"
+    );
+    // An HQ needs Operational Air Points.
+    assert_eq!(
+        game.execute(air_strike(
+            "2117",
+            &["westGermany.landjut.hq"],
+            AirPointKind::Tactical
+        ))
+        .unwrap_err()
+        .code,
+        "operationalPointRequired"
+    );
+    // Tactical Air Points never reach enemy Airspace (Sjælland, far from WP sources).
+    assert_eq!(
+        game.execute(air_strike(
+            "1411",
+            &["denmark.landzealand.1mechanizedBrigade"],
+            AirPointKind::Tactical
+        ))
+        .unwrap_err()
+        .code,
+        "enemyAirspace"
+    );
+    // The second Tactical point comes from the one-time bonus; then none are left.
+    game.execute(air_strike(
+        "2216",
+        &["westGermany.6panzergrenadierDivision.18panzerBrigade"],
+        AirPointKind::Tactical,
+    ))
+    .unwrap();
+    let points = |game: &GameState| {
+        let points = game.snapshot().air_points;
+        let wp = points.iter().find(|p| p.side_id.0 == "warsawPact").unwrap();
+        (wp.tactical, wp.bonus_tactical)
+    };
+    assert_eq!(points(&game), (0, 0));
+    let plan = game.snapshot().strike_plan.unwrap();
+    assert_eq!(plan.missions[1].source, AirPointSource::BonusTactical);
+
+    game.execute(GameCommand::CancelAirMission {
+        mission_id: plan.missions[1].id,
+    })
+    .unwrap();
+    assert_eq!(points(&game), (0, 1));
+}
+
+#[test]
+fn air_strike_resolution_is_deterministic_and_uses_the_previewed_modifier() {
+    let mut game = baltap_at("warsawPact", "offensiveStrike");
+    let preview = game.air_strike_options().unwrap();
+    let target = preview
+        .targets
+        .iter()
+        .find(|target| target.hex_id.0 == "2415")
+        .unwrap();
+    let modifier = target.units.iter().map(|unit| unit.modifier).min().unwrap();
+    // Surprise gives the WP +1 on turn 1.
+    assert!(target.units.iter().all(|unit| unit.modifier >= 1));
+
+    game.execute(air_strike(
+        "2415",
+        &[PZG_16, PZG_17],
+        AirPointKind::Tactical,
+    ))
+    .unwrap();
+    let expected_roll = game.dice.clone().d6();
+    let outcome = game.execute(GameCommand::ResolveAirStrikes).unwrap();
+    let resolution = outcome
+        .events
+        .iter()
+        .find_map(|event| match event {
+            GameEvent::AirStrikeResolved { resolution, .. } => Some(resolution.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(resolution.die_roll, expected_roll);
+    assert_eq!(resolution.modifier, modifier);
+    assert_eq!(
+        resolution.result,
+        crate::strikes::strike_table(expected_roll as i8 + modifier)
+    );
+    let plan = outcome.snapshot.strike_plan.unwrap();
+    assert!(plan.resolved);
+    assert_eq!(plan.missions[0].resolution, Some(resolution));
+    // No further missions after resolution.
+    assert_eq!(
+        game.execute(air_strike(
+            "2216",
+            &["westGermany.6panzergrenadierDivision.18panzerBrigade"],
+            AirPointKind::Tactical
+        ))
+        .unwrap_err()
+        .code,
+        "strikesResolved"
+    );
+}
+
+#[test]
+fn a_step_loss_on_the_last_unit_in_a_hex_leaves_a_breakthrough_marker() {
+    let mut game = baltap_at("warsawPact", "offensiveStrike");
+    game.execute(air_strike(
+        "2216",
+        &["westGermany.6panzergrenadierDivision.18panzerBrigade"],
+        AirPointKind::Tactical,
+    ))
+    .unwrap();
+    game.dice = dice_rolling(6);
+    let outcome = game.execute(GameCommand::ResolveAirStrikes).unwrap();
+    let brigade = UnitId("westGermany.6panzergrenadierDivision.18panzerBrigade".to_owned());
+    assert!(outcome.events.contains(&GameEvent::UnitEliminated {
+        unit_id: brigade.clone(),
+        hex_id: HexId("2216".to_owned()),
+    }));
+    assert_eq!(outcome.snapshot.eliminated_unit_ids, vec![brigade]);
+    assert_eq!(
+        outcome.snapshot.breakthrough_markers,
+        vec![HexId("2216".to_owned())]
+    );
+    // Breakthrough Markers come off at the end of the WP Reserve Phase.
+    advance_to(&mut game, "warsawPact", "reserve");
+    game.execute(GameCommand::EndPhase).unwrap();
+    assert!(game.snapshot().breakthrough_markers.is_empty());
+}
+
+#[test]
+fn disrupted_units_use_minimum_movement_until_their_recovery() {
+    let mut game = baltap_at("warsawPact", "offensiveStrike");
+    game.execute(air_strike(
+        "2415",
+        &[PZG_16, PZG_17],
+        AirPointKind::Tactical,
+    ))
+    .unwrap();
+    game.dice = dice_rolling(3); // 3 + modifiers stays in the Disrupted band.
+    let outcome = game.execute(GameCommand::ResolveAirStrikes).unwrap();
+    assert!(outcome.events.contains(&GameEvent::UnitDisruptionChanged {
+        unit_id: UnitId(PZG_16.to_owned()),
+        disruption: Some(Disruption::Disrupted),
+    }));
+
+    advance_to(&mut game, "nato", "battlePlanning");
+    let modes = game.movement_modes(&UnitId(PZG_16.to_owned())).unwrap();
+    let mode = |mode: MovementMode| modes.iter().find(|entry| entry.mode == mode).unwrap();
+    assert_eq!(
+        mode(MovementMode::March).unavailable.as_ref().unwrap().code,
+        "unitDisrupted"
+    );
+    // Only single-hex Minimum movement remains.
+    assert!(mode(MovementMode::Tactical)
+        .options
+        .iter()
+        .all(|option| option.path.len() == 1));
+
+    // Recovery at the end of Battle Planning removes the marker.
+    game.execute(GameCommand::EndPhase).unwrap();
+    let unit = game
+        .snapshot()
+        .units
+        .into_iter()
+        .find(|unit| unit.id().0 == PZG_16)
+        .unwrap();
+    assert_eq!(unit.disruption, None);
+}
+
+#[test]
+fn air_interdiction_zones_slow_tactical_and_bar_march_movement() {
+    let mut game = baltap_planning("nato", &[(GERMAN, "3321")]);
+    let before = game
+        .movement_options(&UnitId(GERMAN.to_owned()), MovementMode::Tactical)
+        .unwrap()
+        .into_iter()
+        .find(|option| option.hex_id.0 == "3320")
+        .unwrap()
+        .cost;
+    game.air_interdiction_zones
+        .push(crate::AirInterdictionZone {
+            side_id: SideId("warsawPact".to_owned()),
+            hex_id: HexId("3320".to_owned()),
+        });
+    let tactical = game
+        .movement_options(&UnitId(GERMAN.to_owned()), MovementMode::Tactical)
+        .unwrap();
+    assert_eq!(
+        tactical
+            .iter()
+            .find(|option| option.hex_id.0 == "3320")
+            .unwrap()
+            .cost,
+        before + 1
+    );
+    let march = game
+        .movement_options(&UnitId(GERMAN.to_owned()), MovementMode::March)
+        .unwrap();
+    assert!(march.iter().all(|option| option.hex_id.0 != "3320"));
+}
+
+#[test]
+fn interdiction_is_placed_on_resolution_and_removed_after_the_enemy_reserve_phase() {
+    let mut game = baltap_at("warsawPact", "offensiveStrike");
+    game.execute(GameCommand::PlanAirInterdiction {
+        hex_id: HexId("2414".to_owned()),
+        air_point: AirPointKind::Tactical,
+    })
+    .unwrap();
+    // Ending the phase resolves pending missions.
+    game.execute(GameCommand::EndPhase).unwrap();
+    assert_eq!(game.snapshot().air_interdiction_zones.len(), 1);
+    // The zone survives the WP Reserve Phase and is removed after NATO's.
+    advance_to(&mut game, "nato", "battlePlanning");
+    assert_eq!(game.snapshot().air_interdiction_zones.len(), 1);
+    advance_to(&mut game, "nato", "reserve");
+    game.execute(GameCommand::EndPhase).unwrap();
+    assert!(game.snapshot().air_interdiction_zones.is_empty());
+}
+
+#[test]
+fn west_berlin_does_not_contest_airspace() {
+    let game = baltap_at("warsawPact", "offensiveStrike");
+    let airspace = game.airspace_map(&SideId("warsawPact".to_owned()));
+    // Next to West Berlin, with no NATO unit nearby, the Airspace is WP-friendly.
+    assert_eq!(airspace.of("3006"), Airspace::Friendly);
 }

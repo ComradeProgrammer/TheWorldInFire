@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 
 use ooaw_core::{
-    find_scenario, GameCommand, GameId, GameSnapshot, GameState, HexId, MapDefinition,
+    find_scenario, AirStrikeOptions, GameCommand, GameId, GameSnapshot, GameState, HexId, MapDefinition,
     MovementModeOptions, RuleError, ScenarioSummary, UnitId,
 };
 use serde::{Deserialize, Serialize};
@@ -187,6 +187,26 @@ fn attack_target_options(state: State<'_, AppState>) -> Result<AttackTargetOptio
     })
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AirStrikeOptionsResponse {
+    revision: u64,
+    #[serde(flatten)]
+    options: AirStrikeOptions,
+}
+
+/// Read-only preview of the phasing side's Air Strike Segment: Airspace for
+/// Tactical Air Points and every targetable enemy unit with its modifier.
+#[tauri::command]
+fn air_strike_options(state: State<'_, AppState>) -> Result<AirStrikeOptionsResponse, ApiError> {
+    with_game(&state, |game| {
+        Ok(AirStrikeOptionsResponse {
+            revision: game.snapshot().revision,
+            options: game.air_strike_options()?,
+        })
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Builds and starts the Tauri desktop application.
 pub fn run() {
@@ -199,7 +219,8 @@ pub fn run() {
             get_game_snapshot,
             submit_game_command,
             movement_options,
-            attack_target_options
+            attack_target_options,
+            air_strike_options
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

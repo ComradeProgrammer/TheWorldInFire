@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::event::GameEvent;
-use crate::model::{HexId, MovementMode, UnitId};
+use crate::model::{AirPointKind, HexId, MovementMode, UnitId};
 use crate::state::GameSnapshot;
 
 /// A player or client request that may change the authoritative game state.
@@ -55,6 +55,29 @@ pub enum GameCommand {
         /// Friendly unit detrained earlier in this plan.
         unit_id: UnitId,
     },
+    /// Commits one Air Point to strike up to two enemy steps in a hex (23.3).
+    PlanAirStrike {
+        /// Target hex.
+        hex_id: HexId,
+        /// Targeted enemy units; the first listed absorbs a step loss.
+        unit_ids: Vec<UnitId>,
+        /// Kind of Air Point to spend.
+        air_point: AirPointKind,
+    },
+    /// Commits one Air Point to place an Air Interdiction Zone (23.8).
+    PlanAirInterdiction {
+        /// Marked hex.
+        hex_id: HexId,
+        /// Kind of Air Point to spend.
+        air_point: AirPointKind,
+    },
+    /// Withdraws an unresolved air mission and refunds its Air Point.
+    CancelAirMission {
+        /// Mission to withdraw.
+        mission_id: u32,
+    },
+    /// Resolves every committed air mission; no more may be added this phase.
+    ResolveAirStrikes,
 }
 
 /// The events and current snapshot produced by an accepted game command.

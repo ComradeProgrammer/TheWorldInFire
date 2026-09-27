@@ -113,6 +113,20 @@ pub struct MapCity {
     pub defense: u16,
     /// Alliance that controls the city at the start of play (rule 30.1).
     pub owner: SideId,
+    /// Whether the city projects Airspace control (false for West Berlin, 11.5).
+    #[serde(
+        default = "contests_airspace_by_default",
+        skip_serializing_if = "is_true"
+    )]
+    pub contests_airspace: bool,
+}
+
+fn contests_airspace_by_default() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 /// Rules and presentation data for one playable hex.

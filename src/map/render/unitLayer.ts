@@ -13,6 +13,8 @@ const SIDE_COLORS = {
   warsawPact: { fill: 0xc86a5b, edge: 0xffc2b6, ink: 0x24110e },
 } as const;
 
+const DISRUPTION_COLOR = 0xff9f1c;
+
 const NATION_COLORS: Record<string, number> = {
   denmark: 0xd82735,
   eastGermany: 0x3f4650,
@@ -79,6 +81,17 @@ function buildCounter(unit: UnitState): Container {
 
   const step = unit.steps[unit.strengthStepIndex];
   if (step) counter.addChild(counterText(`${step.attack}  ${step.defense}  ${step.movement}`, 19, 27, palette.ink));
+
+  // Disrupted / Suppressed marker badge in the lower-left corner.
+  if (unit.disruption) {
+    const badge = new Graphics()
+      .circle(-half + 6, half - 6, 15)
+      .fill(DISRUPTION_COLOR)
+      .stroke({ color: 0x05080c, width: 3 });
+    const label = counterText(unit.disruption === "suppressed" ? "S" : "D", 17, half - 6, 0x05080c);
+    label.x = -half + 6;
+    counter.addChild(badge, label);
+  }
   return counter;
 }
 

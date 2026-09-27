@@ -1,4 +1,6 @@
-import type { BattlePlan, MovementMode, UnitState } from "../gameApi";
+import { useEffect, useRef } from "react";
+import type { AirMission, BattlePlan, MovementMode, StrikePlan, UnitState } from "../gameApi";
+import type { CombatLogEntry } from "./combatLog";
 
 function unitName(units: UnitState[], id: string): string {
   return units.find((unit) => unit.id === id)?.name ?? id;
@@ -11,14 +13,26 @@ const MODE_LABELS: Record<MovementMode, string> = {
   airTransport: "Airlift",
 };
 
+const RESULT_LABELS = { noEffect: "no effect", disrupted: "Disrupted", stepLoss: "step loss" } as const;
+
+function missionText(mission: AirMission, units: UnitState[]): string {
+  const point = mission.source === "operational" ? "Operational" : "Tactical";
+  const target = mission.kind.type === "interdiction"
+    ? `Interdiction zone at ${mission.hexId}`
+    : `${mission.hexId} · ${mission.kind.unitIds.map((id) => unitName(units, id)).join(", ")}`;
+  const result = mission.resolution ? ` · ${RESULT_LABELS[mission.resolution.result]}` : "";
+  return `${target} · ${point}${result}`;
+}
+
 function fromLabel(movement: BattlePlan["movements"][number]): string {
   return movement.from.type === "hex" ? movement.from.hexId : "Strategic Reserve";
 }
 
-export function BottomBar({ plan, units, combatLog, collapsed, onToggleCollapsed }: {
+export function BottomBar({ plan, strikePlan, units, combatLog, collapsed, onToggleCollapsed }: {
   plan: BattlePlan | null;
+  strikePlan: StrikePlan | null;
   units: UnitState[];
-  combatLog: string[];
+  combatLog: CombatLogEntry[];
   collapsed: boolean;
   onToggleCollapsed(): void;
 }) {
@@ -28,7 +42,13 @@ export function BottomBar({ plan, units, combatLog, collapsed, onToggleCollapsed
       + plan.movements.length
       + plan.entrainingUnitIds.length
       + plan.detrainedUnitIds.length
+      + (strikePlan?.missions.length ?? 0)
     : 0;
+  const logRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const body = logRef.current;
+    if (body) body.scrollTop = body.scrollHeight;
+  }, [combatLog.length, collapsed]);
 
   return (
     <footer className={collapsed ? "bottom-bar collapsed" : "bottom-bar"}>
@@ -55,6 +75,12 @@ export function BottomBar({ plan, units, combatLog, collapsed, onToggleCollapsed
             ))}
             {plan?.entrainingUnitIds.map((id) => <p key={`entrain-${id}`}><b>Entrain</b><span>{unitName(units, id)}</span></p>)}
             {plan?.detrainedUnitIds.map((id) => <p key={`detrain-${id}`}><b>Detrain</b><span>{unitName(units, id)}</span></p>)}
+            {strikePlan?.missions.map((mission) => (
+              <p key={`mission-${mission.id}`}>
+                <b>{mission.kind.type === "strike" ? "Strike" : "Interdict"}</b>
+                <span>{missionText(mission, units)}</span>
+              </p>
+            ))}
           </div>
         )}
       </section>
@@ -72,10 +98,10 @@ export function BottomBar({ plan, units, combatLog, collapsed, onToggleCollapsed
           </button>
         </header>
         {!collapsed && (
-          <div className="readonly-log-body">
+          <div className="readonly-log-body" ref={logRef}>
             {combatLog.length === 0
               ? <p className="empty">No combat results yet.</p>
-              : combatLog.map((entry, index) => <p key={`${index}-${entry}`}><span>{entry}</span></p>)}
+              : combatLog.map((entry) => <p key={entry.id} className={`log-${entry.tone}`}><span>{entry.text}</span></p>)}
           </div>
         )}
       </section>

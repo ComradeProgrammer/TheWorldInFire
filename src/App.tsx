@@ -1,21 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  fetchAirStrikeOptions,
   fetchAttackTargetOptions,
   fetchMovementOptions,
   loadInitialGame,
   submitGameCommand,
   type GameCommand,
+  type AirStrikeOptionsResponse,
   type GameSnapshot,
   type MovementMode,
 } from "./gameApi";
 import { MapCanvas } from "./map/MapCanvas";
 import type { HexData, MapData } from "./map/mapTypes";
-import { DEFAULT_LAYERS, type MapLayerId, type MapRenderer, type MovementPreview } from "./map/render/MapRenderer";
+import {
+  DEFAULT_LAYERS,
+  type MapLayerId,
+  type MapRenderer,
+  type MovementPreview,
+  type StrikeOverlay,
+} from "./map/render/MapRenderer";
 import { BottomBar } from "./ui/BottomBar";
+import { describeCombatEvents, type CombatLogEntry } from "./ui/combatLog";
 import { PREVIEW_HUD } from "./ui/hudPreview";
 import { defaultMovementMode, type MovementPreviewStatus } from "./ui/movementModes";
 import { SettingsDialog } from "./ui/SettingsDialog";
-import { SidePanel } from "./ui/SidePanel";
+import { SidePanel, type StrikeContext } from "./ui/SidePanel";
 import { TopBar } from "./ui/TopBar";
 import "./App.css";
 
@@ -56,7 +65,10 @@ function App() {
   const [modeChoice, setModeChoice] = useState<MovementMode | null>(null);
   const [movementStatus, setMovementStatus] = useState<MovementPreviewStatus>({ state: "loading" });
   const [attackTargets, setAttackTargets] = useState<ReadonlySet<string>>(new Set());
+  const [strikeOptions, setStrikeOptions] = useState<AirStrikeOptionsResponse | null>(null);
+  const [combatLog, setCombatLog] = useState<CombatLogEntry[]>([]);
   const movementPreviewRef = useRef<MovementPreview | null>(null);
+  const strikeOverlayRef = useRef<StrikeOverlay | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -88,7 +100,11 @@ function App() {
       activePlayer:
         actor?.type === "all" ? ("Both" as const) : actor?.sideId === "nato" ? ("NATO" as const) : ("Warsaw Pact" as const),
       phase: snapshot.turn.currentStep ? phaseName(snapshot.turn.currentStep.phaseId) : "Complete",
-      resources: [],
+      resources: snapshot.airPoints.map((points) => ({
+        label: `${points.sideId === "nato" ? "NATO" : "WP"} Air`,
+        value: `${points.tactical}T · ${points.operational}O${points.bonusTactical > 0 ? ` · +${points.bonusTactical}` : ""}`,
+        side: points.sideId === "nato" ? ("nato" as const) : ("pact" as const),
+      })),
     };
   }, [snapshot]);
 
@@ -104,6 +120,7 @@ function App() {
     (renderer: MapRenderer) => {
       rendererRef.current = renderer;
       renderer.setMovementPreview(movementPreviewRef.current);
+      if (strikeOverlayRef.current) renderer.setStrikeOverlay(strikeOverlayRef.current);
       if (!snapshot) return;
       renderer.setUnits(snapshot.units);
       renderer.setBattlePlan(snapshot.battlePlan);
@@ -176,6 +193,49 @@ function App() {
     };
   }, [planningPhase, revision]);
 
+  // Offensive Strike Phase: the core's targets, modifiers, and Airspace, once per revision.
+  const strikePhase = snapshot?.turn.currentStep?.phaseId === "offensiveStrike";
+  useEffect(() => {
+    setStrikeOptions(null);
+    if (!strikePhase || revision === undefined) return;
+    let active = true;
+    fetchAirStrikeOptions().then(
+      (response) => {
+        if (active && response.revision === revision) setStrikeOptions(response);
+      },
+      (error: unknown) => {
+        if (active) setCommandNotice(errorMessage(error));
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [strikePhase, revision]);
+
+  const strike = useMemo<StrikeContext | null>(() => {
+    const plan = snapshot?.strikePlan;
+    if (!strikePhase || !plan) return null;
+    return {
+      plan,
+      points: snapshot.airPoints.find((points) => points.sideId === plan.sideId),
+      targets: new Map((strikeOptions?.targets ?? []).map((target) => [target.hexId, target])),
+      tacticalHexes: new Set(strikeOptions?.tacticalHexes ?? []),
+      friendlyHexes: new Set(strikeOptions?.friendlyHexes ?? []),
+      ready: strikeOptions !== null,
+    };
+  }, [snapshot, strikeOptions, strikePhase]);
+
+  useEffect(() => {
+    const overlay: StrikeOverlay = {
+      targets: strikeOptions?.targets.map((target) => ({ hexId: target.hexId, tacticalAllowed: target.tacticalAllowed })) ?? [],
+      missions: snapshot?.strikePlan?.missions ?? [],
+      zones: snapshot?.airInterdictionZones ?? [],
+      breakthroughs: snapshot?.breakthroughMarkers ?? [],
+    };
+    strikeOverlayRef.current = overlay;
+    rendererRef.current?.setStrikeOverlay(overlay);
+  }, [snapshot, strikeOptions]);
+
   useEffect(() => {
     if (snapshot) {
       rendererRef.current?.setUnits(snapshot.units);
@@ -189,6 +249,9 @@ function App() {
     try {
       const response = await submitGameCommand(snapshot.revision, command);
       setSnapshot(response.snapshot);
+      // Units eliminated by these events are only in the previous roster.
+      const roster = [...response.snapshot.units, ...snapshot.units];
+      setCombatLog((log) => [...log, ...describeCombatEvents(response.events, roster, (log.length > 0 ? log[log.length - 1].id : 0) + 1)]);
       rendererRef.current?.setUnits(response.snapshot.units);
       rendererRef.current?.setBattlePlan(response.snapshot.battlePlan);
       setCommandNotice(null);
@@ -214,9 +277,13 @@ function App() {
     }
   }, [commandBusy, map, snapshot]);
 
+  // During Offensive Strike, committed missions are resolved before the phase can end.
+  const strikesPending = Boolean(
+    strikePhase && snapshot?.strikePlan && !snapshot.strikePlan.resolved && snapshot.strikePlan.missions.length > 0,
+  );
   const endPhase = useCallback(() => {
-    void submitCommand({ type: "endPhase" });
-  }, [submitCommand]);
+    void submitCommand(strikesPending ? { type: "resolveAirStrikes" } : { type: "endPhase" });
+  }, [strikesPending, submitCommand]);
 
   // Clicking a hex shows it in the Control Panel; clicking a counter then selects that unit.
   const onSelect = useCallback((hex: HexData | null) => {
@@ -245,7 +312,9 @@ function App() {
         phaseActionLabel={
           snapshot?.turn.gameTurn === 1 && snapshot.turn.currentStep?.phaseId === "jointStatus"
             ? "Resolve Opening Deployment"
-            : "End Phase"
+            : strikesPending
+              ? "Resolve Air Strikes"
+              : "End Phase"
         }
         phaseActionBusy={commandBusy}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -280,6 +349,7 @@ function App() {
           attackTargets={attackTargets}
           cities={snapshot.cities}
           movement={{ mode: movementMode, status: movementStatus, onModeChange: setModeChoice }}
+          strike={strike}
           onGoTo={(id) => {
             if (!rendererRef.current) return false;
             rendererRef.current.selectById(id);
@@ -292,8 +362,9 @@ function App() {
       {commandNotice && <div className="command-toast" role="alert"><strong>Command rejected</strong><span>{commandNotice}</span><button type="button" onClick={() => setCommandNotice(null)}>×</button></div>}
       <BottomBar
         plan={snapshot?.battlePlan ?? null}
+        strikePlan={snapshot?.strikePlan ?? null}
         units={snapshot?.units ?? []}
-        combatLog={[]}
+        combatLog={combatLog}
         collapsed={logCollapsed}
         onToggleCollapsed={() => setLogCollapsed((value) => !value)}
       />

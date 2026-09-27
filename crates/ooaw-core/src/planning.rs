@@ -1,7 +1,7 @@
 use crate::error::RuleError;
 use crate::event::GameEvent;
 use crate::model::{
-    BattlePlan, HexId, MovementMode, PhaseActor, PlannedMovement, SideId, SupplyStatus,
+    Airspace, BattlePlan, HexId, MovementMode, PhaseActor, PlannedMovement, SideId, SupplyStatus,
     TrainStatus, UnitId, UnitLocation, UnitState,
 };
 use crate::state::GameState;
@@ -176,6 +176,22 @@ impl GameState {
                 "unitOutOfSupply",
                 "An out-of-supply unit may not entrain",
             ));
+        }
+        // 13.1 (3), 25.6.4 (4): Disrupted or Suppressed units may not entrain.
+        if unit.disruption.is_some() {
+            return Err(RuleError::new(
+                "unitDisrupted",
+                "A Disrupted or Suppressed unit may not entrain",
+            ));
+        }
+        // 13.1 (2): entraining requires friendly Airspace.
+        if let UnitLocation::Hex { hex_id } = &unit.location {
+            if self.airspace_map(&side_id).of(&hex_id.0) != Airspace::Friendly {
+                return Err(RuleError::new(
+                    "notFriendlyAirspace",
+                    "A unit may entrain only in friendly Airspace",
+                ));
+            }
         }
         if !self
             .active_plan()?
@@ -364,6 +380,12 @@ impl GameState {
     }
 
     pub(super) fn finish_battle_plan(&mut self, events: &mut Vec<GameEvent>) {
+        let Some(plan) = &self.battle_plan else {
+            return;
+        };
+        // Recovery (7.2 C) follows movement: the side's Disrupted markers come off.
+        let side_id = plan.side_id.clone();
+        self.remove_disruption(&side_id, events);
         let Some(plan) = &self.battle_plan else {
             return;
         };

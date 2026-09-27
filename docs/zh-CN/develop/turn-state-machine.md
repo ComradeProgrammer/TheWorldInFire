@@ -31,14 +31,15 @@
 - 内核权威寻路与移动校验：地形与格边消耗、移动力、禁行地形、敌方控制区、最低移动、丹麦渡轮、敌占格与堆叠限制，以及只读的移动预览；
 - 剧本规则数据中的铁路距离（20 格）、铁路容量（华约 8 步/北约 10 步，只计已装车单位）、各方空运司令部数量（BALTAP：华约 3、北约 1）、每回合一次再补给和 4 个机动步堆叠上限；
 - 战斗计划路线与攻击目标的前端地图叠加显示；
+- 空域（规则 11）与进攻打击阶段的空中打击环节：空中点数、空中打击、空中遮断区、混乱/压制标记、战力面损失、消灭和突破标记，并使用带种子的骰子；
 - 七回合与十四回合状态机测试。
 
 尚未实现：
 
 - 完整单位序列与尚未进入地图数据的道路、河流通行修正；
 - 基于地图控制、国家、城市、敌方控制区、HQ 支援范围和阻断边的动态补给线判定；
-- 空域控制、拦截、空运损失与升降机司令部完整编制；
-- 打击和地面战斗；
+- 拦截、空运损失与升降机司令部完整编制；
+- 核打击、化学打击、炮兵打击、北约纵深遮断、北约防御性空中打击和地面战斗；
 - 预备队移动；
 - `postBattle` 的具体自动结算；
 - 其余正式剧本的部署与胜利条件；
@@ -95,7 +96,7 @@ Pre-battle
 未验证或未实现：
 
 - 地形效果表（TEC）印在行动顺序卡背面，`internet/` 中没有该卡：VASSAL 模组（`internet/NATO_PZG_v2_4_1/`，与 `~/Downloads` 中的副本相同）、2020 版规则书以及 BoardGameGeek 上的在线更新规则书和剧本手册（`internet/NATO_Living_Rules_Booklet_1-1-26.pdf`、`internet/NATO_Play_Booklet_Updated_1-1-26.pdf`）中都没有。地图上的地形图例只给出地形优先级（关键/大型城市 1、小城市 2、山地 3、崎岖地 4、森林 5、沼泽 6、开阔地 7）。沼泽消耗 1：规则 25.8.2 的设计者注释说明沼泽与开阔地除阻止扩张外没有区别。崎岖地、山地的消耗（2/3）、大型城市和关键城市消耗 1、小河格边消耗 0（`BattlePlanningRules::minor_river_cost`）仍为占位值；山口格边尚未建模。
-- 尚未实现空域（行军和铁路需在己方空域内）、本土防卫单位不得离开本国（12.7）、OMG/预备队标记（12.6）、空中遮断区、混乱/压制标记、山口格边和难民规则。
+- 空域未处理丹麦例外（11.4），因为地图数据中没有格子国籍。尚未实现本土防卫单位不得离开本国（12.7）、OMG/预备队标记（12.6）、空中遮断区、混乱/压制标记、山口格边和难民规则。
 - 由于未模拟丹麦投降，华约不能使用丹麦渡轮。
 - BALTAP 游戏区域（剧本手册 36.4.1.2）：任何单位不得移动到易北河以南，也不得在那里追踪补给线。尚未实现：描绘出的河流格边不构成闭合边界，需要依据地图手工定义被排除的格子。
 
@@ -119,6 +120,21 @@ jointStatus
 
 `jointReinforcement` 是自动阶段。进入该阶段时，内核从场景的增援表中取出当前回合的单位，将其加入权威状态，并返回包含完整单位状态的 `reinforcementsArrived` 事件。第一回合的条目使用同一机制表示开局部署，不另设一套初始化逻辑。
 
+### 进攻打击阶段
+
+`src/strikes.rs` 实现空中打击环节（20、23），`src/airspace.rs` 计算空域（11），`src/dice.rs` 提供以游戏 ID 为种子的 SplitMix64 骰子，因此相同的命令序列会得到完全相同的结果。骰子状态属于 `GameState`，但不在客户端快照中；存档必须保存它。
+
+- **空中点数**在每个联合增援阶段按 `BattlePlanningRules::air_power` 重置（每方：每回合的战术和战役点数，以及一次性的额外战术点数）。BALTAP：双方每回合各 1 个战术点数，各 1 个额外点数，没有战役点数，第一回合奇袭（剧本手册 36.4.1.4、36.4.1.6）。规则原型使用占位值（2 战术、1 战役）；空中战役表尚未实现。
+- **任务**（`strikePlan.missions`）通过 `planAirStrike` 或 `planAirInterdiction` 下达，并由 `resolveAirStrikes` 一并结算，或在 `endPhase` 时自动结算（23.2.4）。`cancelAirMission` 将未结算任务的点数退回其来源。目标限制：每次打击两个战力面；HQ 只能被单独打击且只能用战役点数；同一单位不能被打击两次；每格最多两次打击；战术点数只能用于己方或争夺空域。
+- **打击表**采用 1 点一栏，并使用印刷的修正：大型/关键城市 −2；森林、崎岖地、山地或小城市 −1；铁路标记 +1（取代地形修正）；己方空域 +1；敌方空域 −1；奇袭回合的华约 +1。目标修正不同时取最低总和（23.3.1）。第一个指定的单位承受战力面损失。
+- **结果**：混乱（HQ 为压制；混乱的单位失去铁路标记）、战力面损失（翻面并混乱，或消灭），以及当格内最后一个敌方单位被消灭时放置突破标记。
+- **标记时机**（合并后的顺序）：混乱标记在所属方战斗计划结束时移除（原规则的恢复阶段在移动之后）；压制标记在所属方的战后步骤（解除压制）移除；突破标记和敌方空中遮断区在行动方结束预备阶段时移除（23.8.2、28.2.5）。
+- **空域**：每方在其有补给的地图单位以及其控制的每个城市五格以内投射空域，西柏林除外（11.5，地图中的 `contestsAirspace: false`）。城市补给尚未追踪，因此所有己方控制的城市都计入。双方都未投射到的格子视为争夺空域。空域现在也约束行军和铁路（仅己方空域）、装车（仅己方空域）以及空运（不能从敌方空域出发或进入敌方空域）。
+- **空中遮断区**（23.8）：另一方战术移动进入遮断区额外 +1 移动点，并禁止其行军和铁路移动进入。
+- **混乱与移动**：混乱或被压制的单位只能进行最低移动，且不能装车。
+
+本阶段尚未实现：核打击与化学打击（及末日与战争罪惩罚）、华约炮兵师（BALTAP 中没有）、北约纵深遮断、对 Reforger 地点的打击、筑垒格，以及丹麦空域例外。
+
 ## 内核模块结构
 
 游戏状态机按职责拆分，同时由 crate 根统一导出公共类型：
@@ -128,6 +144,7 @@ src/model/
 ├─ mod.rs               模型组织与公共导出
 ├─ map.rs               地图、地形、城市、网格和六角边模型
 ├─ planning.rs          战斗计划、攻击目标与移动记录
+├─ strike.rs            空中点数、空中任务、空域、混乱与打击预览
 ├─ side.rs              阵营标识与定义
 ├─ phase.rs             阶段标识、执行方式与行动方
 ├─ rules.rs             移动方式、装车状态与剧本规则参数
@@ -143,6 +160,9 @@ src/
 ├─ engine.rs    命令执行与阶段推进
 ├─ phase.rs     阶段入口处理器
 ├─ planning.rs  战斗计划命令与计划记录
+├─ strikes.rs   进攻打击阶段：空中任务、打击表与标记
+├─ airspace.rs  各方视角的空域
+├─ dice.rs      带种子、可复现的骰子
 ├─ movement.rs  移动规则、寻路与移动预览
 └─ tests.rs     状态机测试
 ```
@@ -169,7 +189,7 @@ new_game("nato-1983-standard")
 
 ```json
 {
-  "snapshot": { "protocolVersion": 10, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
+  "snapshot": { "protocolVersion": 11, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
   "map": {
     "id": "nato-central-europe",
     "version": 1,
@@ -198,7 +218,7 @@ new_game("nato-baltap-1983")
 
 ```json
 {
-  "protocolVersion": 10,
+  "protocolVersion": 11,
   "gameId": "generated-uuid",
   "revision": 0,
   "scenario": {
@@ -258,7 +278,24 @@ movement_options({ "request": { "unitId": "soviet.2gta.21motorRifleDivision" } }
 attack_target_options()  →  { "revision": 3, "hexIds": ["2214", "2415"] }
 ```
 
-`attack_target_options` 列出有敌方单位或属于敌方自由城市的格子（25.1.1）。快照的 `cities` 数组为每个城市格给出 `{ hexId, owner, controller, free }`。占领或解放城市的移动及其撤销会附带 `CityControlChanged` 事件；每条 `PlannedMovement` 记录其 `cityControlChanges`。
+`attack_target_options` 列出有敌方单位或属于敌方自由城市的格子（25.1.1）。
+
+```text
+air_strike_options()  →  { "revision": 5, "tacticalHexes": [...], "friendlyHexes": [...],
+  "targets": [{ "hexId": "2415", "airspace": "contested", "tacticalAllowed": true, "strikesRemaining": 2,
+                "units": [{ "unitId": "...", "steps": 1, "modifier": 1, "headquarters": false, "alreadyTargeted": false }] }] }
+```
+
+进攻打击命令：
+
+```json
+{ "type": "planAirStrike", "hexId": "2415", "unitIds": ["westGermany.6panzergrenadierDivision.16panzergrenadierBrigade"], "airPoint": "tactical" }
+{ "type": "planAirInterdiction", "hexId": "2414", "airPoint": "tactical" }
+{ "type": "cancelAirMission", "missionId": 1 }
+{ "type": "resolveAirStrikes" }
+```
+
+快照新增 `airPoints`、`strikePlan`、`airInterdictionZones`、`breakthroughMarkers`、`eliminatedUnitIds` 以及每个单位的 `disruption`。新增事件：`airPointsReset`、`airMissionPlanned`、`airMissionCancelled`、`airStrikeResolved`（骰点、修正与结果）、`airInterdictionZonePlaced`、`airInterdictionZonesRemoved`、`unitDisruptionChanged`、`unitStepLost`、`unitEliminated`、`breakthroughMarkerPlaced` 和 `breakthroughMarkersRemoved`。快照的 `cities` 数组为每个城市格给出 `{ hexId, owner, controller, free }`。占领或解放城市的移动及其撤销会附带 `CityControlChanged` 事件；每条 `PlannedMovement` 记录其 `cityControlChanges`。
 
 命令的变体名和字段名都使用 camelCase。战斗计划命令：
 
@@ -277,6 +314,15 @@ attack_target_options()  →  { "revision": 3, "hexIds": ["2214", "2415"] }
 右侧控制面板是主视图。未选中单位时，它显示“前往格子”、所选格的地形、指挥区、城市/港口数据、格边特征和格内单位；在战斗计划阶段，还会列出行动方的战略预备队，并提供一个切换按钮，把所选的敌占格加入攻击目标或从中移除。选择单位（从列表中选择，或在地图上点击其算子）后，面板切换到单位详情视图，显示绘制的算子、身份、战力数值、补给、铁路状态、特性，以及计划方自有单位可用的计划行动。任何行动按钮在其命令进入计划后都会变成撤销按钮；该状态由前端从权威的 `battlePlan` 推导，而不是依赖本地记录。左键点击算子会选中该单位，左键点击其他位置会让面板回到格子视图。
 
 移动在地图上下达。选中计划方自有单位时，面板显示移动方式选择器（战术、行军、铁路、空运）；单位移动后，其他方式会被禁用。前端针对所选单位调用一次 `movement_options`，并在每条命令被接受后重新调用，绝不按指针移动逐帧调用。移动方式按钮的启用状态和说明只取自该响应；攻击目标按钮只对 `attack_target_options` 中的格子启用；格子视图显示每个城市的控制方以及它是自由城市还是被征服城市。悬停在列出的目的地上时，会沿内核选择的路线绘制红色箭头；右键点击即提交 `moveUnit`。未列出的格子不显示箭头，也忽略右键点击。移动后所选单位保持选中，便于继续移动或撤销。
+
+进攻打击阶段中，前端在每个 revision 获取一次 `air_strike_options`。顶栏显示双方的空中点数（战术 · 战役 · 额外）。格子视图增加“空中任务”区域，其中包括：
+
+- 该格的空域；
+- 可勾选为目标的敌方单位，每个单位附带内核计算的骰子修正；
+- 战术与战役点数的“打击”和“遮断”按钮，仅在内核允许时启用；
+- 每个已下达任务的撤销按钮，结算后替换为骰子结果。
+
+有待结算任务时，顶栏按钮显示“Resolve Air Strikes”（`resolveAirStrikes`），之后显示“End Phase”。地图会勾勒可打击的格子（可用战术点数处为红色，否则为灰色），并为已下达的打击绘制准星、为空中遮断区绘制紫色七格区域（待结算时较浅）、为突破标记绘制星形。混乱或被压制的算子显示 D 或 S 徽标。战斗计划面板列出空中任务及其结果。战斗日志由客户端根据打击事件生成（骰点、修正、结果、战力面损失、消灭、混乱、突破与遮断），仅用于展示。
 
 显示选项（镜头缩放、适配地图和地图图层开关）位于右上角“设置”按钮打开的模态设置窗口中。底栏可折叠，并分为两个只读区域：左侧“战斗计划”实时渲染 `snapshot.battlePlan`，右侧“战斗日志”在战斗结算实现之前保持为空。
 

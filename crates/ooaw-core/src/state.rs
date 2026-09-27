@@ -2,9 +2,10 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::dice::Dice;
 use crate::model::{
-    BattlePlan, CityControlState, HexId, MapDefinition, PhaseActor, PhaseDefinition,
-    ScenarioDefinition, ScenarioSummary, SideId, UnitId, UnitState,
+    AirInterdictionZone, AirPoints, BattlePlan, CityControlState, HexId, MapDefinition, PhaseActor,
+    PhaseDefinition, ScenarioDefinition, ScenarioSummary, SideId, StrikePlan, UnitId, UnitState,
 };
 
 use crate::error::RuleError;
@@ -61,6 +62,16 @@ pub struct GameSnapshot {
     pub battle_plan: Option<BattlePlan>,
     /// Control of every city hex on the map.
     pub cities: Vec<CityControlState>,
+    /// Air Points held by each side.
+    pub air_points: Vec<AirPoints>,
+    /// Air missions of the current Offensive Strike Phase.
+    pub strike_plan: Option<StrikePlan>,
+    /// Active Air Interdiction Zones.
+    pub air_interdiction_zones: Vec<AirInterdictionZone>,
+    /// Hexes holding a Breakthrough Marker (25.9).
+    pub breakthrough_markers: Vec<HexId>,
+    /// Units eliminated so far, in order of elimination.
+    pub eliminated_unit_ids: Vec<UnitId>,
     /// Player decision that must be resolved before automatic play can continue.
     pub pending_decision: Option<PendingDecision>,
 }
@@ -84,6 +95,13 @@ pub struct GameState {
     pub(super) units: BTreeMap<UnitId, UnitState>,
     pub(super) battle_plan: Option<BattlePlan>,
     pub(super) city_control: BTreeMap<HexId, SideId>,
+    pub(super) air_points: Vec<AirPoints>,
+    pub(super) strike_plan: Option<StrikePlan>,
+    pub(super) air_interdiction_zones: Vec<AirInterdictionZone>,
+    pub(super) breakthrough_markers: Vec<HexId>,
+    pub(super) eliminated_units: Vec<UnitId>,
+    /// Seeded dice; saves must persist this state to replay identically.
+    pub(super) dice: Dice,
 }
 
 impl GameState {
@@ -100,6 +118,21 @@ impl GameState {
                     .map(|city| (hex.id.clone(), city.owner.clone()))
             })
             .collect();
+        let air_points = scenario
+            .sides
+            .iter()
+            .map(|side| AirPoints {
+                side_id: side.id.clone(),
+                tactical: 0,
+                operational: 0,
+                bonus_tactical: scenario
+                    .battle_planning_rules
+                    .air_power
+                    .for_side(&side.id)
+                    .bonus_tactical,
+            })
+            .collect();
+        let dice = Dice::from_seed_text(&game_id.0);
         Ok(Self {
             game_id,
             scenario,
@@ -110,13 +143,19 @@ impl GameState {
             units: BTreeMap::new(),
             battle_plan: None,
             city_control,
+            air_points,
+            strike_plan: None,
+            air_interdiction_zones: Vec::new(),
+            breakthrough_markers: Vec::new(),
+            eliminated_units: Vec::new(),
+            dice,
         })
     }
 
     /// Returns the serializable game state exposed to clients.
     pub fn snapshot(&self) -> GameSnapshot {
         GameSnapshot {
-            protocol_version: 10,
+            protocol_version: 11,
             game_id: self.game_id.clone(),
             revision: self.revision,
             scenario: ScenarioSummary::from(&self.scenario),
@@ -129,6 +168,11 @@ impl GameState {
             units: self.units.values().cloned().collect(),
             battle_plan: self.battle_plan.clone(),
             cities: self.city_states(),
+            air_points: self.air_points.clone(),
+            strike_plan: self.strike_plan.clone(),
+            air_interdiction_zones: self.air_interdiction_zones.clone(),
+            breakthrough_markers: self.breakthrough_markers.clone(),
+            eliminated_unit_ids: self.eliminated_units.clone(),
             pending_decision: None,
         }
     }

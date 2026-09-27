@@ -874,3 +874,194 @@ select {
   gap: 6px;
   cursor: pointer;
 }
+
+/* ---------------------------------------------------------------- air missions */
+
+.air-strike-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 10px;
+  border: 1px solid #5a3232;
+  border-radius: 5px;
+  background: rgba(217, 75, 70, 0.06);
+}
+
+.air-strike-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.air-strike-panel h3,
+.air-strike-panel h4 {
+  margin: 0;
+}
+
+.airspace-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.airspace-tag.friendly {
+  border-color: #3f6f4a;
+  color: #9fe0ab;
+}
+
+.airspace-tag.contested {
+  border-color: #7a6431;
+  color: #f1d48c;
+}
+
+.airspace-tag.enemy {
+  border-color: #7a3431;
+  color: #ffb0a7;
+}
+
+.air-points-line {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.air-points-line strong {
+  color: var(--text);
+}
+
+.mission-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-left: 3px solid #ff625c;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 12px;
+}
+
+.mission-row .action-toggle {
+  align-self: flex-start;
+}
+
+.strike-result {
+  font-variant-numeric: tabular-nums;
+}
+
+.strike-result.noEffect {
+  color: var(--muted);
+}
+
+.strike-result.disrupted {
+  color: #ffb45c;
+}
+
+.strike-result.stepLoss {
+  color: #ff7a70;
+}
+
+.strike-result.zone {
+  color: #d4c2ff;
+}
+
+.strike-targets {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.strike-target {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.strike-target.targeted {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.strike-target small {
+  color: var(--muted);
+}
+
+.strike-target strong {
+  min-width: 26px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.strike-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.strike-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+.strike-buttons button {
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid #7a3431;
+  border-radius: 4px;
+  background: #2b1b1c;
+  color: #ffb0a7;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.strike-buttons.interdiction button {
+  border-color: #5b4a86;
+  background: #221d33;
+  color: #d4c2ff;
+}
+
+.strike-buttons button:hover:not(:disabled) {
+  border-color: var(--pact);
+}
+
+.strike-buttons button:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.status-disrupted {
+  color: #ffb45c;
+}
+
+.unit-status {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: #ff9f1c;
+  color: #05080c;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.readonly-log-body p.log-roll span {
+  color: var(--text);
+}
+
+.readonly-log-body p.log-hit span {
+  color: #ffb45c;
+}
+
+.readonly-log-body p.log-info span {
+  color: #d4c2ff;
+}

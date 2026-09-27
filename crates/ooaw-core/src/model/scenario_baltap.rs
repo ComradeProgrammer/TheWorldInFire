@@ -1,7 +1,8 @@
 use super::map::nato_map;
 use super::scenario::{reinforcement, side, standard_turn_sequence};
 use super::{
-    BattlePlanningRules, HexId, ReinforcementDefinition, ScenarioDefinition, UnitLocation,
+    AirPowerRules, BattlePlanningRules, HexId, ReinforcementDefinition, ScenarioDefinition,
+    SideAirPower, UnitLocation,
 };
 
 fn hex(id: &str) -> UnitLocation {
@@ -51,6 +52,21 @@ pub(crate) fn baltap_scenario() -> ScenarioDefinition {
         battle_planning_rules: BattlePlanningRules {
             warsaw_pact_airlift_commands: 3,
             nato_airlift_commands: 1,
+            // 36.4.1.4: one Tactical Air Point per turn each, plus a second on one
+            // turn of each player's choice. 36.4.1.6: Surprise on Game Turn 1.
+            air_power: AirPowerRules {
+                warsaw_pact: SideAirPower {
+                    tactical_per_turn: 1,
+                    operational_per_turn: 0,
+                    bonus_tactical: 1,
+                },
+                nato: SideAirPower {
+                    tactical_per_turn: 1,
+                    operational_per_turn: 0,
+                    bonus_tactical: 1,
+                },
+                surprise_turn: Some(1),
+            },
             ..BattlePlanningRules::nato_standard()
         },
         sides: vec![side("warsawPact", "Warsaw Pact"), side("nato", "NATO")],

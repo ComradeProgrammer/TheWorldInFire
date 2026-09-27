@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{SideId, TrainStatus};
+use super::{Disruption, SideId, TrainStatus};
 
 /// Stable identifier for a physical military unit in a scenario.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -158,6 +158,9 @@ pub struct UnitState {
     pub supply: UnitSupplyState,
     /// Rail-loading state that persists between player turns.
     pub train_status: Option<TrainStatus>,
+    /// Disrupted or Suppressed marker from an enemy Strike or battle (25.6.4).
+    #[serde(default)]
+    pub disruption: Option<Disruption>,
 }
 
 impl UnitState {

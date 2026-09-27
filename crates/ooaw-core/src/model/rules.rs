@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{MapHex, SideId, Terrain};
+use super::{AirPowerRules, MapHex, SideAirPower, SideId, Terrain};
 
 /// Scenario-controlled rules used while constructing a battle plan.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,6 +23,8 @@ pub struct BattlePlanningRules {
     pub major_river_cost: u16,
     /// Additional movement points to cross a minor-river hexside.
     pub minor_river_cost: u16,
+    /// Air Points and Surprise (23.1, 35.7).
+    pub air_power: AirPowerRules,
 }
 
 impl BattlePlanningRules {
@@ -41,6 +43,21 @@ impl BattlePlanningRules {
             // The TEC card is not in the reference material; minor rivers are
             // treated as free to cross until its value is confirmed.
             minor_river_cost: 0,
+            // Placeholder for the rules prototype; real scenarios roll on an Air
+            // Campaign Table, which is not implemented.
+            air_power: AirPowerRules {
+                warsaw_pact: SideAirPower {
+                    tactical_per_turn: 2,
+                    operational_per_turn: 1,
+                    bonus_tactical: 0,
+                },
+                nato: SideAirPower {
+                    tactical_per_turn: 2,
+                    operational_per_turn: 1,
+                    bonus_tactical: 0,
+                },
+                surprise_turn: None,
+            },
         }
     }
 

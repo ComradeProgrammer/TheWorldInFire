@@ -1,5 +1,17 @@
 import { useState, type FormEvent } from "react";
-import type { BattlePlan, CityControlState, GameCommand, MovementMode, PhaseSnapshot, UnitState } from "../gameApi";
+import type {
+  AirPoints,
+  Airspace,
+  BattlePlan,
+  CityControlState,
+  GameCommand,
+  MovementMode,
+  PhaseSnapshot,
+  StrikePlan,
+  StrikeTargetHex,
+  UnitState,
+} from "../gameApi";
+import { AirStrikePanel } from "./AirStrikePanel";
 import { MOVEMENT_MODES, type MovementPreviewStatus } from "./movementModes";
 import { CITY_KIND_NAMES, TERRAIN_NAMES } from "../map/mapData";
 import type { HexData, HexsideFeature, MapData } from "../map/mapTypes";
@@ -61,6 +73,7 @@ function UnitRow({ unit, onSelect }: { unit: UnitState; onSelect(): void }) {
   return (
     <button type="button" className={`unit-row side-${unit.sideId === "nato" ? "nato" : "pact"}`} onClick={onSelect}>
       <span>{unit.name}</span>
+      {unit.disruption && <em className="unit-status" title={readableId(unit.disruption)}>{unit.disruption === "suppressed" ? "S" : "D"}</em>}
       {step && <strong>{step.attack}–{step.defense}–{step.movement}</strong>}
     </button>
   );
@@ -212,6 +225,7 @@ function UnitDetails({ unit, plan, activeSideId, planning, busy, movement, onBac
         <div><dt>Movement supply</dt><dd>{unit.supply.movement ? readableId(unit.supply.movement) : "N/A"}</dd></div>
         <div><dt>Combat supply</dt><dd>{unit.supply.combat ? readableId(unit.supply.combat) : "N/A"}</dd></div>
         <div><dt>Rail status</dt><dd>{unit.trainStatus ? readableId(unit.trainStatus) : "Not entrained"}</dd></div>
+        <div><dt>Status</dt><dd className={unit.disruption ? "status-disrupted" : undefined}>{unit.disruption ? readableId(unit.disruption) : "Ready"}</dd></div>
       </dl>
       {unit.traits.length > 0 && <div className="trait-list">{unit.traits.map((trait) => <span key={trait}>{readableId(trait)}</span>)}</div>}
       {planning && plan && unit.sideId === activeSideId ? (
@@ -221,6 +235,22 @@ function UnitDetails({ unit, plan, activeSideId, planning, busy, movement, onBac
       )}
     </div>
   );
+}
+
+export interface StrikeContext {
+  plan: StrikePlan;
+  points: AirPoints | undefined;
+  targets: ReadonlyMap<string, StrikeTargetHex>;
+  tacticalHexes: ReadonlySet<string>;
+  friendlyHexes: ReadonlySet<string>;
+  /** False until the core preview for the current revision has arrived. */
+  ready: boolean;
+}
+
+function airspaceOf(strike: StrikeContext, hexId: string): Airspace | null {
+  if (!strike.ready) return null;
+  if (strike.friendlyHexes.has(hexId)) return "friendly";
+  return strike.tacticalHexes.has(hexId) ? "contested" : "enemy";
 }
 
 export interface SidePanelProps {
@@ -235,6 +265,8 @@ export interface SidePanelProps {
   selectedUnitId: string | null;
   commandBusy: boolean;
   movement: MovementControl;
+  /** Offensive Strike Phase context; present only during that phase. */
+  strike: StrikeContext | null;
   onGoTo(id: string): boolean;
   onSelectUnit(id: string | null): void;
   onPlanningCommand(command: GameCommand): void;
@@ -326,6 +358,19 @@ export function SidePanel(props: SidePanelProps) {
               >
                 {attackSelected ? "Undo attack objective" : "Set as attack objective"}
               </button>
+            )}
+            {props.strike && (
+              <AirStrikePanel
+                hex={hex}
+                units={props.units}
+                target={props.strike.targets.get(hex.id)}
+                airspace={airspaceOf(props.strike, hex.id)}
+                tacticalAllowed={props.strike.tacticalHexes.has(hex.id)}
+                plan={props.strike.plan}
+                points={props.strike.points}
+                busy={props.commandBusy || !props.strike.ready}
+                onCommand={props.onPlanningCommand}
+              />
             )}
             <div className="unit-list context-units">
               <h3>Units in hex ({occupyingUnits.length})</h3>

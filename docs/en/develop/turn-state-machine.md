@@ -31,14 +31,15 @@ Completed:
 - authoritative pathfinding and validation for terrain and hexside costs, movement allowance, prohibited terrain, enemy zones of control, minimum movement, the Danish Ferry, enemy occupation, and stacking, plus a read-only movement preview;
 - scenario rule data for the 20-hex rail limit, eight-step WP and ten-step NATO rail capacities (Entrained units only), per-side Airlift Commands (BALTAP: WP 3, NATO 1), one resupply operation per turn, and the four-maneuver-step stacking limit;
 - frontend map overlays for planned routes and attack objectives;
+- Airspace (rule 11) and the Offensive Strike Phase's Air Strike Segment: Air Points, Air Strikes, Air Interdiction Zones, Disrupted/Suppressed markers, step loss, elimination, and Breakthrough Markers, with seeded dice;
 - tests covering both seven-turn and fourteen-turn state machines.
 
 Not implemented yet:
 
 - the complete unit roster and road/river movement modifiers not yet represented in map data;
 - dynamic line-of-supply calculation based on map control, countries, cities, enemy zones of control, HQ support ranges, and blocked edges;
-- airspace control, interception, air-transport losses, and the complete Lift Command order of battle;
-- strikes and ground combat;
+- interception, air-transport losses, and the complete Lift Command order of battle;
+- Nuclear, Chemical, and Artillery Strikes, NATO Deep Interdiction, NATO Defensive Air Strikes, and ground combat;
 - reserve movement;
 - concrete automatic work for `postBattle`;
 - deployments and victory conditions for the remaining official scenarios;
@@ -95,7 +96,7 @@ Implemented:
 Not verified or not implemented:
 
 - The TEC is printed on the back of the Sequence of Play cards. It is not in `internet/`: not in the VASSAL module (`internet/NATO_PZG_v2_4_1/`, identical to the copies in `~/Downloads`), the 2020 rulebook, or the BoardGameGeek living rules and play booklet (`internet/NATO_Living_Rules_Booklet_1-1-26.pdf`, `internet/NATO_Play_Booklet_Updated_1-1-26.pdf`). The board's Terrain Key gives only terrain priorities (Key/Major City 1, Minor City 2, Mountain 3, Rough 4, Forest 5, Marsh 6, Clear 7). Marsh costs 1: the Designer's Note to 25.8.2 says Marsh hexes are no different from Clear except that they block Exploitation. Rough and Mountain costs (2/3), a cost of 1 for Major and Key cities, and a Minor River cost of 0 (`BattlePlanningRules::minor_river_cost`) remain placeholders; the Mountain Pass hexside is not modelled.
-- There is no airspace (March and Rail stay in friendly airspace), Territorial home-country limit (12.7), OMG/Reserve markers (12.6), Air Interdiction Zones, Disrupted/Suppressed markers, Pass hexsides, or Refugees.
+- There is no Territorial home-country limit (12.7), no OMG/Reserve markers (12.6), no Pass hexsides, and no Refugees. Airspace ignores the Danish exception (11.4) because hex nationality is not in the map data.
 - The Warsaw Pact cannot use the Danish Ferry because Danish surrender is not modeled.
 - BALTAP play area (Play Booklet 36.4.1.2): no unit may move or trace supply south of the Elbe. It is not enforced yet: the traced river hexsides do not form a closed boundary, so the excluded hexes must be defined from the board by hand.
 
@@ -119,6 +120,21 @@ Joint phases use actor `all`; later phases use the corresponding side as actor.
 
 `jointReinforcement` is automatic. On entering it, the core selects units scheduled for the current turn, adds them to authoritative state, and returns a `reinforcementsArrived` event containing their complete state. Turn-one entries use the same mechanism for opening deployment, so there is no separate setup path.
 
+### Offensive Strike Phase
+
+`src/strikes.rs` implements the Air Strike Segment (20, 23), `src/airspace.rs` computes Airspace (11), and `src/dice.rs` provides a SplitMix64 die seeded from the game ID, so a game replays identically for the same commands. The dice state is part of `GameState` but not of the client snapshot; saves must persist it.
+
+- **Air Points** reset each Joint Reinforcement Phase from `BattlePlanningRules::air_power` (per side: Tactical and Operational per turn and a one-time bonus Tactical point). BALTAP: 1 Tactical per turn each, 1 bonus each, no Operational, Surprise on turn 1 (Play Booklet 36.4.1.4, 36.4.1.6). The rules prototype uses placeholder values (2 Tactical, 1 Operational); the Air Campaign Table is not implemented.
+- **Missions** (`strikePlan.missions`) are committed with `planAirStrike` or `planAirInterdiction` and resolved together with `resolveAirStrikes`, or automatically by `endPhase` (23.2.4). `cancelAirMission` refunds a pending mission to the pool it came from. Targeting enforces: two steps per strike, HQs alone and only with Operational points, no unit struck twice, two strikes per hex, and Tactical points only in friendly or contested Airspace.
+- **Strike Table**, one-point column, with the printed modifiers: Major/Key City −2; Forest, Rough, Mountain, or Minor City −1; train marker +1 instead of terrain; friendly Airspace +1; enemy Airspace −1; WP on the Surprise turn +1. When targets differ, the lowest total applies (23.3.1). The first named unit absorbs a step loss.
+- **Results**: Disrupted (HQs Suppressed; a Disrupted unit loses its train marker), step loss (flip and Disrupt, or eliminate), and a Breakthrough Marker when the last enemy unit in the hex is eliminated.
+- **Marker timing** in the merged sequence: Disrupted markers are removed when their side's Battle Planning ends (the original Recovery Phase follows movement); Suppressed markers are removed in their side's Post-Battle step (Unsuppression); Breakthrough Markers and enemy Air Interdiction Zones are removed when the acting side ends its Reserve Phase (23.8.2, 28.2.5).
+- **Airspace**: each side projects within five hexes of its supplied on-map units and of every city it controls, except West Berlin (11.5, the map's `contestsAirspace: false`). City supply is not traced, so all controlled cities count. A hex projected by neither side is treated as contested. Airspace now also governs March and Rail (friendly only), entraining (friendly only), and Air Transport (not from or into enemy Airspace).
+- **Air Interdiction Zones** (23.8) add +1 MP to the other side's Tactical movement entering the zone and bar its March and Rail movement.
+- **Disruption and movement**: Disrupted or Suppressed units may use only Minimum movement and may not entrain.
+
+Not implemented in this phase: Nuclear and Chemical Strikes (with Armageddon and war-crimes penalties), WP Artillery divisions (BALTAP has none), NATO Deep Interdiction, strikes on Reforger Sites, Fortified hexes, and the Danish Airspace exception.
+
 ## Core module layout
 
 The game state machine is split by responsibility while the crate root provides a stable public API:
@@ -128,6 +144,7 @@ src/model/
 ├─ mod.rs               model organization and public re-exports
 ├─ map.rs               map, terrain, city, grid, and hexside models
 ├─ planning.rs          battle plans, objectives, and movement records
+├─ strike.rs            Air Points, air missions, Airspace, Disruption, strike previews
 ├─ side.rs              side identifiers and definitions
 ├─ phase.rs             phase identifiers, execution, and actors
 ├─ rules.rs             movement modes, train status, and scenario rule parameters
@@ -143,6 +160,9 @@ src/
 ├─ engine.rs    command execution and phase advancement
 ├─ phase.rs     phase-entry handlers
 ├─ planning.rs  battle-planning commands and plan bookkeeping
+├─ strikes.rs   Offensive Strike Phase: air missions, Strike Table, markers
+├─ airspace.rs  Airspace from each side's point of view
+├─ dice.rs      seeded, reproducible dice
 ├─ movement.rs  movement rules, pathfinding, and movement previews
 └─ tests.rs     state-machine tests
 ```
@@ -169,7 +189,7 @@ new_game("nato-1983-standard")
 
 ```json
 {
-  "snapshot": { "protocolVersion": 10, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
+  "snapshot": { "protocolVersion": 11, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
   "map": {
     "id": "nato-central-europe",
     "version": 1,
@@ -198,7 +218,7 @@ Current snapshot example:
 
 ```json
 {
-  "protocolVersion": 10,
+  "protocolVersion": 11,
   "gameId": "generated-uuid",
   "revision": 0,
   "scenario": {
@@ -258,7 +278,24 @@ movement_options({ "request": { "unitId": "soviet.2gta.21motorRifleDivision" } }
 attack_target_options()  →  { "revision": 3, "hexIds": ["2214", "2415"] }
 ```
 
-`attack_target_options` lists hexes containing an enemy unit or an enemy Free City (25.1.1). The snapshot's `cities` array gives `{ hexId, owner, controller, free }` for every city hex. `CityControlChanged` events accompany movements that take or liberate a city, and their undo; each `PlannedMovement` records its `cityControlChanges`.
+`attack_target_options` lists hexes containing an enemy unit or an enemy Free City (25.1.1).
+
+```text
+air_strike_options()  →  { "revision": 5, "tacticalHexes": [...], "friendlyHexes": [...],
+  "targets": [{ "hexId": "2415", "airspace": "contested", "tacticalAllowed": true, "strikesRemaining": 2,
+                "units": [{ "unitId": "...", "steps": 1, "modifier": 1, "headquarters": false, "alreadyTargeted": false }] }] }
+```
+
+Offensive Strike commands:
+
+```json
+{ "type": "planAirStrike", "hexId": "2415", "unitIds": ["westGermany.6panzergrenadierDivision.16panzergrenadierBrigade"], "airPoint": "tactical" }
+{ "type": "planAirInterdiction", "hexId": "2414", "airPoint": "tactical" }
+{ "type": "cancelAirMission", "missionId": 1 }
+{ "type": "resolveAirStrikes" }
+```
+
+The snapshot adds `airPoints`, `strikePlan`, `airInterdictionZones`, `breakthroughMarkers`, `eliminatedUnitIds`, and each unit's `disruption`. New events: `airPointsReset`, `airMissionPlanned`, `airMissionCancelled`, `airStrikeResolved` (die roll, modifier, result), `airInterdictionZonePlaced`, `airInterdictionZonesRemoved`, `unitDisruptionChanged`, `unitStepLost`, `unitEliminated`, `breakthroughMarkerPlaced`, and `breakthroughMarkersRemoved`. The snapshot's `cities` array gives `{ hexId, owner, controller, free }` for every city hex. `CityControlChanged` events accompany movements that take or liberate a city, and their undo; each `PlannedMovement` records its `cityControlChanges`.
 
 Command variant names and their fields are both camelCase. Battle-planning commands:
 
@@ -277,6 +314,15 @@ Command variant names and their fields are both camelCase. Battle-planning comma
 The right-hand Control Panel is the primary view. With no unit selected it shows Go to Hex, then the selected hex's terrain, command zone, city/port data, hexside features, and occupying units; during Battle Planning it also lists the active side's Strategic Reserve and offers a toggle that adds the selected enemy-occupied hex as an attack objective or removes it. Choosing a unit (from the list or by clicking its counter on the map) switches the panel to a unit detail view with a drawn counter, identity, strength values, supply, rail status, traits, and, for the planning side's own units, planning actions. Every action button becomes an Undo button once its order is in the plan; the frontend derives that state from the authoritative `battlePlan`, never from local bookkeeping. Left-clicking a counter selects that unit, and left-clicking elsewhere returns the panel to the hex view.
 
 Movement is ordered on the map. While the planning side's own unit is selected, the panel shows a movement-mode selector (Tactical, March, Rail, Air transport). After a unit has moved, the other systems are disabled. The frontend calls `movement_options` once for the selected unit and again after each accepted command, never per pointer move. Mode buttons are enabled and explained only from that response. The objective toggle is enabled only for hexes in `attack_target_options`. The hex view shows each city's controller and whether it is Free or Conquered. Hovering a listed destination draws a red arrow along the core-chosen route. Right-clicking it submits `moveUnit`. Hexes not in the list show no arrow and ignore right-clicks. The selected unit stays selected after a move so that it can continue or be undone.
+
+During the Offensive Strike Phase the frontend fetches `air_strike_options` once per revision. The top bar shows both sides' Air Points (Tactical · Operational · bonus). The hex view gains an Air Missions section with:
+
+- the hex's Airspace;
+- enemy units to check as targets, each with its core-computed die modifier;
+- Strike and Interdict buttons for Tactical and Operational points, enabled only where the core allows them;
+- each committed mission with an Undo button, replaced by its dice result once resolved.
+
+While missions are pending, the top-bar action reads "Resolve Air Strikes" (`resolveAirStrikes`), then "End Phase". The map outlines strikeable hexes (red where Tactical points may be used, grey otherwise) and draws crosshairs for committed strikes, a purple seven-hex area for Air Interdiction Zones (lighter while pending), and stars for Breakthrough Markers. Counters show a D or S badge when Disrupted or Suppressed. The Battle Plan pane lists air missions and their results. The Combat Log is built on the client from strike events (die roll, modifier, result, step losses, eliminations, Disruption, Breakthroughs, interdiction); it is presentation only.
 
 Display options (camera zoom, fit, and map-layer toggles) live in a modal Settings dialog opened from the top-right Settings button. The bottom bar is collapsible and split into two read-only panes: Battle Plan, rendered live from `snapshot.battlePlan`, and Combat Log, which stays empty until combat resolution exists.
 

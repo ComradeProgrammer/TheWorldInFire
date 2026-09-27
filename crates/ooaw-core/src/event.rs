@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    HexId, MovementMode, PhaseDefinition, PlannedMovement, SideId, TrainStatus, UnitId,
-    UnitLocation, UnitState, UnitSupplyState,
+    AirMission, AirPoints, Disruption, HexId, MovementMode, PhaseDefinition, PlannedMovement,
+    SideId, StrikeResolution, TrainStatus, UnitId, UnitLocation, UnitState, UnitSupplyState,
 };
 
 /// Supply result recorded for one unit during automatic pre-battle resolution.
@@ -118,6 +118,83 @@ pub enum GameEvent {
         hex_id: HexId,
         /// Units that received applicable supply.
         unit_ids: Vec<UnitId>,
+    },
+    /// Each side's Air Points were reset for the new game turn.
+    AirPointsReset {
+        /// Balances after the reset.
+        air_points: Vec<AirPoints>,
+    },
+    /// An Air Point was committed to a mission.
+    AirMissionPlanned {
+        /// Striking side.
+        side_id: SideId,
+        /// Committed mission.
+        mission: AirMission,
+    },
+    /// An unresolved mission was withdrawn and its Air Point refunded.
+    AirMissionCancelled {
+        /// Striking side.
+        side_id: SideId,
+        /// Withdrawn mission.
+        mission_id: u32,
+    },
+    /// An Air Strike was rolled on the Strike Table.
+    AirStrikeResolved {
+        /// Striking side.
+        side_id: SideId,
+        /// Resolved mission.
+        mission_id: u32,
+        /// Target hex.
+        hex_id: HexId,
+        /// Targeted units.
+        unit_ids: Vec<UnitId>,
+        /// Dice outcome.
+        resolution: StrikeResolution,
+    },
+    /// An Air Interdiction Zone became active.
+    AirInterdictionZonePlaced {
+        /// Side that placed it.
+        side_id: SideId,
+        /// Marked hex.
+        hex_id: HexId,
+    },
+    /// A side's Air Interdiction Zones were removed (23.8.2).
+    AirInterdictionZonesRemoved {
+        /// Side that had placed them.
+        side_id: SideId,
+        /// Marked hexes removed.
+        hex_ids: Vec<HexId>,
+    },
+    /// A unit became Disrupted or Suppressed, or recovered (`None`).
+    UnitDisruptionChanged {
+        /// Unit.
+        unit_id: UnitId,
+        /// New marker, if any.
+        disruption: Option<Disruption>,
+    },
+    /// A unit lost a step and flipped to its reduced side.
+    UnitStepLost {
+        /// Unit.
+        unit_id: UnitId,
+        /// New active step index.
+        strength_step_index: usize,
+    },
+    /// A unit lost its last step and left play.
+    UnitEliminated {
+        /// Unit.
+        unit_id: UnitId,
+        /// Hex it occupied.
+        hex_id: HexId,
+    },
+    /// A Strike cleared a hex of enemy units (25.9.1).
+    BreakthroughMarkerPlaced {
+        /// Hex.
+        hex_id: HexId,
+    },
+    /// Breakthrough Markers were removed at the end of the Reserve Phase.
+    BreakthroughMarkersRemoved {
+        /// Hexes cleared.
+        hex_ids: Vec<HexId>,
     },
     /// The scenario has reached its final turn and phase.
     GameCompleted {

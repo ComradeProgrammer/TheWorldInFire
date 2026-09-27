@@ -6,8 +6,10 @@
 
 #![deny(missing_docs)]
 
+mod airspace;
 mod cities;
 mod command;
+mod dice;
 mod engine;
 mod error;
 mod event;
@@ -17,19 +19,23 @@ mod movement;
 mod phase;
 mod planning;
 mod state;
+mod strikes;
 
 pub use command::{CommandOutcome, GameCommand};
 pub use error::RuleError;
 pub use event::{GameEvent, UnitSupplyCheck};
 pub use model::{
-    find_scenario, list_scenarios, BattlePlan, BattlePlanningRules, Causeway, CityControlChange,
-    CityControlState, CityKind, CityOutline, CommandLine, CommandZone, FormationId, HexId,
-    HexsideFeature, LabelKind, LineKind, MapCity, MapDefinition, MapGrid, MapHex, MapHexside,
-    MapLabel, MapLine, MapSymbol, MovementMode, MovementModeOptions, MovementOption, NationId,
-    PhaseActor, PhaseDefinition, PhaseExecution, PhaseId, PlannedMovement, ReinforcementDefinition,
-    ScenarioDefinition, ScenarioSummary, SideDefinition, SideId, StepId, SupplyStatus, Terrain,
-    TrainStatus, UnitDefinition, UnitId, UnitLocation, UnitState, UnitStepDefinition,
-    UnitSupplyState, UnitTraitId, UnitTypeId, WaterArea,
+    find_scenario, list_scenarios, AirInterdictionZone, AirMission, AirMissionKind, AirPointKind,
+    AirPointSource, AirPoints, AirPowerRules, AirStrikeOptions, Airspace, BattlePlan,
+    BattlePlanningRules, Causeway, CityControlChange, CityControlState, CityKind, CityOutline,
+    CommandLine, CommandZone, Disruption, FormationId, HexId, HexsideFeature, LabelKind, LineKind,
+    MapCity, MapDefinition, MapGrid, MapHex, MapHexside, MapLabel, MapLine, MapSymbol,
+    MovementMode, MovementModeOptions, MovementOption, NationId, PhaseActor, PhaseDefinition,
+    PhaseExecution, PhaseId, PlannedMovement, ReinforcementDefinition, ScenarioDefinition,
+    ScenarioSummary, SideAirPower, SideDefinition, SideId, StepId, StrikePlan, StrikeResolution,
+    StrikeResult, StrikeTargetHex, StrikeTargetUnit, SupplyStatus, Terrain, TrainStatus,
+    UnitDefinition, UnitId, UnitLocation, UnitState, UnitStepDefinition, UnitSupplyState,
+    UnitTraitId, UnitTypeId, WaterArea,
 };
 pub use state::{GameId, GameSnapshot, GameState, GameStatus, PendingDecision, TurnState};
 

@@ -177,6 +177,7 @@ pub(crate) fn reinforcement(
             location,
             supply,
             train_status: None,
+            disruption: None,
         },
     }
 }

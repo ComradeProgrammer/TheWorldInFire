@@ -1,5 +1,5 @@
 import { Application, Container, CullerPlugin, extensions, Graphics } from "pixi.js";
-import type { BattlePlan, MovementOption, UnitState } from "../../gameApi";
+import type { AirInterdictionZone, AirMission, BattlePlan, MovementOption, UnitState } from "../../gameApi";
 import type { HexGrid } from "../hexGrid";
 import { hexId } from "../hexGrid";
 import type { HexData, MapData } from "../mapTypes";
@@ -52,6 +52,20 @@ export interface MovementPreview {
 
 const MOVE_ARROW_COLOR = 0xff3b30;
 
+/** Offensive Strike Phase state drawn on the map. All of it comes from the core. */
+export interface StrikeOverlay {
+  /** Hexes with strikeable enemy units; `tacticalAllowed` marks friendly/contested Airspace. */
+  targets: { hexId: string; tacticalAllowed: boolean }[];
+  missions: AirMission[];
+  zones: AirInterdictionZone[];
+  breakthroughs: string[];
+}
+
+const STRIKE_COLOR = 0xff625c;
+const RESOLVED_STRIKE_COLOR = 0xf0bf58;
+const INTERDICTION_COLOR = 0xb58cff;
+const BREAKTHROUGH_COLOR = 0xffd23f;
+
 /** Extent of the playable hexes in map pixels. */
 function mapBounds(map: MapData, grid: HexGrid): Rect {
   let minX = Infinity;
@@ -88,6 +102,8 @@ export class MapRenderer {
   private readonly planningLayer = new Graphics({ label: "battle-plan" });
   private readonly unitLayer = new Container({ label: "units" });
   private readonly moveArrow = new Graphics({ label: "move-preview" });
+  private readonly strikeZones = new Graphics({ label: "air-interdiction" });
+  private readonly strikeMarks = new Graphics({ label: "air-strikes" });
   private movePreview: MovementPreview | null = null;
   private counterHits: CounterHit[] = [];
   private readonly camera: Camera;
@@ -164,7 +180,9 @@ export class MapRenderer {
       labels.major,
       this.hexNumbers,
       this.planningLayer,
+      this.strikeZones,
       this.unitLayer,
+      this.strikeMarks,
       this.highlight,
       this.moveArrow,
     );
@@ -422,6 +440,79 @@ export class MapRenderer {
       if (!hex) continue;
       const corners = this.grid.corners(hex.row, hex.col, 0.9);
       g.poly(corners).fill({ color: 0xd94b46, alpha: 0.2 }).stroke({ color: 0xff625c, width: 9, alpha: 0.95 });
+    }
+  }
+
+  setStrikeOverlay(overlay: StrikeOverlay): void {
+    const zones = this.strikeZones.clear();
+    const marks = this.strikeMarks.clear();
+
+    // An Air Interdiction Zone is the marked hex and its six neighbours.
+    const zoneHexes = (centerId: string) => {
+      const hex = this.hexByKey.get(centerId);
+      if (!hex) return [];
+      const { row, col } = hex;
+      const diagonal = row % 2 === 0
+        ? [[row - 1, col], [row - 1, col + 1], [row + 1, col], [row + 1, col + 1]]
+        : [[row - 1, col - 1], [row - 1, col], [row + 1, col - 1], [row + 1, col]];
+      return [[row, col], [row, col - 1], [row, col + 1], ...diagonal]
+        .map(([r, c]) => this.hexByKey.get(hexId(r, c)))
+        .filter((candidate): candidate is HexData => Boolean(candidate));
+    };
+    const drawZone = (hexId: string, alpha: number) => {
+      for (const hex of zoneHexes(hexId)) {
+        zones.poly(this.grid.corners(hex.row, hex.col)).fill({ color: INTERDICTION_COLOR, alpha });
+      }
+      const center = this.hexByKey.get(hexId);
+      if (center) {
+        zones.poly(this.grid.corners(center.row, center.col, 0.8)).stroke({ color: INTERDICTION_COLOR, width: 6, alpha: 0.9 });
+      }
+    };
+    for (const zone of overlay.zones) drawZone(zone.hexId, 0.2);
+    for (const mission of overlay.missions) {
+      if (mission.kind.type === "interdiction" && !mission.resolution) drawZone(mission.hexId, 0.1);
+    }
+
+    for (const target of overlay.targets) {
+      const hex = this.hexByKey.get(target.hexId);
+      if (!hex) continue;
+      marks.poly(this.grid.corners(hex.row, hex.col, 0.94)).stroke({
+        color: target.tacticalAllowed ? STRIKE_COLOR : 0x9aa4ae,
+        width: 4,
+        alpha: 0.6,
+      });
+    }
+
+    // Crosshair marker in the hex's upper-left corner, one per committed strike.
+    const strikesByHex = new Map<string, AirMission[]>();
+    for (const mission of overlay.missions) {
+      if (mission.kind.type !== "strike") continue;
+      strikesByHex.set(mission.hexId, [...(strikesByHex.get(mission.hexId) ?? []), mission]);
+    }
+    for (const [hexId, missions] of strikesByHex) {
+      const hex = this.hexByKey.get(hexId);
+      if (!hex) continue;
+      const center = this.grid.center(hex.row, hex.col);
+      missions.forEach((mission, index) => {
+        const x = center.x - 40 + index * 30;
+        const y = center.y - 44;
+        const color = mission.resolution ? RESOLVED_STRIKE_COLOR : STRIKE_COLOR;
+        marks.circle(x, y, 16).fill({ color: 0x05080c, alpha: 0.75 }).stroke({ color, width: 4 });
+        marks.moveTo(x - 22, y).lineTo(x + 22, y).moveTo(x, y - 22).lineTo(x, y + 22).stroke({ color, width: 3 });
+      });
+    }
+
+    for (const hexId of overlay.breakthroughs) {
+      const hex = this.hexByKey.get(hexId);
+      if (!hex) continue;
+      const { x, y } = this.grid.center(hex.row, hex.col);
+      const points: number[] = [];
+      for (let i = 0; i < 10; i++) {
+        const radius = i % 2 === 0 ? 30 : 13;
+        const angle = -Math.PI / 2 + (i * Math.PI) / 5;
+        points.push(x + Math.cos(angle) * radius, y + Math.sin(angle) * radius);
+      }
+      marks.poly(points).fill(BREAKTHROUGH_COLOR).stroke({ color: 0x05080c, width: 3 });
     }
   }
 

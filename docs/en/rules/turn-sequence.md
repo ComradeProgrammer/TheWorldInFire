@@ -11,7 +11,7 @@ Both players complete these phases in order:
 1. Joint Status Phase
 2. Joint Reinforcement Phase
 
-The Joint Reinforcement Phase resolves automatically and requires no player input.
+The Joint Reinforcement Phase resolves automatically and requires no player input. Each side receives its Air Points for the turn, and scheduled reinforcements arrive.
 
 The Warsaw Pact begins its player turn after the Joint Player Turn ends.
 
@@ -33,6 +33,12 @@ The Pre-Battle Phase resolves automatically and requires no player input. On ent
 Battle Planning combines the player actions formerly spread across Movement, Recovery, and Battle Planning. In any order, the acting side may select one resupply target, move units, order units to entrain or detrain, use rail or air transport, and add or remove attack objectives. Movement follows the [movement rules](movement.md). An attack objective must be a hex that currently contains at least one enemy unit, or an enemy Free City (see [Cities](cities.md)). Sea transport is not part of the current implementation. Entraining consumes one complete friendly planning phase; the unit becomes Entrained at the beginning of its side's next planning phase and may then move by rail.
 
 Until the Battle Planning Phase ends, any order given during it can be taken back: clear the resupply choice, remove an attack objective, undo a unit's most recent movement, cancel an entrainment order, or restore the Entrained status of a unit detrained this phase. A detrainment cannot be undone after the unit has made a non-rail move, or when restoring it would exceed the side's rail capacity.
+
+When the Battle Planning Phase ends, the acting side's Disrupted markers are removed.
+
+In the Offensive Strike Phase, the acting side commits and resolves air missions: Air Strikes against enemy units and Air Interdiction Zones (see [Air power](air-power.md)). The Combat Phase follows; ground combat is not part of the current implementation.
+
+At the end of the Reserve Phase, the acting side's Breakthrough Markers and the enemy's Air Interdiction Zones are removed. The Post-Battle Phase resolves automatically and removes the acting side's Suppressed markers.
 
 NATO begins its player turn after the Warsaw Pact completes its entire player turn. The game turn ends after NATO completes its player turn, and the next game turn begins with the Joint Status Phase.
 

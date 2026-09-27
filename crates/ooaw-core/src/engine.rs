@@ -26,6 +26,16 @@ impl GameState {
             GameCommand::EntrainUnit { unit_id } => self.entrain_unit(unit_id),
             GameCommand::DetrainUnit { unit_id } => self.detrain_unit(unit_id),
             GameCommand::UndoDetrainUnit { unit_id } => self.undo_detrain_unit(unit_id),
+            GameCommand::PlanAirStrike {
+                hex_id,
+                unit_ids,
+                air_point,
+            } => self.plan_air_strike(hex_id, unit_ids, air_point),
+            GameCommand::PlanAirInterdiction { hex_id, air_point } => {
+                self.plan_air_interdiction(hex_id, air_point)
+            }
+            GameCommand::CancelAirMission { mission_id } => self.cancel_air_mission(mission_id),
+            GameCommand::ResolveAirStrikes => self.resolve_air_strikes(),
         }?;
         self.revision += 1;
         Ok(CommandOutcome {
@@ -38,8 +48,11 @@ impl GameState {
     fn end_phase(&mut self) -> Result<Vec<GameEvent>, RuleError> {
         let mut events = Vec::new();
         if let Some(step) = self.current_step().cloned() {
-            if step.phase_id.0 == "battlePlanning" {
-                self.finish_battle_plan(&mut events);
+            match step.phase_id.0.as_str() {
+                "battlePlanning" => self.finish_battle_plan(&mut events),
+                "offensiveStrike" => self.finish_offensive_strike(&mut events),
+                "reserve" => self.finish_reserve(&mut events),
+                _ => {}
             }
             events.push(GameEvent::PhaseEnded {
                 game_turn: self.game_turn,
