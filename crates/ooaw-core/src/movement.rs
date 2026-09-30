@@ -19,13 +19,21 @@ use crate::reserve::MovementPhase;
 
 /// Precomputed map and unit lookups for one movement query.
 pub(crate) struct MovementContext<'a> {
+    /// Map hexes indexed by printed identifier for this query.
     pub(crate) hexes: HashMap<&'a str, &'a MapHex>,
+    /// Shared hexside features indexed in both endpoint directions.
     pub(crate) hexsides: HashMap<(&'a str, &'a str), &'a [HexsideFeature]>,
+    /// Hexes subject to enemy unit or Free City zones of control.
     pub(crate) enemy_zoc: HashSet<String>,
+    /// Map hexes containing units of another side.
     pub(crate) enemy_occupied: HashSet<&'a str>,
+    /// Map hexes containing units of the moving side.
     pub(crate) friendly_occupied: HashSet<&'a str>,
+    /// Enemy-controlled city hexes still held by their original alliance.
     pub(crate) enemy_free_cities: HashSet<&'a str>,
+    /// Enemy-controlled city hexes held by an alliance other than their original owner.
     pub(crate) enemy_conquered_cities: HashSet<&'a str>,
+    /// City hexes controlled by the moving side as their original owner.
     pub(crate) friendly_free_cities: HashSet<&'a str>,
     /// Airspace from the moving side's point of view.
     airspace: AirspaceMap,
@@ -36,6 +44,7 @@ pub(crate) struct MovementContext<'a> {
 }
 
 impl<'a> MovementContext<'a> {
+    /// Caches map, occupation, city, airspace, interdiction, and breakthrough data for the moving side.
     pub(crate) fn new(state: &'a GameEngine, side_id: &SideId) -> Self {
         let hexes: HashMap<_, _> = state
             .scenario
@@ -163,6 +172,7 @@ impl<'a> MovementContext<'a> {
             .collect()
     }
 
+    /// Returns the features of the shared hexside, or an empty slice when none are recorded.
     pub(crate) fn side_features(&self, a: &str, b: &str) -> &'a [HexsideFeature] {
         self.hexsides.get(&(a, b)).copied().unwrap_or(&[])
     }
@@ -175,29 +185,36 @@ impl<'a> MovementContext<'a> {
                 && !features.contains(&HexsideFeature::Causeway))
     }
 
+    /// Checks whether the hex lies in the cached enemy zone of control.
     pub(crate) fn in_enemy_zoc(&self, id: &str) -> bool {
         self.enemy_zoc.contains(id)
     }
 
+    /// Checks whether the hex has exclusively friendly airspace.
     fn friendly_airspace(&self, id: &str) -> bool {
         self.airspace.of(id) == Airspace::Friendly
     }
 
-    /// 8.5 (5), 30.2.3: a friendly unit or friendly Free City in the hex lets a
-    /// Soft unit enter it directly from another EZOC hex.
+    /// Checks whether friendly occupation or a friendly Free City permits Soft-unit entry from another EZOC (8.5, 30.2.3).
     pub(crate) fn negates_ezoc_for_entry(&self, id: &str) -> bool {
+        // 8.5 (5), 30.2.3: a friendly unit or friendly Free City in the hex lets a
+        // Soft unit enter it directly from another EZOC hex.
         self.friendly_occupied.contains(id) || self.friendly_free_cities.contains(id)
     }
 }
 
 /// Shortest legal arrival cost and predecessor for every reachable hex.
 struct Search {
+    /// Printed identifier of the starting hex for the route search.
     origin: String,
+    /// Lowest known arrival cost for each reachable hex, including the origin at zero.
     cost: HashMap<String, u16>,
+    /// Predecessor hex for reconstructing each cheapest arrival route.
     previous: HashMap<String, String>,
 }
 
 impl Search {
+    /// Reconstructs a destination's predecessor route, excluding the origin hex.
     fn path_to(&self, destination: &str) -> Vec<HexId> {
         let mut reversed = vec![HexId(destination.to_owned())];
         let mut current = destination;
@@ -215,6 +232,7 @@ impl Search {
 
 /// Result of a Tactical or March search.
 struct GroundSearch {
+    /// Cheapest ground arrival costs and predecessor routes within the movement allowance.
     search: Search,
     /// Movement points left for this order.
     remaining: u16,
@@ -224,6 +242,7 @@ struct GroundSearch {
 }
 
 impl GroundSearch {
+    /// Returns a ground route and cost, allowing minimum movement or reporting no legal route.
     fn route(&self, destination: &str) -> Result<(Vec<HexId>, u16), RuleError> {
         if let Some(&cost) = self.search.cost.get(destination) {
             return Ok((self.search.path_to(destination), cost));
@@ -241,6 +260,7 @@ impl GroundSearch {
     }
 }
 
+/// Finds cheapest reachable hexes and predecessors using the supplied neighbor and legal-edge functions.
 fn dijkstra(
     origin: &str,
     edge: &dyn Fn(&str, &str, u16) -> Option<u16>,
@@ -272,10 +292,25 @@ fn dijkstra(
 }
 
 impl GameEngine {
-    /// Movement preview for every movement system, in a fixed order.
+    /// Previews every movement system for a unit in a fixed order.
     ///
-    /// A system the unit cannot use carries the structured reason instead of
-    /// destinations, so clients never re-derive movement rules themselves.
+    /// Each entry contains legal destinations or a structured reason the system
+    /// is unavailable. The order is Tactical, March, Rail, then Air Transport.
+    /// Reserve Phase restrictions are included in these previews.
+    ///
+    /// # Parameters
+    ///
+    /// - `unit_id`: Identifier of an existing unit controlled by the acting side.
+    ///
+    /// # Returns
+    ///
+    /// One [`MovementModeOptions`] per system. Mode-specific rule failures are
+    /// recorded in each entry's `unavailable` field rather than failing the list.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`RuleError`] if no valid movement phase is active, the game has
+    /// ended, the unit is unknown, or the acting side does not control it.
     pub fn movement_modes(&self, unit_id: &UnitId) -> Result<Vec<MovementModeOptions>, RuleError> {
         let (side_id, _) = self.movement_phase()?;
         self.owned_unit(unit_id, &side_id)?;
@@ -301,10 +336,27 @@ impl GameEngine {
         .collect())
     }
 
-    /// Lists every hex the unit may legally move to with one `MoveUnit` order.
+    /// Lists every hex a unit may legally reach with one movement order.
     ///
-    /// The result is advisory preview data: `MoveUnit` recomputes and validates
-    /// the route when the order is submitted.
+    /// The preview uses the same route search and destination checks as `MoveUnit`,
+    /// including movement points, zones of control, terrain, transport, and stacking.
+    /// Submitting the command recomputes the route against the then-current state.
+    ///
+    /// # Parameters
+    ///
+    /// - `unit_id`: Identifier of an existing unit controlled by the acting side.
+    /// - `mode`: Movement system to preview: Tactical, March, Rail, or Air Transport.
+    ///
+    /// # Returns
+    ///
+    /// Legal destinations sorted by hex identifier, with each route and its cost.
+    /// An empty list means that the usable system currently has no legal destination.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`RuleError`] for an invalid phase or ownership, or when the unit
+    /// cannot use the requested system because of its state, supply, remaining
+    /// allowance, transport capacity, or other movement prerequisites.
     pub fn movement_options(
         &self,
         unit_id: &UnitId,
@@ -818,13 +870,14 @@ impl GameEngine {
         })
     }
 
-    /// Rail search (13.2): up to the rail limit through friendly land hexes,
-    /// never entering an EZOC or crossing Prohibited Terrain.
+    /// Finds rail routes within the remaining rail allowance while excluding enemy ZOCs and prohibited terrain (13.2).
     fn rail_search(
         &self,
         context: &MovementContext,
         unit: &UnitState,
     ) -> Result<(Search, u16), RuleError> {
+        // Rail search (13.2): up to the rail limit through friendly land hexes,
+        // never entering an EZOC or crossing Prohibited Terrain.
         let UnitLocation::Hex { hex_id: origin } = &unit.location else {
             return Err(RuleError::new("unitOffMap", "Unit is not on the map"));
         };
@@ -865,15 +918,16 @@ impl GameEngine {
         Ok((dijkstra(&origin.0, &edge, &neighbors), remaining))
     }
 
-    /// 12.8: one NATO unit per direction per movement segment may cross the
-    /// Danish Ferry hexside as Minimum movement.  The Warsaw Pact may use it only
-    /// after Denmark surrenders, which is not yet implemented.
+    /// Lists legal NATO Danish Ferry crossings available as Minimum movement in this segment (12.8).
     fn danish_ferry_options(
         &self,
         context: &MovementContext,
         unit: &UnitState,
         phase: MovementPhase,
     ) -> Result<Vec<MovementOption>, RuleError> {
+        // 12.8: one NATO unit per direction per movement segment may cross the
+        // Danish Ferry hexside as Minimum movement.  The Warsaw Pact may use it only
+        // after Denmark surrenders, which is not yet implemented.
         let UnitLocation::Hex { hex_id: origin } = &unit.location else {
             return Ok(Vec::new());
         };
@@ -920,6 +974,7 @@ impl GameEngine {
         Ok(options)
     }
 
+    /// Rejects enemy occupants, excess maneuver steps, or a second friendly HQ at the destination.
     pub(crate) fn validate_destination_stacking(
         &self,
         moving: &UnitState,

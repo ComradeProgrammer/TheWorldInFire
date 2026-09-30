@@ -6,6 +6,7 @@ use crate::model::{
 };
 use crate::{GameCommand, GameEngine, GameEvent, GameId, GameStatus};
 
+/// Creates a fresh standard NATO scenario engine for unit tests.
 fn new_game() -> GameEngine {
     GameEngine::new(
         GameId("test-game".to_owned()),
@@ -14,6 +15,7 @@ fn new_game() -> GameEngine {
     .unwrap()
 }
 
+/// Verifies a new game starts at turn one, revision zero, and the scenario's first phase.
 #[test]
 fn new_game_starts_at_first_scenario_defined_step() {
     let game = new_game();
@@ -39,6 +41,7 @@ fn new_game_starts_at_first_scenario_defined_step() {
     assert!(snapshot.units.is_empty());
 }
 
+/// Verifies snapshots identify the scenario map without duplicating its static data.
 #[test]
 fn snapshot_identifies_the_scenario_map_without_repeating_its_data() {
     let json = serde_json::to_value(new_game().snapshot()).unwrap();
@@ -48,6 +51,7 @@ fn snapshot_identifies_the_scenario_map_without_repeating_its_data() {
     assert!(json.get("map").is_none());
 }
 
+/// Verifies new-game map serialization includes grid coordinates, hexes, and hexside features.
 #[test]
 fn scenario_map_serializes_for_the_new_game_bootstrap() {
     let game = new_game();
@@ -61,6 +65,7 @@ fn scenario_map_serializes_for_the_new_game_bootstrap() {
         .is_some_and(|items| !items.is_empty()));
 }
 
+/// Verifies scenario validation rejects reinforcement units deployed to unknown map hexes.
 #[test]
 fn scenario_validation_rejects_a_unit_outside_its_map() {
     let mut scenario = find_scenario("nato-1983-standard").unwrap();
@@ -76,6 +81,7 @@ fn scenario_validation_rejects_a_unit_outside_its_map() {
     assert!(error.message.contains("unknown map hex"));
 }
 
+/// Verifies scenario validation rejects hexsides with unknown map endpoints.
 #[test]
 fn scenario_validation_rejects_a_hexside_outside_its_map() {
     let mut scenario = find_scenario("nato-1983-standard").unwrap();
@@ -89,6 +95,7 @@ fn scenario_validation_rejects_a_hexside_outside_its_map() {
     assert!(error.message.contains("unknown hex"));
 }
 
+/// Verifies opening units arrive during joint reinforcement with phase and supply events in order.
 #[test]
 fn opening_units_arrive_through_the_first_joint_reinforcement_phase() {
     let mut game = new_game();
@@ -147,6 +154,7 @@ fn opening_units_arrive_through_the_first_joint_reinforcement_phase() {
     }));
 }
 
+/// Verifies post-battle cleanup and the next side's pre-battle supply run automatically.
 #[test]
 fn automatic_post_battle_is_processed_without_user_input() {
     let mut game = new_game();
@@ -179,6 +187,7 @@ fn automatic_post_battle_is_processed_without_user_input() {
     )));
 }
 
+/// Verifies both sides' pre-battle steps are defined as automatic phases.
 #[test]
 fn pre_battle_is_automatic_for_both_sides() {
     let scenario = find_scenario("nato-1983-standard").unwrap();
@@ -194,6 +203,7 @@ fn pre_battle_is_automatic_for_both_sides() {
         .all(|step| step.execution == PhaseExecution::Automatic));
 }
 
+/// Verifies scenario data assigns a Battle Planning Phase to each side.
 #[test]
 fn sequence_is_data_driven_for_both_sides() {
     let scenario = find_scenario("nato-1983-standard").unwrap();
@@ -213,6 +223,7 @@ fn sequence_is_data_driven_for_both_sides() {
     }));
 }
 
+/// Verifies joint status and reinforcement phases precede both player turns.
 #[test]
 fn joint_phases_precede_both_side_turns() {
     let scenario = find_scenario("nato-1983-standard").unwrap();
@@ -224,6 +235,7 @@ fn joint_phases_precede_both_side_turns() {
     assert_eq!(scenario.turn_sequence[2].phase_id.0, "preBattle");
 }
 
+/// Verifies the game completes after the final interactive phase and automatic cleanup.
 #[test]
 fn final_turn_completes_after_last_interactive_phase_and_cleanup() {
     let mut game = new_game();
@@ -236,6 +248,7 @@ fn final_turn_completes_after_last_interactive_phase_and_cleanup() {
     assert!(game.snapshot().turn.current_step.is_none());
 }
 
+/// Verifies a scheduled reinforcement stays absent until its designated game turn.
 #[test]
 fn reinforcements_are_added_only_on_their_scheduled_turn() {
     let mut scenario = find_scenario("nato-1983-standard").unwrap();
@@ -257,6 +270,7 @@ fn reinforcements_are_added_only_on_their_scheduled_turn() {
     assert_eq!(snapshot.units[0].id(), &unit_id);
 }
 
+/// Verifies reinforcement events serialize their type and fields using the camelCase IPC contract.
 #[test]
 fn reinforcement_event_serializes_as_a_camel_case_ipc_message() {
     let unit = find_scenario("nato-1983-standard").unwrap().reinforcements[0]
@@ -288,6 +302,7 @@ fn reinforcement_event_serializes_as_a_camel_case_ipc_message() {
     assert!(json.get("game_turn").is_none());
 }
 
+/// Verifies supply-check events serialize unit identifiers and applicable supply state.
 #[test]
 fn pre_battle_supply_event_serializes_checked_unit_state() {
     let mut game = new_game();
@@ -309,6 +324,7 @@ fn pre_battle_supply_event_serializes_checked_unit_state() {
     assert_eq!(json["units"][0]["supply"]["movement"], "supplied");
 }
 
+/// Verifies BALTAP is registered with seven turns and the expected reinforcement schedule.
 #[test]
 fn baltap_is_available_with_its_seven_turn_unit_schedule() {
     let summaries = list_scenarios();
@@ -337,6 +353,7 @@ fn baltap_is_available_with_its_seven_turn_unit_schedule() {
     );
 }
 
+/// Verifies BALTAP opening deployments and later arrivals both use joint reinforcement.
 #[test]
 fn baltap_opening_setup_and_later_reinforcements_use_the_same_phase() {
     let scenario = find_scenario("nato-baltap-1983").unwrap();
@@ -378,6 +395,7 @@ fn baltap_opening_setup_and_later_reinforcements_use_the_same_phase() {
     assert_eq!(turn_two.snapshot.units.len(), 38);
 }
 
+/// Verifies BALTAP completes after seven turns and applies its scheduled HQ withdrawal.
 #[test]
 fn baltap_ends_after_seven_turns() {
     let scenario = find_scenario("nato-baltap-1983").unwrap();
@@ -396,6 +414,7 @@ fn baltap_ends_after_seven_turns() {
         .all(|unit| unit.id().0 != "soviet.northernEastGermanyFront.hq"));
 }
 
+/// Verifies BALTAP supply checks distinguish HQ and combat supply and supply off-map reserves.
 #[test]
 fn baltap_pre_battle_records_applicable_supply_types() {
     let scenario = find_scenario("nato-baltap-1983").unwrap();
@@ -422,6 +441,7 @@ fn baltap_pre_battle_records_applicable_supply_types() {
     assert_eq!(reserve_unit.supply.combat, Some(SupplyStatus::Supplied));
 }
 
+/// Verifies planning accepts movement, resupply, and attack selections without a fixed action order.
 #[test]
 fn battle_plan_actions_can_be_submitted_in_any_order() {
     let mut game = new_game();
@@ -460,6 +480,7 @@ fn battle_plan_actions_can_be_submitted_in_any_order() {
     ));
 }
 
+/// Verifies selected stacks receive resupply when their Battle Planning Phase ends.
 #[test]
 fn resupply_is_applied_to_the_selected_stack_when_planning_ends() {
     let mut game = new_game();
@@ -490,6 +511,7 @@ fn resupply_is_applied_to_the_selected_stack_when_planning_ends() {
     ));
 }
 
+/// Verifies increased scenario resupply capacity supports multiple selected stacks.
 #[test]
 fn multiple_resupply_operations_are_applied_up_to_the_scenario_limit() {
     let first = UnitId(SOVIET.to_owned());
@@ -531,6 +553,7 @@ fn multiple_resupply_operations_are_applied_up_to_the_scenario_limit() {
     }
 }
 
+/// Verifies excess resupply selections are rejected without advancing the revision.
 #[test]
 fn resupply_targets_cannot_exceed_the_scenario_limit() {
     let mut game = baltap_planning("warsawPact", &[(SOVIET, "2412"), (SOVIET_2, "2413")]);
@@ -552,6 +575,7 @@ fn resupply_targets_cannot_exceed_the_scenario_limit() {
     assert_eq!(game.snapshot().revision, revision);
 }
 
+/// Verifies train loading completes on a later player turn before rail movement is allowed.
 #[test]
 fn entraining_takes_one_player_turn_before_rail_movement_is_available() {
     let mut game = new_game();
@@ -596,6 +620,7 @@ fn entraining_takes_one_player_turn_before_rail_movement_is_available() {
     assert_eq!(unit.train_status, Some(TrainStatus::Entrained));
 }
 
+/// Verifies undoing a detrain order restores its train marker and clears the plan's detrain record.
 #[test]
 fn a_detrain_order_can_be_undone_during_the_same_plan() {
     let mut game = new_game();
@@ -658,6 +683,7 @@ fn a_detrain_order_can_be_undone_during_the_same_plan() {
         .is_empty());
 }
 
+/// Verifies an airborne strategic reserve unit can airlift within scenario capacity.
 #[test]
 fn airborne_reserve_unit_can_use_scenario_limited_air_transport() {
     let scenario = find_scenario("nato-baltap-1983").unwrap();
@@ -686,6 +712,7 @@ fn airborne_reserve_unit_can_use_scenario_limited_air_transport() {
     assert_eq!(outcome.snapshot.battle_plan.unwrap().airlift_steps_used, 1);
 }
 
+/// Verifies planning commands fail in other phases without advancing the revision.
 #[test]
 fn planning_commands_are_rejected_outside_battle_planning() {
     let mut game = new_game();
@@ -699,6 +726,7 @@ fn planning_commands_are_rejected_outside_battle_planning() {
     assert_eq!(game.snapshot().revision, 0);
 }
 
+/// Verifies a deselected resupply unit is removed from the plan and emits a cancellation event.
 #[test]
 fn resupply_selection_can_be_cancelled() {
     let mut game = new_game();
@@ -735,6 +763,7 @@ fn resupply_selection_can_be_cancelled() {
     ));
 }
 
+/// Verifies undo restores a unit's previous location and removes its last movement order.
 #[test]
 fn a_units_last_movement_can_be_undone() {
     let mut game = new_game();
@@ -767,6 +796,7 @@ fn a_units_last_movement_can_be_undone() {
     ));
 }
 
+/// Verifies planning and movement commands deserialize from camelCase IPC messages.
 #[test]
 fn commands_deserialize_from_camel_case_ipc_messages() {
     let command: GameCommand = serde_json::from_value(serde_json::json!({
@@ -799,6 +829,7 @@ fn commands_deserialize_from_camel_case_ipc_messages() {
     );
 }
 
+/// Starts BALTAP at the requested side's Battle Planning Phase with custom unit placements.
 fn baltap_planning(side: &str, placements: &[(&str, &str)]) -> GameEngine {
     let mut game = GameEngine::new(
         GameId("movement-game".to_owned()),
@@ -827,6 +858,7 @@ fn baltap_planning(side: &str, placements: &[(&str, &str)]) -> GameEngine {
     game
 }
 
+/// Builds a Tactical movement command for the specified unit and destination hex.
 fn move_to(unit: &str, hex: &str) -> GameCommand {
     GameCommand::MoveUnit {
         unit_id: UnitId(unit.to_owned()),
@@ -841,6 +873,7 @@ const SOVIET: &str = "soviet.2gta.21motorRifleDivision";
 const SOVIET_2: &str = "soviet.2gta.16guardsTankDivision";
 const GERMAN: &str = "westGermany.6panzergrenadierDivision.16panzergrenadierBrigade";
 
+/// Verifies an All-Sea hexside without a causeway blocks ground movement.
 #[test]
 fn ground_movement_cannot_cross_an_all_sea_hexside() {
     let mut game = baltap_planning("nato", &[(DANE, "1414")]);
@@ -855,6 +888,7 @@ fn ground_movement_cannot_cross_an_all_sea_hexside() {
     );
 }
 
+/// Verifies the Danish Ferry carries one NATO unit per direction and ends its movement.
 #[test]
 fn one_nato_unit_per_direction_may_cross_the_danish_ferry_and_must_stop() {
     let mut game = baltap_planning("nato", &[(DANE, "1514"), (DANE_2, "1514")]);
@@ -882,6 +916,7 @@ fn one_nato_unit_per_direction_may_cross_the_danish_ferry_and_must_stop() {
     );
 }
 
+/// Verifies a Major River crossing adds one point to the destination's entry cost.
 #[test]
 fn crossing_a_major_river_costs_one_extra_movement_point() {
     let game = baltap_planning("nato", &[(GERMAN, "4104")]);
@@ -895,6 +930,7 @@ fn crossing_a_major_river_costs_one_extra_movement_point() {
     assert_eq!(river_crossing.path, vec![HexId("4103".to_owned())]);
 }
 
+/// Verifies a Soft unit must stop on entry into an enemy zone of control.
 #[test]
 fn a_soft_unit_must_stop_after_entering_an_enemy_zone_of_control() {
     let soft = "soviet.7guardsAirborneDivision.119regiment";
@@ -912,6 +948,7 @@ fn a_soft_unit_must_stop_after_entering_an_enemy_zone_of_control() {
     assert_eq!(outcome.snapshot.battle_plan.unwrap().movements[1].cost, 2);
 }
 
+/// Verifies movement previews and commands accept exactly the same destination hexes.
 #[test]
 fn every_movement_option_is_accepted_and_no_other_hex_is() {
     let mut game = baltap_planning("warsawPact", &[(SOVIET, "2412"), (GERMAN, "2415")]);
@@ -966,10 +1003,12 @@ fn every_movement_option_is_accepted_and_no_other_hex_is() {
     }
 }
 
+/// Copies movement orders from the current battle plan for test assertions.
 fn plan_movements(game: &GameEngine) -> Vec<crate::PlannedMovement> {
     game.snapshot().battle_plan.unwrap().movements
 }
 
+/// Returns the snapshot's controlling side identifier for a city hex.
 fn controller(game: &GameEngine, hex: &str) -> String {
     game.snapshot()
         .cities
@@ -980,6 +1019,7 @@ fn controller(game: &GameEngine, hex: &str) -> String {
         .0
 }
 
+/// Verifies each city starts controlled by its original alliance with Free City status.
 #[test]
 fn every_city_starts_as_a_free_city_of_its_original_alliance() {
     let snapshot = new_game().snapshot();
@@ -1001,6 +1041,7 @@ fn every_city_starts_as_a_free_city_of_its_original_alliance() {
     assert_eq!(owner("2111"), "warsawPact"); // Rostock
 }
 
+/// Verifies ground movement cannot enter an enemy Free City.
 #[test]
 fn ground_movement_may_not_enter_an_enemy_free_city() {
     let mut game = baltap_planning("warsawPact", &[(SOVIET, "2314")]);
@@ -1014,6 +1055,7 @@ fn ground_movement_may_not_enter_an_enemy_free_city() {
     );
 }
 
+/// Verifies an unoccupied enemy Free City can still be selected as an attack objective.
 #[test]
 fn an_unoccupied_enemy_free_city_is_a_legal_attack_objective() {
     let mut game = baltap_planning("warsawPact", &[(SOVIET, "2314")]);
@@ -1037,6 +1079,7 @@ fn an_unoccupied_enemy_free_city_is_a_legal_attack_objective() {
     );
 }
 
+/// Verifies Tactical movement liberates a conquered city and undo restores its previous controller.
 #[test]
 fn tactical_movement_liberates_a_conquered_city_and_undo_restores_it() {
     let mut game = baltap_planning("nato", &[(DANE, "2215")]);
@@ -1065,6 +1108,7 @@ fn tactical_movement_liberates_a_conquered_city_and_undo_restores_it() {
     assert_eq!(controller(&game, "2214"), "warsawPact");
 }
 
+/// Verifies movement-mode previews include structured reasons for unavailable transport systems.
 #[test]
 fn movement_modes_explain_unavailable_systems() {
     let game = baltap_planning("nato", &[("denmark.landzealand.hq", "1411")]);
@@ -1095,6 +1139,7 @@ fn movement_modes_explain_unavailable_systems() {
     );
 }
 
+/// Verifies rail capacity counts completed Entrained steps rather than units still Entraining.
 #[test]
 fn only_entrained_units_count_against_rail_capacity() {
     let mut game = GameEngine::new(
@@ -1143,6 +1188,7 @@ fn only_entrained_units_count_against_rail_capacity() {
     assert!(steps(&game, TrainStatus::Entraining) > 0);
 }
 
+/// Verifies Marsh and Clear terrain have equal ground movement costs.
 #[test]
 fn marsh_costs_the_same_as_clear_terrain() {
     let game = baltap_planning("nato", &[(GERMAN, "2922")]);
@@ -1155,6 +1201,7 @@ fn marsh_costs_the_same_as_clear_terrain() {
     assert_eq!(marsh.cost, 1);
 }
 
+/// Verifies BALTAP gives Warsaw Pact three Airlift Commands and rejects excess use.
 #[test]
 fn baltap_warsaw_pact_has_three_airlift_commands() {
     let mut game = GameEngine::new(
@@ -1197,6 +1244,7 @@ fn baltap_warsaw_pact_has_three_airlift_commands() {
 
 // ------------------------------------------------------------------ strikes
 
+/// Creates a BALTAP test game and advances it to the requested side and phase.
 fn baltap_at(side: &str, phase: &str) -> GameEngine {
     let mut game = GameEngine::new(
         GameId("strike-game".to_owned()),
@@ -1207,6 +1255,7 @@ fn baltap_at(side: &str, phase: &str) -> GameEngine {
     game
 }
 
+/// Ends phases until the test game reaches the requested acting side and phase.
 fn advance_to(game: &mut GameEngine, side: &str, phase: &str) {
     loop {
         let step = game.snapshot().turn.current_step.unwrap();
@@ -1219,6 +1268,7 @@ fn advance_to(game: &mut GameEngine, side: &str, phase: &str) {
     }
 }
 
+/// Builds an Air Strike command with an ordered target list and chosen Air Point kind.
 fn air_strike(hex: &str, units: &[&str], air_point: AirPointKind) -> GameCommand {
     GameCommand::PlanAirStrike {
         hex_id: HexId(hex.to_owned()),
@@ -1238,6 +1288,7 @@ fn dice_rolling(roll: u8) -> Dice {
         .unwrap()
 }
 
+/// Verifies modified die rolls map to the one-point Strike Table results.
 #[test]
 fn strike_table_matches_the_one_point_column() {
     use crate::strikes::strike_table;
@@ -1249,6 +1300,7 @@ fn strike_table_matches_the_one_point_column() {
     assert_eq!(strike_table(8), StrikeResult::StepLoss);
 }
 
+/// Verifies recurring Air Points reset while unspent bonus Tactical points carry over.
 #[test]
 fn baltap_air_points_reset_each_turn_and_the_bonus_is_kept() {
     let game = baltap_at("warsawPact", "offensiveStrike");
@@ -1260,6 +1312,7 @@ fn baltap_air_points_reset_each_turn_and_the_bonus_is_kept() {
     }
 }
 
+/// Verifies air mission targeting limits and cancellation refunds to the correct Air Point pool.
 #[test]
 fn air_strikes_respect_targeting_limits_and_refund_on_cancel() {
     let mut game = baltap_at("warsawPact", "offensiveStrike");
@@ -1322,6 +1375,7 @@ fn air_strikes_respect_targeting_limits_and_refund_on_cancel() {
     assert_eq!(points(&game), (0, 1));
 }
 
+/// Verifies deterministic strike rolls use the target modifier shown by the preview.
 #[test]
 fn air_strike_resolution_is_deterministic_and_uses_the_previewed_modifier() {
     let mut game = baltap_at("warsawPact", "offensiveStrike");
@@ -1373,6 +1427,7 @@ fn air_strike_resolution_is_deterministic_and_uses_the_previewed_modifier() {
     );
 }
 
+/// Verifies eliminating a hex's last enemy unit by a strike places a Breakthrough Marker.
 #[test]
 fn a_step_loss_on_the_last_unit_in_a_hex_leaves_a_breakthrough_marker() {
     let mut game = baltap_at("warsawPact", "offensiveStrike");
@@ -1400,6 +1455,7 @@ fn a_step_loss_on_the_last_unit_in_a_hex_leaves_a_breakthrough_marker() {
     assert!(game.snapshot().breakthrough_markers.is_empty());
 }
 
+/// Verifies Disrupted units are limited to Minimum movement until their markers are removed.
 #[test]
 fn disrupted_units_use_minimum_movement_until_their_recovery() {
     let mut game = baltap_at("warsawPact", "offensiveStrike");
@@ -1440,6 +1496,7 @@ fn disrupted_units_use_minimum_movement_until_their_recovery() {
     assert_eq!(unit.disruption, None);
 }
 
+/// Verifies enemy Air Interdiction Zones add Tactical movement costs and block March movement.
 #[test]
 fn air_interdiction_zones_slow_tactical_and_bar_march_movement() {
     let mut game = baltap_planning("nato", &[(GERMAN, "3321")]);
@@ -1472,6 +1529,7 @@ fn air_interdiction_zones_slow_tactical_and_bar_march_movement() {
     assert!(march.iter().all(|option| option.hex_id.0 != "3320"));
 }
 
+/// Verifies interdiction starts on mission resolution and expires after the enemy Reserve Phase.
 #[test]
 fn interdiction_is_placed_on_resolution_and_removed_after_the_enemy_reserve_phase() {
     let mut game = baltap_at("warsawPact", "offensiveStrike");
@@ -1491,6 +1549,7 @@ fn interdiction_is_placed_on_resolution_and_removed_after_the_enemy_reserve_phas
     assert!(game.snapshot().air_interdiction_zones.is_empty());
 }
 
+/// Verifies West Berlin's city definition does not project airspace control.
 #[test]
 fn west_berlin_does_not_contest_airspace() {
     let game = baltap_at("warsawPact", "offensiveStrike");
@@ -1513,6 +1572,7 @@ fn baltap_combat(placements: &[(&str, &str)], objective: &str) -> GameEngine {
     game
 }
 
+/// Builds an unsupported battle command for a hex and its committed attacking units.
 fn battle(hex: &str, units: &[&str]) -> GameCommand {
     GameCommand::ResolveBattle {
         hex_id: HexId(hex.to_owned()),
@@ -1521,6 +1581,7 @@ fn battle(hex: &str, units: &[&str]) -> GameCommand {
     }
 }
 
+/// Extracts the resolved battle report from a command outcome's events.
 fn report(outcome: &crate::CommandOutcome) -> crate::BattleReport {
     outcome
         .events
@@ -1534,6 +1595,7 @@ fn report(outcome: &crate::CommandOutcome) -> crate::BattleReport {
 
 const EAST_GERMAN: &str = "eastGermany.2gta.8motorRifleDivision";
 
+/// Verifies printed combat codes parse into losses, disruption, counterattack, and retreat fields.
 #[test]
 fn combat_results_parse_from_printed_codes() {
     use crate::combat::parse_result;
@@ -1565,6 +1627,7 @@ fn combat_results_parse_from_printed_codes() {
     );
 }
 
+/// Verifies mandatory objectives prevent ending combat and battle odds use the printed rules.
 #[test]
 fn a_marked_objective_must_be_attacked_and_odds_follow_the_rules() {
     let mut game = baltap_combat(&[(SOVIET, "4009"), (GERMAN, "4010")], "4010");
@@ -1588,6 +1651,7 @@ fn a_marked_objective_must_be_attacked_and_odds_follow_the_rules() {
     assert_eq!(odds.possible_results[5], "-/D1R1");
 }
 
+/// Verifies eliminating defenders offers an attacker advance and places a Breakthrough Marker.
 #[test]
 fn a_destroyed_defender_lets_the_attacker_advance_and_leaves_a_breakthrough() {
     let mut game = baltap_combat(&[(SOVIET, "4009"), (GERMAN, "4010")], "4010");
@@ -1631,6 +1695,7 @@ fn a_destroyed_defender_lets_the_attacker_advance_and_leaves_a_breakthrough() {
     game.execute(GameCommand::EndPhase).unwrap();
 }
 
+/// Verifies battle resolution applies attacking step losses and defending retreat movement.
 #[test]
 fn attacker_losses_and_defender_retreats_are_applied() {
     let mut game = baltap_combat(&[(SOVIET, "4009"), (GERMAN, "4010")], "4010");
@@ -1665,6 +1730,7 @@ fn attacker_losses_and_defender_retreats_are_applied() {
         .contains(&HexId("4010".to_owned())));
 }
 
+/// Verifies a Counterattack result rolls once for every eligible defending step.
 #[test]
 fn a_counterattack_result_rolls_for_each_eligible_defending_step() {
     let mut game = baltap_combat(&[(SOVIET, "4009"), (GERMAN, "4010")], "4010");
@@ -1685,6 +1751,7 @@ fn a_counterattack_result_rolls_for_each_eligible_defending_step() {
     assert_eq!(soviet.disruption.is_some(), roll.disrupted);
 }
 
+/// Verifies advancing into an undefended enemy Free City transfers its control.
 #[test]
 fn an_undefended_free_city_is_conquered_by_advancing() {
     let mut game = baltap_combat(&[(SOVIET, "2314")], "2214");
@@ -1724,6 +1791,7 @@ fn an_undefended_free_city_is_conquered_by_advancing() {
     );
 }
 
+/// Verifies surrounded defenders receive the appropriate Concentric or Flank odds shift.
 #[test]
 fn surrounded_defenders_suffer_concentric_or_flank_shifts() {
     let placements = [(SOVIET, "4009"), (EAST_GERMAN, "4011"), (GERMAN, "4010")];
@@ -1757,6 +1825,7 @@ fn surrounded_defenders_suffer_concentric_or_flank_shifts() {
         .any(|shift| shift.reason == crate::ColumnShiftReason::FlankAttack));
 }
 
+/// Verifies an attacking unit and objective hex cannot be committed twice in one Combat Phase.
 #[test]
 fn units_and_hexes_fight_only_once_per_combat_phase() {
     let mut game = baltap_combat(&[(SOVIET, "4009"), (GERMAN, "4010")], "4010");
@@ -1779,6 +1848,7 @@ fn units_and_hexes_fight_only_once_per_combat_phase() {
 const NEGF_HQ: &str = "soviet.northernEastGermanyFront.hq";
 const BALTIC_CORPS_TANKS: &str = "soviet.balticCorps.138tankRegiment";
 
+/// Builds a battle command that commits the specified Offensive Support HQ.
 fn supported_battle(hex: &str, units: &[&str], hq: &str) -> GameCommand {
     GameCommand::ResolveBattle {
         hex_id: HexId(hex.to_owned()),
@@ -1801,6 +1871,7 @@ fn baltap_combat_marking(placements: &[(&str, &str)], objectives: &[&str]) -> Ga
     game
 }
 
+/// Verifies a Front HQ supplies a single Offensive Support column shift once per phase.
 #[test]
 fn a_front_hq_gives_one_battle_a_column_of_offensive_support() {
     let placements = [
@@ -1851,6 +1922,7 @@ fn a_front_hq_gives_one_battle_a_column_of_offensive_support() {
     game.execute(battle("4012", &[EAST_GERMAN])).unwrap();
 }
 
+/// Verifies Offensive Support requires an eligible HQ and a committed Subordinate within range.
 #[test]
 fn offensive_support_needs_a_subordinate_in_range_and_a_ready_hq() {
     let hq = UnitId(NEGF_HQ.to_owned());
@@ -1890,6 +1962,7 @@ fn offensive_support_needs_a_subordinate_in_range_and_a_ready_hq() {
         .is_empty());
 }
 
+/// Verifies BALTAP's Northern East Germany Front HQ is immobile.
 #[test]
 fn the_negf_hq_may_not_move_in_baltap() {
     let game = baltap_planning("warsawPact", &[(NEGF_HQ, "2613")]);
@@ -1902,6 +1975,7 @@ fn the_negf_hq_may_not_move_in_baltap() {
 
 // ------------------------------------------------------------------ reserve
 
+/// Builds a command to select or deselect a unit's Reserve/OMG marker.
 fn set_reserve(unit: &str, selected: bool) -> GameCommand {
     GameCommand::SetReserve {
         unit_id: UnitId(unit.to_owned()),
@@ -1909,10 +1983,12 @@ fn set_reserve(unit: &str, selected: bool) -> GameCommand {
     }
 }
 
+/// Copies the Reserve/OMG unit identifiers selected in the current battle plan.
 fn reserve_ids(game: &GameEngine) -> Vec<UnitId> {
     game.snapshot().battle_plan.unwrap().reserve_unit_ids
 }
 
+/// Verifies Reserve/OMG selection requires no more than half the applicable movement allowance spent.
 #[test]
 fn reserve_status_allows_at_most_half_the_movement_allowance() {
     // Movement Allowance 6: up to 3 Movement Points keeps the unit eligible.
@@ -1962,6 +2038,7 @@ fn reserve_status_allows_at_most_half_the_movement_allowance() {
     assert!(reserve_ids(&game).is_empty());
 }
 
+/// Verifies headquarters and units in an enemy zone of control cannot receive Reserve/OMG markers.
 #[test]
 fn reserve_status_excludes_headquarters_and_units_in_an_enemy_zoc() {
     let mut game = baltap_planning(
@@ -1988,6 +2065,7 @@ fn reserve_status_excludes_headquarters_and_units_in_an_enemy_zoc() {
     );
 }
 
+/// Verifies Reserve/OMG units are excluded from combat previews and attacking commands.
 #[test]
 fn units_in_reserve_do_not_attack() {
     // Hamburg (2416) is an empty NATO Free City: its ZOC covers only its own hex,
@@ -2013,6 +2091,7 @@ fn units_in_reserve_do_not_attack() {
     game.execute(GameCommand::EndPhase).unwrap();
 }
 
+/// Verifies marked reserves move again at half allowance using Tactical movement only.
 #[test]
 fn reserve_units_move_again_at_half_allowance_by_tactical_movement_only() {
     let mut game = baltap_planning("nato", &[(GERMAN, "3321"), (PZG_17, "3320")]);
@@ -2066,6 +2145,7 @@ fn reserve_units_move_again_at_half_allowance_by_tactical_movement_only() {
     assert!(outcome.snapshot.reserve.is_none());
 }
 
+/// Verifies Hard reserve units ignore enemy ZOC movement surcharges inside Breakthrough Zones.
 #[test]
 fn hard_reserve_units_ignore_ezoc_costs_in_a_breakthrough_zone() {
     let mut game = baltap_planning("warsawPact", &[(SOVIET, "4009"), (GERMAN, "4012")]);
@@ -2084,6 +2164,7 @@ fn hard_reserve_units_ignore_ezoc_costs_in_a_breakthrough_zone() {
     assert_eq!(cost_to(&game, "4011").unwrap() + 1, normal);
 }
 
+/// Verifies post-battle cleanup removes only the acting side's Suppressed markers.
 #[test]
 fn post_battle_removes_only_the_acting_sides_suppressed_markers() {
     let mut game = baltap_at("warsawPact", "reserve");
@@ -2117,6 +2198,7 @@ fn post_battle_removes_only_the_acting_sides_suppressed_markers() {
     assert_eq!(disruption(&nato_hq), Some(Disruption::Suppressed));
 }
 
+/// Verifies Reserve/OMG selection commands deserialize from camelCase IPC messages.
 #[test]
 fn set_reserve_deserializes_from_a_camel_case_ipc_message() {
     let command: GameCommand = serde_json::from_value(serde_json::json!({

@@ -11,6 +11,7 @@ pub struct RuleError {
 }
 
 impl RuleError {
+    /// Constructs a rule error with an owned code and explanatory message.
     pub(super) fn new(code: &str, message: impl Into<String>) -> Self {
         Self {
             code: code.to_owned(),
@@ -18,6 +19,7 @@ impl RuleError {
         }
     }
 
+    /// Constructs the standard error for commands issued after the scenario has ended.
     pub(super) fn game_complete() -> Self {
         Self::new("gameComplete", "The game has already completed")
     }

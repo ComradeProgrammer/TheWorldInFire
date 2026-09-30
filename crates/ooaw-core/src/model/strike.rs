@@ -25,7 +25,17 @@ pub enum AirPointSource {
 }
 
 impl AirPointSource {
-    /// The kind of Air Point this source provides.
+    /// Maps the consumed Air Point source to its player-selectable kind.
+    ///
+    /// # Parameters
+    ///
+    /// - `self`: Source pool to classify: recurring Tactical, bonus Tactical,
+    ///   or Operational.
+    ///
+    /// # Returns
+    ///
+    /// [`AirPointKind::Tactical`] for either Tactical pool, or
+    /// [`AirPointKind::Operational`] for the Operational pool.
     pub fn kind(self) -> AirPointKind {
         match self {
             Self::Tactical | Self::BonusTactical => AirPointKind::Tactical,
@@ -178,7 +188,17 @@ pub struct AirPowerRules {
 }
 
 impl AirPowerRules {
-    /// Air power for one side.
+    /// Returns the scenario's Air Point allocation for one side.
+    ///
+    /// # Parameters
+    ///
+    /// - `side_id`: Side to query. `warsawPact` selects the Warsaw Pact allocation;
+    ///   every other identifier selects the NATO allocation.
+    ///
+    /// # Returns
+    ///
+    /// A shared [`SideAirPower`] configuration containing recurring and one-time
+    /// allocations. Remaining in-game points are stored separately in [`AirPoints`].
     pub fn for_side(&self, side_id: &SideId) -> &SideAirPower {
         if side_id.0 == "warsawPact" {
             &self.warsaw_pact

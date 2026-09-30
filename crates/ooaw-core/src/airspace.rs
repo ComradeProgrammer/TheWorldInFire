@@ -8,9 +8,10 @@ use crate::model::{Airspace, HexId, MapHex, SideId, SupplyStatus, UnitLocation, 
 /// Hexes within this distance of a supplied unit or friendly city are contested by its side.
 const AIRSPACE_RANGE: i32 = 5;
 
-/// Hex distance on the printed grid (pointy-top rows, odd rows shifted right,
-/// column numbers decreasing to the right).
+/// Calculates hex distance on the printed grid with odd rows shifted right and columns decreasing rightward.
 pub(crate) fn hex_distance(a: &MapHex, b: &MapHex) -> i32 {
+    // Hex distance on the printed grid (pointy-top rows, odd rows shifted right,
+    // column numbers decreasing to the right).
     let axial = |hex: &MapHex| {
         let row = i32::from(hex.row);
         let x = -i32::from(hex.col);
@@ -24,11 +25,14 @@ pub(crate) fn hex_distance(a: &MapHex, b: &MapHex) -> i32 {
 
 /// Airspace for one side, computed from the current state.
 pub(crate) struct AirspaceMap {
+    /// Hexes reached by the querying side's airspace sources.
     friendly: HashSet<String>,
+    /// Hexes reached by the opposing side's airspace sources.
     enemy: HashSet<String>,
 }
 
 impl AirspaceMap {
+    /// Classifies a hex as friendly, enemy, or contested from the cached airspace projections.
     pub(crate) fn of(&self, hex_id: &str) -> Airspace {
         match (self.friendly.contains(hex_id), self.enemy.contains(hex_id)) {
             (true, false) => Airspace::Friendly,
@@ -39,6 +43,7 @@ impl AirspaceMap {
     }
 }
 
+/// Checks whether an on-map unit has the supply required to project airspace control.
 fn contests_airspace(unit: &UnitState) -> bool {
     // 11.1: only units that can trace Movement Supply (HQ supply for HQs) contest.
     let supplied = if unit.is_headquarters() {

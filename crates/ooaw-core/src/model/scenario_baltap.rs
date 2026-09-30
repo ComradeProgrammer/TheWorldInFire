@@ -5,16 +5,19 @@ use super::{
     ReinforcementDefinition, ScenarioDefinition, SideAirPower, UnitId, UnitLocation, Withdrawal,
 };
 
+/// Builds an on-map unit location from a printed hex identifier.
 fn hex(id: &str) -> UnitLocation {
     UnitLocation::Hex {
         hex_id: HexId(id.to_owned()),
     }
 }
 
+/// Builds an off-map Strategic Reserve location for a scheduled unit.
 fn reserve() -> UnitLocation {
     UnitLocation::StrategicReserve
 }
 
+/// Builds a BALTAP reinforcement using the shared unit-definition and supply defaults.
 #[allow(clippy::too_many_arguments)]
 fn unit(
     game_turn: u16,
@@ -42,6 +45,7 @@ fn unit(
     )
 }
 
+/// Builds the seven-turn BALTAP scenario with its rules, support HQs, and unit schedule.
 pub(crate) fn baltap_scenario() -> ScenarioDefinition {
     ScenarioDefinition {
         id: "nato-baltap-1983".to_owned(),
@@ -90,6 +94,7 @@ pub(crate) fn baltap_scenario() -> ScenarioDefinition {
     }
 }
 
+/// Returns BALTAP's opening deployments and later reinforcements in schedule order.
 fn baltap_units() -> Vec<ReinforcementDefinition> {
     vec![
         unit(

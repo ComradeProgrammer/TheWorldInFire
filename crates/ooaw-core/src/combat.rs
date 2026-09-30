@@ -76,9 +76,10 @@ pub(crate) fn parse_result(code: &str) -> CombatResult {
     }
 }
 
-/// Counterattack Table: the lowest roll that Disrupts the target, by the
-/// nationality of the Counterattacking step.
+/// Returns the lowest Counterattack roll that disrupts a target for the defending step's nationality.
 fn counterattack_threshold(unit: &UnitState) -> u8 {
+    // Counterattack Table: the lowest roll that Disrupts the target, by the
+    // nationality of the Counterattacking step.
     match (
         unit.definition.side_id.0.as_str(),
         unit.definition.nation_id.0.as_str(),
@@ -98,22 +99,27 @@ fn is_armored(unit: &UnitState) -> bool {
         .any(|key| kind.contains(key))
 }
 
+/// Checks whether a unit is a non-headquarters maneuver unit without the hard trait.
 fn is_soft_maneuver(unit: &UnitState) -> bool {
     !unit.is_hard() && !unit.is_headquarters()
 }
 
+/// Checks whether a unit currently occupies the specified map hex.
 fn in_hex(unit: &UnitState, hex_id: &HexId) -> bool {
     matches!(&unit.location, UnitLocation::Hex { hex_id: at } if at == hex_id)
 }
 
+/// Returns the active step's printed attack strength, or zero if no step remains.
 fn current_attack(unit: &UnitState) -> u16 {
     unit.current_step().map_or(0, |step| step.attack)
 }
 
+/// Returns the active step's printed defense strength, or zero if no step remains.
 fn current_defense(unit: &UnitState) -> u16 {
     unit.current_step().map_or(0, |step| step.defense)
 }
 
+/// Checks whether the unit is explicitly marked out of combat supply.
 fn out_of_combat_supply(unit: &UnitState) -> bool {
     unit.supply.combat == Some(SupplyStatus::OutOfSupply)
 }
@@ -153,6 +159,7 @@ fn gives_soft_cover(hex: &MapHex) -> bool {
         )
 }
 
+/// Maps total strengths to a bounded odds column, rounding in the defender's favor.
 fn column_for(total_attack: u16, total_defense: u16) -> usize {
     if total_attack == 0 {
         return 0;
@@ -168,9 +175,10 @@ fn column_for(total_attack: u16, total_defense: u16) -> usize {
     }
 }
 
-/// 25.3.4.2-3: Flank (+1) or Concentric (+2) when every adjacent hex holds
-/// an attacking unit or lies in the Attacker's ZOC.
+/// Returns the Flank or Concentric odds shift when attackers surround every adjacent hex (25.3.4.2-3).
 fn envelopment_shift(defender_context: &MovementContext, hex_id: &HexId) -> Option<ColumnShift> {
+    // 25.3.4.2-3: Flank (+1) or Concentric (+2) when every adjacent hex holds
+    // an attacking unit or lies in the Attacker's ZOC.
     let hex = defender_context.hexes.get(hex_id.0.as_str())?;
     let row = i32::from(hex.row);
     let col = i32::from(hex.col);
@@ -224,6 +232,7 @@ fn envelopment_shift(defender_context: &MovementContext, hex_id: &HexId) -> Opti
 
 /// One candidate retreat route and the reasons it is good or bad (25.7.4).
 struct RetreatRoute {
+    /// Retreat hexes in traversal order, excluding the original defended hex.
     path: Vec<HexId>,
     /// Hexes still owed, each costing a step.
     unfulfilled: u8,
@@ -241,6 +250,7 @@ enum ObjectiveKind {
 impl GameEngine {
     // ------------------------------------------------------------------ phase hooks
 
+    /// Initializes empty battle records and combat restrictions for the acting side.
     pub(crate) fn start_combat(&mut self) {
         let Some(PhaseActor::Side { side_id }) = self.current_step().map(|step| step.actor.clone())
         else {
@@ -291,7 +301,20 @@ impl GameEngine {
 
     // ------------------------------------------------------------------ preview
 
-    /// Hexes the attacking side may attack now, with the units able to attack each.
+    /// Lists currently legal combat objectives and their eligible attackers.
+    ///
+    /// The preview includes available support HQs, breakthrough-only objectives,
+    /// and remaining mandatory Warsaw Pact objectives. Previously attacked hexes
+    /// and units are excluded according to the active phase's restrictions.
+    ///
+    /// # Returns
+    ///
+    /// Read-only [`CombatOptions`] calculated from the current game state.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`RuleError`] if the game has ended, the current phase is not a
+    /// single-side Combat Phase, or the combat state has not been initialized.
     pub fn combat_options(&self) -> Result<CombatOptions, RuleError> {
         let side_id = self.combat_side()?;
         let combat = self.combat_state()?;
@@ -355,7 +378,29 @@ impl GameEngine {
         })
     }
 
-    /// Strengths, column shifts, and odds if the given units attacked the hex now.
+    /// Calculates strengths, column shifts, odds, and possible results for a battle.
+    ///
+    /// Validates the proposed attackers and optional support without rolling dice
+    /// or committing units. The battle command validates the current state again.
+    ///
+    /// # Parameters
+    ///
+    /// - `hex_id`: Legal objective hex containing defenders or an enemy Free City.
+    /// - `unit_ids`: Nonempty list of distinct eligible attacking units; at least
+    ///   one must have positive attack strength for a defended objective.
+    /// - `supporting_hq_id`: Optional eligible HQ to include for Offensive Support;
+    ///   `None` previews the battle without HQ support.
+    ///
+    /// # Returns
+    ///
+    /// [`BattleOdds`] including adjusted strengths and the six possible results.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`RuleError`] for an unavailable Combat Phase, illegal objective,
+    /// ineligible or duplicate attackers, insufficient attack strength, or invalid
+    /// support. Returns `breakthroughAdvance` for an advance-only objective,
+    /// which has no combat odds.
     pub fn battle_preview(
         &self,
         hex_id: &HexId,
@@ -380,6 +425,7 @@ impl GameEngine {
 
     // ------------------------------------------------------------------ commands
 
+    /// Validates and resolves an attack, applying losses, retreats, support, and advance choices.
     pub(super) fn resolve_battle(
         &mut self,
         hex_id: HexId,
@@ -544,6 +590,7 @@ impl GameEngine {
         Ok(events)
     }
 
+    /// Validates the chosen surviving attackers and stacking before completing a pending advance.
     pub(super) fn advance_after_combat(
         &mut self,
         unit_ids: Vec<UnitId>,
@@ -595,6 +642,7 @@ impl GameEngine {
 
     // ------------------------------------------------------------------ battle mechanics
 
+    /// Stores a battle report in the active combat state and emits its resolution event.
     fn record_battle(
         &mut self,
         side_id: &SideId,
@@ -610,6 +658,7 @@ impl GameEngine {
         });
     }
 
+    /// Records and emits the attacker's pending choice to advance into a cleared objective.
     fn offer_advance(
         &mut self,
         battle_id: u32,
@@ -630,9 +679,10 @@ impl GameEngine {
         events.push(GameEvent::AdvanceOffered { pending });
     }
 
-    /// Moves the advancing units (possibly none), takes any enemy city, and
-    /// places a Breakthrough Marker in the cleared hex (25.9.2).
+    /// Moves chosen attackers, takes enemy cities, and places any allowed Breakthrough Marker (25.8-25.9).
     fn finish_advance(&mut self, unit_ids: Vec<UnitId>, events: &mut Vec<GameEvent>) {
+        // Moves the advancing units (possibly none), takes any enemy city, and
+        // places a Breakthrough Marker in the cleared hex (25.9.2).
         let Some(combat) = self.combat.as_mut() else {
             return;
         };
@@ -672,6 +722,7 @@ impl GameEngine {
         }
     }
 
+    /// Adds a Breakthrough Marker and emits its placement event unless it is already present.
     fn place_breakthrough(&mut self, hex_id: &HexId, events: &mut Vec<GameEvent>) {
         if !self.breakthrough_markers.contains(hex_id) {
             self.breakthrough_markers.push(hex_id.clone());
@@ -681,15 +732,16 @@ impl GameEngine {
         }
     }
 
-    /// 25.6.2: each eligible defending step rolls once. Steps of one nationality
-    /// only (the one with the most eligible steps) Counterattack for NATO; the
-    /// target is the strongest attacker not yet Disrupted.
+    /// Rolls eligible defending steps against the strongest undisrupted attackers using NATO nationality limits (25.6.2).
     fn counterattack(
         &mut self,
         defenders: &[UnitId],
         attackers: &[UnitId],
         events: &mut Vec<GameEvent>,
     ) -> Vec<CounterattackRoll> {
+        // 25.6.2: each eligible defending step rolls once. Steps of one nationality
+        // only (the one with the most eligible steps) Counterattack for NATO; the
+        // target is the strongest attacker not yet Disrupted.
         let mut steps: Vec<UnitId> = Vec::new();
         for id in defenders {
             let unit = &self.units[id];
@@ -760,10 +812,7 @@ impl GameEngine {
         rolls
     }
 
-    /// 25.6.3: defending steps are lost from contributing Maneuver units first
-    /// (strongest first), then other Maneuver units, then HQs, which are
-    /// Suppressed instead of reduced. Units under a train marker alone in the
-    /// hex are eliminated outright (13.4.3). Returns whether every loss was absorbed.
+    /// Applies defender losses by unit priority and reports whether all required losses were absorbed (25.6.3).
     fn apply_defender_losses(
         &mut self,
         hex_id: &HexId,
@@ -771,6 +820,10 @@ impl GameEngine {
         steps: u8,
         events: &mut Vec<GameEvent>,
     ) -> bool {
+        // 25.6.3: defending steps are lost from contributing Maneuver units first
+        // (strongest first), then other Maneuver units, then HQs, which are
+        // Suppressed instead of reduced. Units under a train marker alone in the
+        // hex are eliminated outright (13.4.3). Returns whether every loss was absorbed.
         if !defenders.is_empty()
             && defenders
                 .iter()
@@ -817,9 +870,10 @@ impl GameEngine {
         true
     }
 
-    /// 25.6.3: the Defender picks the attacking step lost; taken automatically
-    /// from the attacker with the highest current Attack Strength.
+    /// Takes one attacking step from the unit with the highest current Attack Strength (25.6.3).
     fn apply_attacker_loss(&mut self, attackers: &[UnitId], events: &mut Vec<GameEvent>) {
+        // 25.6.3: the Defender picks the attacking step lost; taken automatically
+        // from the attacker with the highest current Attack Strength.
         let target = attackers
             .iter()
             .filter(|id| self.units.contains_key(*id))
@@ -833,9 +887,7 @@ impl GameEngine {
         }
     }
 
-    /// 25.7: the surviving defenders retreat together along the best legal
-    /// route, losing a step for each unnegated EZOC hex entered and each hex
-    /// they cannot retreat. Units under a train marker are eliminated (13.4.4).
+    /// Retreats surviving defenders together and applies losses for enemy ZOCs and unfulfilled retreat hexes (25.7).
     fn retreat_defenders(
         &mut self,
         attacker_side: &SideId,
@@ -844,6 +896,9 @@ impl GameEngine {
         net_retreat: u8,
         events: &mut Vec<GameEvent>,
     ) {
+        // 25.7: the surviving defenders retreat together along the best legal
+        // route, losing a step for each unnegated EZOC hex entered and each hex
+        // they cannot retreat. Units under a train marker are eliminated (13.4.4).
         let defenders: Vec<UnitId> = self
             .units
             .values()
@@ -911,10 +966,7 @@ impl GameEngine {
         }
     }
 
-    /// Chooses the retreat route by the priorities of 25.7.4: fewest step
-    /// losses, then not adjacent to enemy units, not overstacked, avoiding
-    /// Mountains and Major Rivers, and finally farthest from the attackers
-    /// (standing in for "toward the friendly rear").
+    /// Selects the legal retreat route with the lowest losses and best remaining retreat priorities (25.7.4).
     fn best_retreat(
         &self,
         defender_side: &SideId,
@@ -923,6 +975,10 @@ impl GameEngine {
         retreating: &[UnitId],
         net_retreat: u8,
     ) -> RetreatRoute {
+        // Chooses the retreat route by the priorities of 25.7.4: fewest step
+        // losses, then not adjacent to enemy units, not overstacked, avoiding
+        // Mountains and Major Rivers, and finally farthest from the attackers
+        // (standing in for "toward the friendly rear").
         let context = MovementContext::new(self, defender_side);
         let hexes = &context.hexes;
         let origin = hexes[objective.0.as_str()];
@@ -1249,15 +1305,16 @@ impl GameEngine {
             .collect()
     }
 
-    /// 25.4: a listed HQ of the attacking side, in Supply, not Suppressed, not
-    /// under a train marker, unused this phase, and within its Support Range
-    /// of at least one committed Subordinate unit.
+    /// Checks an HQ's ownership, readiness, prior support use, and range to committed Subordinates (25.4).
     fn validate_support(
         &self,
         side_id: &SideId,
         hq_id: &UnitId,
         attackers: &[&UnitState],
     ) -> Result<(), RuleError> {
+        // 25.4: a listed HQ of the attacking side, in Supply, not Suppressed, not
+        // under a train marker, unused this phase, and within its Support Range
+        // of at least one committed Subordinate unit.
         let unavailable = |message: &str| Err(RuleError::new("supportUnavailable", message));
         let Some(support) = self
             .scenario
@@ -1309,16 +1366,17 @@ impl GameEngine {
         }
     }
 
-    /// 3.4.2, 8.4: hexes reachable from the HQ within its Support Range,
-    /// never through enemy units or enemy-controlled cities, EZOC hexes without
-    /// a friendly unit, All-Sea hexes, or Blocked and All-Sea hexsides (the
-    /// Danish Ferry excepted). The HQ's hex counts; the unit's does not.
+    /// Searches legal HQ support routes within range while respecting enemy control and impassable terrain (3.4.2, 8.4).
     fn support_distances(
         &self,
         side_id: &SideId,
         from: &HexId,
         range: u16,
     ) -> HashMap<String, u16> {
+        // 3.4.2, 8.4: hexes reachable from the HQ within its Support Range,
+        // never through enemy units or enemy-controlled cities, EZOC hexes without
+        // a friendly unit, All-Sea hexes, or Blocked and All-Sea hexsides (the
+        // Danish Ferry excepted). The HQ's hex counts; the unit's does not.
         let context = MovementContext::new(self, side_id);
         let mut distances = HashMap::from([(from.0.clone(), 0_u16)]);
         let mut queue = VecDeque::from([from.0.clone()]);
@@ -1353,6 +1411,7 @@ impl GameEngine {
 
     // ------------------------------------------------------------------ eligibility
 
+    /// Classifies a hex as defended or breakthrough-only, returning none for illegal objectives.
     fn objective_kind(&self, side_id: &SideId, hex_id: &HexId) -> Option<ObjectiveKind> {
         let occupied = self
             .units
@@ -1367,9 +1426,7 @@ impl GameEngine {
         }
     }
 
-    /// 25.2: an adjacent Maneuver unit that has not attacked, is not under a
-    /// train marker (13.4.2), and does not face a Blocked, All-Sea, or Danish
-    /// Ferry hexside (25.2.4).
+    /// Checks whether an adjacent maneuver unit may attack across the shared hexside in this phase (25.2).
     fn can_attack(
         &self,
         context: &MovementContext,
@@ -1377,6 +1434,9 @@ impl GameEngine {
         unit: &UnitState,
         hex_id: &HexId,
     ) -> bool {
+        // 25.2: an adjacent Maneuver unit that has not attacked, is not under a
+        // train marker (13.4.2), and does not face a Blocked, All-Sea, or Danish
+        // Ferry hexside (25.2.4).
         let UnitLocation::Hex { hex_id: from } = &unit.location else {
             return false;
         };
@@ -1396,6 +1456,7 @@ impl GameEngine {
                 .contains(&HexsideFeature::DanishFerry)
     }
 
+    /// Checks the objective and distinct eligible attackers, requiring attack strength for defended hexes.
     fn validate_attack(
         &self,
         hex_id: &HexId,
@@ -1444,6 +1505,7 @@ impl GameEngine {
         Ok(units)
     }
 
+    /// Returns the acting side after verifying that a single-side Combat Phase is active.
     fn combat_side(&self) -> Result<SideId, RuleError> {
         let Some(step) = self.current_step() else {
             return Err(RuleError::game_complete());
@@ -1463,6 +1525,7 @@ impl GameEngine {
         }
     }
 
+    /// Borrows the current combat state or reports that no Combat Phase is in progress.
     fn combat_state(&self) -> Result<&CombatState, RuleError> {
         self.combat
             .as_ref()

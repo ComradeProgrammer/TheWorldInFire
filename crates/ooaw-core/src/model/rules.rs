@@ -28,7 +28,15 @@ pub struct BattlePlanningRules {
 }
 
 impl BattlePlanningRules {
-    /// Rules used by the built-in NATO scenarios.
+    /// Creates the default planning and movement rules for the built-in NATO scenarios.
+    ///
+    /// Includes rail and airlift limits, resupply and stacking allowances, river
+    /// costs, and prototype Air Point allocations. Individual scenarios may adjust
+    /// these values after construction.
+    ///
+    /// # Returns
+    ///
+    /// An owned rule configuration with no Surprise turn and no bonus Air Points.
     pub fn nato_standard() -> Self {
         Self {
             rail_movement_limit: 20,
@@ -61,7 +69,17 @@ impl BattlePlanningRules {
         }
     }
 
-    /// Airlift Commands, and therefore airlift steps per turn, for one side.
+    /// Returns the configured Airlift Command capacity for one side.
+    ///
+    /// # Parameters
+    ///
+    /// - `side_id`: Side to query. `warsawPact` selects the Warsaw Pact allowance;
+    ///   every other identifier selects the NATO allowance.
+    ///
+    /// # Returns
+    ///
+    /// Number of Airlift Commands, each carrying one unit step per game turn.
+    /// This is the configured limit; it does not subtract commands already used.
     pub fn airlift_commands(&self, side_id: &SideId) -> u16 {
         if side_id.0 == "warsawPact" {
             self.warsaw_pact_airlift_commands
@@ -70,10 +88,19 @@ impl BattlePlanningRules {
         }
     }
 
-    /// Returns the ground movement-point cost to enter a hex's primary terrain.
+    /// Returns the base ground movement-point cost to enter a map hex.
     ///
-    /// A city outranks the natural terrain beneath it (rule 2.2.1) and costs one
-    /// point to enter (rule 12.3 example).
+    /// A city takes precedence over its underlying land terrain and costs one
+    /// point to enter (rules 2.2.1 and 12.3). Sea hexes remain impassable.
+    ///
+    /// # Parameters
+    ///
+    /// - `hex`: Destination hex whose terrain and optional city determine the cost.
+    ///
+    /// # Returns
+    ///
+    /// `Some(cost)` for passable land, or `None` for sea. Hexside crossing costs,
+    /// zones of control, and other route restrictions are applied separately.
     pub fn hex_entry_cost(&self, hex: &MapHex) -> Option<u16> {
         if hex.terrain == Terrain::Sea {
             return None;
@@ -84,7 +111,16 @@ impl BattlePlanningRules {
         self.terrain_cost(hex.terrain)
     }
 
-    /// Returns the ground movement-point cost to enter a terrain type.
+    /// Returns the base ground movement-point cost for a natural terrain type.
+    ///
+    /// # Parameters
+    ///
+    /// - `terrain`: Natural terrain to price without a city override or hexside costs.
+    ///
+    /// # Returns
+    ///
+    /// One point for Clear, Forest, or Marsh; two for Rough; three for Mountain;
+    /// or `None` for Sea, which cannot be entered by ground movement.
     pub fn terrain_cost(&self, terrain: Terrain) -> Option<u16> {
         match terrain {
             Terrain::Sea => None,

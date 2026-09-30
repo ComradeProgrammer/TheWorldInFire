@@ -23,6 +23,7 @@ impl GameEngine {
         })
     }
 
+    /// Builds client-facing city ownership, current control, and Free City status records.
     pub(crate) fn city_states(&self) -> Vec<CityControlState> {
         self.city_control
             .iter()
@@ -38,15 +39,16 @@ impl GameEngine {
             .collect()
     }
 
-    /// 30.1.1, 30.3.2: a unit moving by Tactical movement takes control of every
-    /// enemy-controlled Conquered City it enters, even without stopping there.
-    /// Enemy Free Cities are never entered by movement, so they never change here.
+    /// Transfers enemy-controlled Conquered Cities along a Tactical route and records reversible changes (30.1.1, 30.3.2).
     pub(crate) fn take_cities_along(
         &mut self,
         side_id: &SideId,
         path: &[HexId],
         events: &mut Vec<GameEvent>,
     ) -> Vec<CityControlChange> {
+        // 30.1.1, 30.3.2: a unit moving by Tactical movement takes control of every
+        // enemy-controlled Conquered City it enters, even without stopping there.
+        // Enemy Free Cities are never entered by movement, so they never change here.
         let mut changes = Vec::new();
         for hex_id in path {
             let Some(controller) = self.city_control.get(hex_id).cloned() else {

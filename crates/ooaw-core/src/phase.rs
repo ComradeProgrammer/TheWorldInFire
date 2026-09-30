@@ -3,6 +3,7 @@ use crate::event::{GameEvent, UnitSupplyCheck};
 use crate::model::{PhaseActor, UnitLocation};
 
 impl GameEngine {
+    /// Dispatches initialization and automatic rules for the newly active phase.
     pub(super) fn on_phase_started(&mut self, events: &mut Vec<GameEvent>) {
         let Some(phase_id) = self.current_step().map(|step| step.phase_id.0.clone()) else {
             return;
@@ -21,8 +22,10 @@ impl GameEngine {
         }
     }
 
+    /// Provides the Joint Status Phase hook, which currently has no automatic effects.
     fn resolve_joint_status(&mut self, _events: &mut Vec<GameEvent>) {}
 
+    /// Resets air points, withdraws scheduled units, and adds this turn's reinforcements.
     fn resolve_joint_reinforcement(&mut self, events: &mut Vec<GameEvent>) {
         self.reset_air_points(events);
         let withdrawn: Vec<_> = self
@@ -62,6 +65,7 @@ impl GameEngine {
         }
     }
 
+    /// Supplies off-map reserve units and emits the acting side's recorded supply checks.
     fn resolve_pre_battle(&mut self, events: &mut Vec<GameEvent>) {
         let Some(side_id) = self.current_step().and_then(|step| match &step.actor {
             PhaseActor::Side { side_id } => Some(side_id.clone()),
@@ -95,22 +99,27 @@ impl GameEngine {
         });
     }
 
+    /// Starts the acting side's battle plan and completes eligible train loading.
     fn resolve_battle_planning(&mut self, events: &mut Vec<GameEvent>) {
         self.start_battle_plan(events);
     }
 
+    /// Starts an empty air mission plan for the acting side's Offensive Strike Phase.
     fn resolve_offensive_strike(&mut self, _events: &mut Vec<GameEvent>) {
         self.start_strike_plan();
     }
 
+    /// Starts the acting side's combat records and per-phase restrictions.
     fn resolve_combat(&mut self, _events: &mut Vec<GameEvent>) {
         self.start_combat();
     }
 
+    /// Starts reserve movement with the acting side's eligible marked units.
     fn resolve_reserve(&mut self, _events: &mut Vec<GameEvent>) {
         self.start_reserve();
     }
 
+    /// Removes the acting side's Suppressed markers and emits the resulting changes.
     fn resolve_post_battle(&mut self, events: &mut Vec<GameEvent>) {
         self.remove_suppression(events);
     }

@@ -92,21 +92,37 @@ pub struct PendingDecision {
 
 /// Mutable authoritative state and command processor for a game session.
 pub struct GameEngine {
+    /// Stable identifier for this game session and its initial dice seed.
     pub(super) game_id: GameId,
+    /// Selected scenario content, map, rules, and scheduled unit arrivals and withdrawals.
     pub(super) scenario: ScenarioDefinition,
+    /// Count of successfully executed commands, exposed for client concurrency checks.
     pub(super) revision: u64,
+    /// Whether the game still accepts commands or has completed its final turn.
     pub(super) status: GameStatus,
+    /// One-based game-turn number within the scenario.
     pub(super) game_turn: u16,
+    /// Zero-based position in the scenario's repeated turn sequence.
     pub(super) step_index: usize,
+    /// Units currently in play, indexed and iterated by stable unit identifier.
     pub(super) units: BTreeMap<UnitId, UnitState>,
+    /// Acting side's planning selections and movement history carried into later phases.
     pub(super) battle_plan: Option<BattlePlan>,
+    /// Current controlling side for each city hex, initially its scenario owner.
     pub(super) city_control: BTreeMap<HexId, SideId>,
+    /// Remaining recurring and one-time Air Point pools for each side.
     pub(super) air_points: Vec<AirPoints>,
+    /// Missions and resolution state for the current Offensive Strike Phase.
     pub(super) strike_plan: Option<StrikePlan>,
+    /// Active interdiction centers that restrict enemy movement in nearby hexes.
     pub(super) air_interdiction_zones: Vec<AirInterdictionZone>,
+    /// Cleared hexes with Breakthrough Markers affecting combat and reserve movement.
     pub(super) breakthrough_markers: Vec<HexId>,
+    /// Identifiers of units destroyed so far, in elimination order.
     pub(super) eliminated_units: Vec<UnitId>,
+    /// Current battles, attack restrictions, support use, and pending advance choice.
     pub(super) combat: Option<CombatState>,
+    /// Marked reserve units and their movement history for the current Reserve Phase.
     pub(super) reserve: Option<ReserveState>,
     /// Seeded dice; saves must persist this state to replay identically.
     pub(super) dice: Dice,
@@ -114,6 +130,26 @@ pub struct GameEngine {
 
 impl GameEngine {
     /// Creates a game at the first step of the supplied scenario.
+    ///
+    /// The game starts on turn one at revision zero, with city control and Air
+    /// Point pools initialized from the scenario. Units enter play through the
+    /// reinforcement phase; constructing the engine does not resolve phases.
+    ///
+    /// # Parameters
+    ///
+    /// - `game_id`: Stable session identifier, also used to seed reproducible dice.
+    /// - `scenario`: Owned scenario definition containing the map, participating
+    ///   sides, turn sequence, rules, and unit arrival schedule.
+    ///
+    /// # Returns
+    ///
+    /// An initialized engine ready to accept commands for the first phase.
+    ///
+    /// # Errors
+    ///
+    /// Returns `invalidScenario` for invalid turn counts, an empty sequence or
+    /// map, duplicate hex or unit IDs, unknown side or hex references, or an
+    /// invalid reinforcement turn or strength-step setup.
     pub fn new(game_id: GameId, scenario: ScenarioDefinition) -> Result<Self, RuleError> {
         validate_scenario(&scenario)?;
         let city_control = scenario
@@ -162,7 +198,16 @@ impl GameEngine {
         })
     }
 
-    /// Returns the serializable game state exposed to clients.
+    /// Returns an owned, serializable snapshot of the current game state.
+    ///
+    /// Includes the revision, current phase, units, city control, planning and
+    /// combat state, and any pending advance decision. Static map data is
+    /// represented by its scenario identifier; retrieve it with [`Self::map`].
+    /// Cloning the state does not advance phases or consume dice.
+    ///
+    /// # Returns
+    ///
+    /// A [`GameSnapshot`] that can be retained independently of the engine.
     pub fn snapshot(&self) -> GameSnapshot {
         GameSnapshot {
             protocol_version: 15,
@@ -196,6 +241,7 @@ impl GameEngine {
         }
     }
 
+    /// Returns the active scenario step, or none once the game has completed.
     pub(super) fn current_step(&self) -> Option<&PhaseDefinition> {
         if self.status == GameStatus::Completed {
             None
@@ -205,16 +251,46 @@ impl GameEngine {
     }
 
     /// Returns the authoritative map selected by this game's scenario.
+    ///
+    /// # Returns
+    ///
+    /// A shared reference to the static hexes, hexside features, and presentation
+    /// data. Current city control is available separately in [`Self::snapshot`].
     pub fn map(&self) -> &MapDefinition {
         &self.scenario.map
     }
 
-    /// Returns the ordered steps of every game turn in this game's scenario.
+    /// Returns the scenario's ordered phase steps repeated every game turn.
+    ///
+    /// # Returns
+    ///
+    /// A shared slice containing each step's actor and execution mode. Use the
+    /// turn state in [`Self::snapshot`] to identify the currently active step.
     pub fn turn_sequence(&self) -> &[PhaseDefinition] {
         &self.scenario.turn_sequence
     }
 
-    /// Executes a command against the authoritative state and returns its outcome.
+    /// Validates and executes a command against the authoritative game state.
+    ///
+    /// A successful command increments the revision once and returns its ordered
+    /// events and resulting snapshot. Ending a phase also runs phase cleanup and
+    /// advances through automatic phases until input is required or the game ends.
+    ///
+    /// # Parameters
+    ///
+    /// - `command`: Owned action to perform, including any unit identifiers,
+    ///   destinations, targets, or selections required by its variant.
+    ///
+    /// # Returns
+    ///
+    /// The new revision, emitted events, and post-command state in a
+    /// [`CommandOutcome`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `gameComplete` after the scenario ends, or a command-specific
+    /// [`RuleError`] for an invalid phase, actor, target, resource use, or other
+    /// rule violation. A rejected command does not increment the revision.
     pub fn execute(&mut self, command: GameCommand) -> Result<CommandOutcome, RuleError> {
         if self.status == GameStatus::Completed {
             return Err(RuleError::game_complete());
@@ -263,12 +339,13 @@ impl GameEngine {
         })
     }
 
-    /// Finishes the current interactive phase and advances to the next one.
-    ///
-    /// Phase-specific cleanup runs before `PhaseEnded` is emitted. Automatic
-    /// phases are then resolved and skipped until the next interactive phase
-    /// is reached or the game ends.
+    /// Cleans up the current phase and resolves automatic phases until input is needed or the game ends.
     fn end_phase(&mut self) -> Result<Vec<GameEvent>, RuleError> {
+        // Finishes the current interactive phase and advances to the next one.
+        //
+        // Phase-specific cleanup runs before `PhaseEnded` is emitted. Automatic
+        // phases are then resolved and skipped until the next interactive phase
+        // is reached or the game ends.
         let mut events = Vec::new();
         if let Some(step) = self.current_step().cloned() {
             // Combat cannot end while the rules still require a player decision.
@@ -313,9 +390,10 @@ impl GameEngine {
         Ok(events)
     }
 
-    /// Starts the next phase, rolling over to a new turn or completing the game
-    /// when the current turn has no remaining phases.
+    /// Starts the next phase, rolls into a new turn, or completes the game after its final turn.
     fn move_to_next_step(&mut self, events: &mut Vec<GameEvent>) {
+        // Starts the next phase, rolling over to a new turn or completing the game
+        // when the current turn has no remaining phases.
         self.step_index += 1;
 
         // Passing the end of the turn sequence either starts a new turn or,
@@ -348,6 +426,7 @@ impl GameEngine {
     }
 }
 
+/// Checks scenario turns, map references, ownership, and reinforcement strength-step setup.
 fn validate_scenario(scenario: &ScenarioDefinition) -> Result<(), RuleError> {
     if scenario.max_game_turns == 0 {
         return Err(RuleError::new(

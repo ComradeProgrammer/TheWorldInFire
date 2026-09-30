@@ -11,6 +11,7 @@ use ooaw_core::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Requests accepted by the newline-delimited JSON process protocol.
 #[derive(Debug, Deserialize)]
 #[serde(
     tag = "type",
@@ -20,16 +21,21 @@ use serde::{Deserialize, Serialize};
 enum EngineRequest {
     ListScenarios,
     NewGame {
+        /// Built-in scenario identifier used to create the game.
         scenario_id: String,
+        /// Client-selected game identifier, also used to seed deterministic dice.
         game_id: String,
     },
     GetSnapshot,
     SubmitCommand {
+        /// Revision the client last observed; must match the active game before execution.
         expected_revision: u64,
+        /// Rules-engine command to validate and execute for the active game.
         command: GameCommand,
     },
 }
 
+/// Responses written by the engine for each JSON request.
 #[derive(Debug, Serialize)]
 #[serde(
     tag = "type",
@@ -38,27 +44,37 @@ enum EngineRequest {
 )]
 enum EngineResponse {
     Scenarios {
+        /// Metadata for the scenarios available to new-game requests.
         scenarios: Vec<ScenarioSummary>,
     },
     GameStarted {
+        /// Authoritative game state at the time this response is produced.
         snapshot: GameSnapshot,
+        /// Static scenario map supplied when the client starts a game.
         map: MapDefinition,
     },
     Snapshot {
+        /// Authoritative game state at the time this response is produced.
         snapshot: GameSnapshot,
     },
     CommandAccepted {
+        /// Authoritative revision after the accepted command.
         revision: u64,
+        /// Ordered game events produced by the accepted command.
         events: Vec<GameEvent>,
+        /// Authoritative game state at the time this response is produced.
         snapshot: GameSnapshot,
     },
     Error {
+        /// Stable error identifier for client-side handling.
         code: String,
+        /// Human-readable explanation of the rejected request.
         message: String,
     },
 }
 
 impl EngineResponse {
+    /// Builds a protocol error response from a stable code and a human-readable message.
     fn error(code: &str, message: impl Into<String>) -> Self {
         Self::Error {
             code: code.to_owned(),
@@ -67,12 +83,15 @@ impl EngineResponse {
     }
 }
 
+/// Game state retained between requests in one engine process.
 #[derive(Default)]
 struct EngineSession {
+    /// Active game for this process session, or none before a successful new-game request.
     game: Option<GameEngine>,
 }
 
 impl EngineSession {
+    /// Dispatches a protocol request and checks command revisions against the active game.
     fn handle(&mut self, request: EngineRequest) -> EngineResponse {
         match request {
             EngineRequest::ListScenarios => EngineResponse::Scenarios {
@@ -135,6 +154,7 @@ impl EngineSession {
     }
 }
 
+/// Reads JSON requests from stdin and writes one flushed JSON response per line to stdout.
 fn main() -> io::Result<()> {
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout().lock());

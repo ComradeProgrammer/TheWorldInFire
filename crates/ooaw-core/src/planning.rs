@@ -8,6 +8,7 @@ use crate::model::{
 use crate::reserve::MovementPhase;
 
 impl GameEngine {
+    /// Selects or deselects an eligible resupply unit while enforcing the plan's operation limit.
     pub(super) fn set_resupply_target(
         &mut self,
         unit_id: UnitId,
@@ -64,6 +65,7 @@ impl GameEngine {
         }])
     }
 
+    /// Selects or deselects a currently eligible enemy objective in the active battle plan.
     pub(super) fn set_attack_target(
         &mut self,
         hex_id: HexId,
@@ -97,9 +99,19 @@ impl GameEngine {
         }])
     }
 
-    /// Hexes the planning side may currently mark as attack objectives.
+    /// Lists hexes the planning side may currently mark as attack objectives.
     ///
-    /// Read-only preview data for the client; `SetAttackTarget` re-validates.
+    /// Eligible hexes contain enemy units or are enemy Free Cities. This is a
+    /// read-only preview; `SetAttackTarget` checks eligibility again when submitted.
+    ///
+    /// # Returns
+    ///
+    /// Eligible [`HexId`] values in scenario map order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`RuleError`] if the game has ended or the current step is not
+    /// a Battle Planning Phase with one acting side.
     pub fn attack_target_options(&self) -> Result<Vec<HexId>, RuleError> {
         let side_id = self.battle_planning_side()?;
         Ok(self
@@ -112,9 +124,10 @@ impl GameEngine {
             .collect())
     }
 
-    /// 25.1.1: an Objective hex contains an enemy Ground unit or is an enemy
-    /// Free City (which need not be occupied).  Breakthrough Markers do not exist yet.
+    /// Checks whether a planning objective contains an enemy unit or is an enemy Free City (25.1.1).
     fn is_attack_target_eligible(&self, side_id: &SideId, hex_id: &HexId) -> bool {
+        // 25.1.1: an Objective hex contains an enemy Ground unit or is an enemy
+        // Free City (which need not be occupied).  Breakthrough Markers do not exist yet.
         self.is_enemy_free_city(side_id, hex_id)
             || self.units.values().any(|unit| {
                 unit.definition.side_id != *side_id
@@ -122,6 +135,7 @@ impl GameEngine {
             })
     }
 
+    /// Validates and executes movement, recording its route, resource use, city changes, and reserve status.
     pub(super) fn move_unit(
         &mut self,
         unit_id: UnitId,
@@ -175,6 +189,7 @@ impl GameEngine {
         Ok(events)
     }
 
+    /// Validates a rail-loading order and marks the unit as Entraining for a later player turn.
     pub(super) fn entrain_unit(&mut self, unit_id: UnitId) -> Result<Vec<GameEvent>, RuleError> {
         let side_id = self.battle_planning_side()?;
         let unit = self.owned_unit(&unit_id, &side_id)?.clone();
@@ -253,6 +268,7 @@ impl GameEngine {
         Ok(events)
     }
 
+    /// Removes an eligible unit's train marker and records the detrain order for possible undo.
     pub(super) fn detrain_unit(&mut self, unit_id: UnitId) -> Result<Vec<GameEvent>, RuleError> {
         let side_id = self.battle_planning_side()?;
         let unit = self.owned_unit(&unit_id, &side_id)?;
@@ -282,6 +298,7 @@ impl GameEngine {
         }])
     }
 
+    /// Restores a train marker for this plan's detrain order after checking movement and rail capacity.
     pub(super) fn undo_detrain_unit(
         &mut self,
         unit_id: UnitId,
@@ -320,6 +337,7 @@ impl GameEngine {
         }])
     }
 
+    /// Reverses a unit's last phase movement, restoring its location, city control, and airlift use.
     pub(super) fn undo_unit_movement(
         &mut self,
         unit_id: UnitId,
@@ -369,6 +387,7 @@ impl GameEngine {
         Ok(events)
     }
 
+    /// Completes train loading within rail capacity and creates a fresh plan for the acting side.
     pub(super) fn start_battle_plan(&mut self, events: &mut Vec<GameEvent>) {
         let Some(side_id) = self.current_step().and_then(|step| match &step.actor {
             PhaseActor::Side { side_id } => Some(side_id.clone()),
@@ -404,6 +423,7 @@ impl GameEngine {
         self.battle_plan = Some(BattlePlan::new(self.game_turn, side_id));
     }
 
+    /// Removes Disrupted markers and supplies friendly combat units in the selected target stacks.
     pub(super) fn finish_battle_plan(&mut self, events: &mut Vec<GameEvent>) {
         let Some(plan) = &self.battle_plan else {
             return;
@@ -443,6 +463,7 @@ impl GameEngine {
         }
     }
 
+    /// Returns the acting side after verifying that a single-side Battle Planning Phase is active.
     pub(crate) fn battle_planning_side(&self) -> Result<SideId, RuleError> {
         let Some(step) = self.current_step() else {
             return Err(RuleError::game_complete());
@@ -462,18 +483,21 @@ impl GameEngine {
         }
     }
 
+    /// Borrows the active battle plan or reports that no plan exists.
     pub(crate) fn active_plan(&self) -> Result<&BattlePlan, RuleError> {
         self.battle_plan
             .as_ref()
             .ok_or_else(|| RuleError::new("battlePlanUnavailable", "No active battle plan exists"))
     }
 
+    /// Mutably borrows the active battle plan or reports that no plan exists.
     pub(crate) fn active_plan_mut(&mut self) -> Result<&mut BattlePlan, RuleError> {
         self.battle_plan
             .as_mut()
             .ok_or_else(|| RuleError::new("battlePlanUnavailable", "No active battle plan exists"))
     }
 
+    /// Looks up a unit and verifies that the specified side controls it.
     pub(crate) fn owned_unit(
         &self,
         unit_id: &UnitId,
@@ -492,6 +516,7 @@ impl GameEngine {
         Ok(unit)
     }
 
+    /// Checks whether adding this unit's steps to entrained units would exceed its side's capacity.
     fn validate_rail_capacity(&self, side_id: &SideId, unit: &UnitState) -> Result<(), RuleError> {
         let capacity = if side_id.0 == "warsawPact" {
             self.scenario

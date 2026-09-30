@@ -121,10 +121,12 @@ pub struct MapCity {
     pub contests_airspace: bool,
 }
 
+/// Defaults omitted city airspace participation to true during deserialization.
 fn contests_airspace_by_default() -> bool {
     true
 }
 
+/// Identifies the default true value so serialization can omit the city airspace flag.
 fn is_true(value: &bool) -> bool {
     *value
 }
@@ -349,6 +351,7 @@ pub struct MapLabel {
     pub y: f64,
 }
 
+/// Provides the NATO map identifier when deserializing data without an explicit map ID.
 fn default_nato_map_id() -> String {
     "nato-central-europe".to_owned()
 }

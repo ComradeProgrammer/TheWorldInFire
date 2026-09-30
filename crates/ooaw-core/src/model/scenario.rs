@@ -77,6 +77,17 @@ pub struct ScenarioSummary {
 }
 
 impl From<&ScenarioDefinition> for ScenarioSummary {
+    /// Copies client-facing metadata from a full scenario definition.
+    ///
+    /// # Parameters
+    ///
+    /// - `value`: Source scenario whose identifier, title, turn limit, map ID,
+    ///   and participating sides are copied into the summary.
+    ///
+    /// # Returns
+    ///
+    /// An owned summary without the scenario's map contents, rules, or unit
+    /// deployment schedule. The source definition remains available to the caller.
     fn from(value: &ScenarioDefinition) -> Self {
         Self {
             id: value.id.clone(),
@@ -88,6 +99,7 @@ impl From<&ScenarioDefinition> for ScenarioSummary {
     }
 }
 
+/// Builds a side definition from its stable identifier and display name.
 pub(crate) fn side(id: &str, name: &str) -> SideDefinition {
     SideDefinition {
         id: SideId(id.to_owned()),
@@ -95,6 +107,7 @@ pub(crate) fn side(id: &str, name: &str) -> SideDefinition {
     }
 }
 
+/// Builds a phase step for one side with a side-qualified identifier and execution mode.
 fn step(side_id: &str, phase_id: &str, execution: PhaseExecution) -> PhaseDefinition {
     PhaseDefinition {
         id: StepId(format!("{side_id}.{phase_id}")),
@@ -106,6 +119,7 @@ fn step(side_id: &str, phase_id: &str, execution: PhaseExecution) -> PhaseDefini
     }
 }
 
+/// Builds a phase step shared by all sides with a joint-qualified identifier.
 fn joint_step(phase_id: &str, execution: PhaseExecution) -> PhaseDefinition {
     PhaseDefinition {
         id: StepId(format!("joint.{phase_id}")),
@@ -115,6 +129,7 @@ fn joint_step(phase_id: &str, execution: PhaseExecution) -> PhaseDefinition {
     }
 }
 
+/// Builds one side's ordered phases from pre-battle supply through post-battle cleanup.
 fn simplified_side_turn(side_id: &str) -> Vec<PhaseDefinition> {
     vec![
         step(side_id, "preBattle", PhaseExecution::Automatic),
@@ -126,6 +141,7 @@ fn simplified_side_turn(side_id: &str) -> Vec<PhaseDefinition> {
     ]
 }
 
+/// Builds the joint opening phases followed by Warsaw Pact and NATO player turns.
 pub(crate) fn standard_turn_sequence() -> Vec<PhaseDefinition> {
     let mut turn_sequence = vec![
         joint_step("jointStatus", PhaseExecution::Interactive),
@@ -136,6 +152,7 @@ pub(crate) fn standard_turn_sequence() -> Vec<PhaseDefinition> {
     turn_sequence
 }
 
+/// Builds a fully supplied scheduled unit, deriving hard and air-transport traits from its type.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn reinforcement(
     game_turn: u16,
@@ -206,8 +223,19 @@ pub(crate) fn reinforcement(
 
 /// Returns a fresh scenario definition from the built-in registry.
 ///
-/// Built-in entries contain their turn framework, opening deployment, and
-/// reinforcement schedule.
+/// Built-in entries contain their map, rules, turn sequence, opening deployment,
+/// and reinforcement schedule. Each call returns owned data that can be adjusted
+/// before creating a game.
+///
+/// # Parameters
+///
+/// - `id`: Exact, case-sensitive registry identifier, such as
+///   `nato-baltap-1983` or `nato-1983-standard`.
+///
+/// # Returns
+///
+/// `Some(definition)` for a registered scenario, or `None` for an unknown ID.
+/// Available identifiers can be discovered with [`list_scenarios`].
 pub fn find_scenario(id: &str) -> Option<ScenarioDefinition> {
     match id {
         "nato-baltap-1983" => Some(baltap_scenario()),
@@ -256,7 +284,13 @@ pub fn find_scenario(id: &str) -> Option<ScenarioDefinition> {
     }
 }
 
-/// Returns summaries for every scenario that can be passed to `find_scenario`.
+/// Returns client-facing summaries for all scenarios in the built-in registry.
+///
+/// # Returns
+///
+/// Owned metadata in registry order, including each scenario's identifier,
+/// title, turn limit, map identifier, and sides. Full setup and rules can be
+/// loaded by passing a summary's identifier to [`find_scenario`].
 pub fn list_scenarios() -> Vec<ScenarioSummary> {
     ["nato-baltap-1983", "nato-1983-standard"]
         .into_iter()

@@ -35,11 +35,11 @@ pub use model::{
     HexsideFeature, LabelKind, LineKind, MapCity, MapDefinition, MapGrid, MapHex, MapHexside,
     MapLabel, MapLine, MapSymbol, MovementMode, MovementModeOptions, MovementOption, NationId,
     OffensiveSupportHq, PendingAdvance, PhaseActor, PhaseDefinition, PhaseExecution, PhaseId,
-    PlannedMovement, ReinforcementDefinition, ReserveOption, ReserveState, ScenarioDefinition, ScenarioSummary, SideAirPower,
-    SideDefinition, SideId, StepId, StrengthModifier, StrikePlan, StrikeResolution, StrikeResult,
-    StrikeTargetHex, StrikeTargetUnit, SupplyStatus, Terrain, TrainStatus, UnitDefinition, UnitId,
-    UnitLocation, UnitState, UnitStepDefinition, UnitStrength, UnitSupplyState, UnitTraitId,
-    UnitTypeId, WaterArea, ODDS_COLUMNS,
+    PlannedMovement, ReinforcementDefinition, ReserveOption, ReserveState, ScenarioDefinition,
+    ScenarioSummary, SideAirPower, SideDefinition, SideId, StepId, StrengthModifier, StrikePlan,
+    StrikeResolution, StrikeResult, StrikeTargetHex, StrikeTargetUnit, SupplyStatus, Terrain,
+    TrainStatus, UnitDefinition, UnitId, UnitLocation, UnitState, UnitStepDefinition, UnitStrength,
+    UnitSupplyState, UnitTraitId, UnitTypeId, WaterArea, ODDS_COLUMNS,
 };
 
 #[cfg(test)]

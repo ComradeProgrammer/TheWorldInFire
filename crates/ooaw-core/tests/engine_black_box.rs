@@ -3,13 +3,18 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::{json, Value};
 
+/// Child-process harness for exercising the engine's JSON protocol.
 struct EngineProcess {
+    /// Engine subprocess stopped and reaped when the test harness is dropped.
     child: Child,
+    /// Buffered pipe used to send newline-delimited JSON requests to the engine.
     stdin: BufWriter<ChildStdin>,
+    /// Buffered pipe used to read newline-delimited JSON engine responses.
     stdout: BufReader<ChildStdout>,
 }
 
 impl EngineProcess {
+    /// Spawns the engine binary with piped stdin and stdout for protocol tests.
     fn start() -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_ooaw-engine"))
             .stdin(Stdio::piped())
@@ -25,6 +30,7 @@ impl EngineProcess {
         }
     }
 
+    /// Writes and flushes one JSON request, then reads and parses its JSON response.
     fn send(&mut self, request: Value) -> Value {
         serde_json::to_writer(&mut self.stdin, &request).expect("serialize engine request");
         self.stdin.write_all(b"\n").expect("terminate request");
@@ -41,12 +47,14 @@ impl EngineProcess {
 }
 
 impl Drop for EngineProcess {
+    /// Stops and reaps the engine child process when the test harness is dropped.
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
 }
 
+/// Extracts event type strings from a successful protocol response.
 fn event_types(response: &Value) -> Vec<&str> {
     response["events"]
         .as_array()
@@ -56,6 +64,7 @@ fn event_types(response: &Value) -> Vec<&str> {
         .collect()
 }
 
+/// Verifies game creation, command events, revision checks, and snapshots through the JSON process protocol.
 #[test]
 fn commands_drive_the_engine_through_its_json_process_boundary() {
     let mut engine = EngineProcess::start();

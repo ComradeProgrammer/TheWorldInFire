@@ -3,6 +3,7 @@
 /// SplitMix64 generator seeded from the game identifier.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Dice {
+    /// Current SplitMix64 state, advanced for every generated random value.
     state: u64,
 }
 
@@ -17,6 +18,7 @@ impl Dice {
         Self { state: hash }
     }
 
+    /// Advances the SplitMix64 state and returns the next deterministic 64-bit random value.
     fn next_u64(&mut self) -> u64 {
         self.state = self.state.wrapping_add(0x9e37_79b9_7f4a_7c15);
         let mut z = self.state;

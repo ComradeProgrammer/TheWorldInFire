@@ -27,6 +27,7 @@ pub(crate) fn strike_table(modified_roll: i8) -> StrikeResult {
     }
 }
 
+/// Checks whether friendly or contested airspace permits use of Tactical Air Points.
 fn is_tactical_airspace(airspace: Airspace) -> bool {
     matches!(airspace, Airspace::Friendly | Airspace::Contested)
 }
@@ -34,9 +35,10 @@ fn is_tactical_airspace(airspace: Airspace) -> bool {
 impl GameEngine {
     // ------------------------------------------------------------------ phase hooks
 
-    /// 23.1.1, 23.1.7: fresh Air Points each Joint Reinforcement Phase; unused
-    /// points are lost. One-time bonus points carry over until spent.
+    /// Resets recurring Air Points for the new turn while retaining unspent one-time bonus points (23.1.1, 23.1.7).
     pub(crate) fn reset_air_points(&mut self, events: &mut Vec<GameEvent>) {
+        // 23.1.1, 23.1.7: fresh Air Points each Joint Reinforcement Phase; unused
+        // points are lost. One-time bonus points carry over until spent.
         let rules = &self.scenario.battle_planning_rules.air_power;
         for points in &mut self.air_points {
             let power = rules.for_side(&points.side_id);
@@ -48,6 +50,7 @@ impl GameEngine {
         });
     }
 
+    /// Creates an empty unresolved air mission plan for the acting side.
     pub(crate) fn start_strike_plan(&mut self) {
         let Some(PhaseActor::Side { side_id }) = self.current_step().map(|step| step.actor.clone())
         else {
@@ -70,9 +73,10 @@ impl GameEngine {
         self.strike_plan = None;
     }
 
-    /// 23.8.2, 28.2.5: at the end of a side's Reserve Phase, enemy Air
-    /// Interdiction Zones and the side's Breakthrough Markers are removed.
+    /// Removes enemy Air Interdiction Zones and Breakthrough Markers when the Reserve Phase ends (23.8.2, 28.2.5).
     pub(crate) fn finish_reserve(&mut self, events: &mut Vec<GameEvent>) {
+        // 23.8.2, 28.2.5: at the end of a side's Reserve Phase, enemy Air
+        // Interdiction Zones and the side's Breakthrough Markers are removed.
         let Some(PhaseActor::Side { side_id }) = self.current_step().map(|step| step.actor.clone())
         else {
             return;
@@ -98,9 +102,10 @@ impl GameEngine {
         }
     }
 
-    /// Recovery (7.2 C): the acting side's Disrupted markers come off once its
-    /// movement is complete, i.e. when its Battle Planning Phase ends.
+    /// Removes the acting side's Disrupted markers after its Battle Planning movement is complete (7.2 C).
     pub(crate) fn remove_disruption(&mut self, side_id: &SideId, events: &mut Vec<GameEvent>) {
+        // Recovery (7.2 C): the acting side's Disrupted markers come off once its
+        // movement is complete, i.e. when its Battle Planning Phase ends.
         self.clear_marker(side_id, Disruption::Disrupted, events);
     }
 
@@ -113,6 +118,7 @@ impl GameEngine {
         self.clear_marker(&side_id, Disruption::Suppressed, events);
     }
 
+    /// Removes a specified disruption marker from one side's units and emits change events.
     fn clear_marker(&mut self, side_id: &SideId, marker: Disruption, events: &mut Vec<GameEvent>) {
         for unit in self
             .units
@@ -129,6 +135,7 @@ impl GameEngine {
 
     // ------------------------------------------------------------------ commands
 
+    /// Validates strike targets and limits, spends an Air Point, and records the mission.
     pub(super) fn plan_air_strike(
         &mut self,
         hex_id: HexId,
@@ -220,6 +227,7 @@ impl GameEngine {
         self.push_mission(side_id, hex_id, AirMissionKind::Strike { unit_ids }, source)
     }
 
+    /// Validates an interdiction hex, spends an Air Point, and records the mission.
     pub(super) fn plan_air_interdiction(
         &mut self,
         hex_id: HexId,
@@ -254,6 +262,7 @@ impl GameEngine {
         self.push_mission(side_id, hex_id, AirMissionKind::Interdiction, source)
     }
 
+    /// Removes an unresolved mission and refunds its Air Point to the original pool.
     pub(super) fn cancel_air_mission(
         &mut self,
         mission_id: u32,
@@ -279,6 +288,7 @@ impl GameEngine {
         }])
     }
 
+    /// Checks that the acting side has an open strike plan and resolves its committed missions.
     pub(super) fn resolve_air_strikes(&mut self) -> Result<Vec<GameEvent>, RuleError> {
         self.offensive_strike_side()?;
         self.open_strike_plan()?;
@@ -287,7 +297,21 @@ impl GameEngine {
 
     // ------------------------------------------------------------------ preview
 
-    /// Read-only preview of the Air Strike Segment for the phasing side.
+    /// Previews airspace and enemy targets for the acting side's Air Strike Segment.
+    ///
+    /// Includes Tactical-eligible and friendly hexes, enemy target units with their
+    /// current modifiers, and each hex's remaining strike allowance. The query does
+    /// not spend Air Points or resolve missions.
+    ///
+    /// # Returns
+    ///
+    /// [`AirStrikeOptions`] based on current airspace, units, and planned missions.
+    /// Already targeted units are flagged so clients can explain their availability.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`RuleError`] if the game has ended or the current step is not
+    /// an Offensive Strike Phase with one acting side.
     pub fn air_strike_options(&self) -> Result<AirStrikeOptions, RuleError> {
         let side_id = self.offensive_strike_side()?;
         let airspace = self.airspace_map(&side_id);
@@ -356,9 +380,10 @@ impl GameEngine {
 
     // ------------------------------------------------------------------ resolution
 
-    /// 23.2.4: every mission is committed before any is resolved; they then
-    /// resolve in the order committed.
+    /// Resolves all committed air missions in planning order and marks the strike plan resolved (23.2.4).
     fn resolve_missions(&mut self) -> Vec<GameEvent> {
+        // 23.2.4: every mission is committed before any is resolved; they then
+        // resolve in the order committed.
         let Some(plan) = self.strike_plan.as_mut() else {
             return Vec::new();
         };
@@ -404,6 +429,7 @@ impl GameEngine {
         events
     }
 
+    /// Rolls a strike with the least favorable target modifier and applies disruption, losses, and breakthrough.
     fn resolve_strike(
         &mut self,
         side_id: &SideId,
@@ -535,27 +561,29 @@ impl GameEngine {
         }
     }
 
-    /// Flips a two-step unit to its reduced side and Disrupts it, or eliminates
-    /// a unit on its last step (23.3.2).
+    /// Reduces and disrupts a surviving unit, or eliminates a unit losing its last step (23.3.2).
     pub(crate) fn lose_step(
         &mut self,
         unit_id: &UnitId,
         hex_id: &HexId,
         events: &mut Vec<GameEvent>,
     ) {
+        // Flips a two-step unit to its reduced side and Disrupts it, or eliminates
+        // a unit on its last step (23.3.2).
         if self.remove_step(unit_id, hex_id, events) {
             self.disrupt(unit_id, events);
         }
     }
 
-    /// Removes one step: flips a multi-step unit or eliminates a unit on its
-    /// last step. Returns whether the unit is still in play.
+    /// Removes one strength step and reports whether the reduced unit remains in play.
     pub(crate) fn remove_step(
         &mut self,
         unit_id: &UnitId,
         hex_id: &HexId,
         events: &mut Vec<GameEvent>,
     ) -> bool {
+        // Removes one step: flips a multi-step unit or eliminates a unit on its
+        // last step. Returns whether the unit is still in play.
         let Some(unit) = self.units.get_mut(unit_id) else {
             return false;
         };
@@ -579,6 +607,7 @@ impl GameEngine {
 
     // ------------------------------------------------------------------ helpers
 
+    /// Returns the acting side after verifying that a single-side Offensive Strike Phase is active.
     fn offensive_strike_side(&self) -> Result<SideId, RuleError> {
         let Some(step) = self.current_step() else {
             return Err(RuleError::game_complete());
@@ -598,6 +627,7 @@ impl GameEngine {
         }
     }
 
+    /// Checks that a strike plan exists and its missions have not already been resolved.
     fn open_strike_plan(&self) -> Result<(), RuleError> {
         match &self.strike_plan {
             None => Err(RuleError::new(
@@ -612,6 +642,7 @@ impl GameEngine {
         }
     }
 
+    /// Clones the requested map hex or returns an unknown-hex rule error.
     pub(crate) fn map_hex(&self, hex_id: &HexId) -> Result<MapHex, RuleError> {
         self.scenario
             .map
@@ -622,6 +653,7 @@ impl GameEngine {
             .ok_or_else(|| RuleError::new("unknownHex", format!("Unknown hex: {}", hex_id.0)))
     }
 
+    /// Counts units belonging to other sides that currently occupy the specified hex.
     pub(crate) fn enemy_units_in(&self, side_id: &SideId, hex_id: &HexId) -> usize {
         self.units
             .values()
@@ -632,6 +664,7 @@ impl GameEngine {
             .count()
     }
 
+    /// Mutably borrows the Air Point pools initialized for a scenario side.
     fn side_air_points_mut(&mut self, side_id: &SideId) -> &mut crate::model::AirPoints {
         self.air_points
             .iter_mut()
@@ -639,14 +672,15 @@ impl GameEngine {
             .expect("every scenario side has an Air Point record")
     }
 
-    /// Spends one Air Point of the requested kind, drawing Tactical points from
-    /// this turn's pool before the one-time bonus.
+    /// Spends an Air Point, using recurring Tactical points before bonus points, and returns its source pool.
     fn take_air_point(
         &mut self,
         side_id: &SideId,
         kind: AirPointKind,
         airspace: Airspace,
     ) -> Result<AirPointSource, RuleError> {
+        // Spends one Air Point of the requested kind, drawing Tactical points from
+        // this turn's pool before the one-time bonus.
         // 23.1.3: Tactical Air Points never strike into enemy Airspace.
         if kind == AirPointKind::Tactical && !is_tactical_airspace(airspace) {
             return Err(RuleError::new(
@@ -678,6 +712,7 @@ impl GameEngine {
         Ok(source)
     }
 
+    /// Assigns the next mission ID, stores the mission, and emits its planning event.
     fn push_mission(
         &mut self,
         side_id: SideId,

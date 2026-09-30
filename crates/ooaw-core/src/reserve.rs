@@ -23,6 +23,7 @@ pub(crate) enum MovementPhase {
 }
 
 impl GameEngine {
+    /// Selects or deselects an owned unit's Reserve/OMG marker after checking eligibility.
     pub(super) fn set_reserve(
         &mut self,
         unit_id: UnitId,
@@ -48,9 +49,21 @@ impl GameEngine {
         }])
     }
 
-    /// Whether each of the planning side's units may be marked now.
+    /// Previews Reserve/OMG marker eligibility for every unit of the planning side.
     ///
-    /// Read-only preview data for the client; `SetReserve` re-validates.
+    /// Checks unit type, supply, disruption, train status, movement already spent,
+    /// and enemy zones of control. `SetReserve` rechecks these rules on submission.
+    ///
+    /// # Returns
+    ///
+    /// Entries in unit-identifier order. Each [`ReserveOption`] has `unavailable`
+    /// set to its rule error when that unit cannot currently be marked.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`RuleError`] if the game has ended or the current step is not
+    /// a Battle Planning Phase with one acting side. Unit-specific failures are
+    /// returned within the entries.
     pub fn reserve_options(&self) -> Result<Vec<ReserveOption>, RuleError> {
         let side_id = self.battle_planning_side()?;
         Ok(self
@@ -152,9 +165,10 @@ impl GameEngine {
         Ok(())
     }
 
-    /// Removes the marker from a unit that no longer qualifies: it moved
-    /// further, entrained, or an undo returned it into an enemy zone of control.
+    /// Removes a unit's Reserve/OMG marker when movement, entraining, or undo makes it ineligible.
     pub(crate) fn recheck_reserve(&mut self, unit_id: &UnitId, events: &mut Vec<GameEvent>) {
+        // Removes the marker from a unit that no longer qualifies: it moved
+        // further, entrained, or an undo returned it into an enemy zone of control.
         let Some(plan) = &self.battle_plan else {
             return;
         };
@@ -231,6 +245,7 @@ impl GameEngine {
         }
     }
 
+    /// Borrows the active reserve movement state or reports that no Reserve Phase is active.
     pub(crate) fn reserve_state(&self) -> Result<&ReserveState, RuleError> {
         self.reserve
             .as_ref()
@@ -270,6 +285,7 @@ impl GameEngine {
         })
     }
 
+    /// Mutably borrows movement orders for the requested planning or reserve phase.
     pub(crate) fn phase_movements_mut(
         &mut self,
         phase: MovementPhase,

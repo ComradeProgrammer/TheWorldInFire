@@ -85,7 +85,12 @@ pub struct UnitSupplyState {
 }
 
 impl UnitSupplyState {
-    /// Creates the initial fully supplied state of a headquarters unit.
+    /// Creates the initial fully supplied state for a headquarters unit.
+    ///
+    /// # Returns
+    ///
+    /// Headquarters supply set to [`SupplyStatus::Supplied`], with movement and
+    /// combat supply absent because those supply types do not apply to HQ units.
     pub fn supplied_headquarters() -> Self {
         Self {
             headquarters: Some(SupplyStatus::Supplied),
@@ -94,7 +99,12 @@ impl UnitSupplyState {
         }
     }
 
-    /// Creates the initial fully supplied state of a combat unit.
+    /// Creates the initial fully supplied state for a combat unit.
+    ///
+    /// # Returns
+    ///
+    /// Movement and combat supply set to [`SupplyStatus::Supplied`], with
+    /// headquarters supply absent because it does not apply to combat units.
     pub fn supplied_combat_unit() -> Self {
         Self {
             headquarters: None,
@@ -164,12 +174,23 @@ pub struct UnitState {
 }
 
 impl UnitState {
-    /// Returns the stable identifier used by commands, events, and snapshots.
+    /// Returns the unit's stable identifier from its immutable definition.
+    ///
+    /// # Returns
+    ///
+    /// A shared [`UnitId`] used to reference this unit in commands, events,
+    /// snapshots, and scenario schedules, independent of position or strength.
     pub fn id(&self) -> &UnitId {
         &self.definition.id
     }
 
-    /// Returns the combat values for the unit's current strength step.
+    /// Returns the printed combat and movement values for the current strength step.
+    ///
+    /// # Returns
+    ///
+    /// A shared [`UnitStepDefinition`] at [`Self::strength_step_index`], or `None`
+    /// if the index falls outside the unit's defined steps. The values are printed
+    /// strengths and allowance before supply, disruption, and terrain adjustments.
     pub fn current_step(&self) -> Option<&UnitStepDefinition> {
         self.definition.steps.get(self.strength_step_index)
     }
