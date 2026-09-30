@@ -2,7 +2,7 @@ import { Container, Graphics, Text, type TextStyleOptions } from "pixi.js";
 import type { UnitState } from "../../gameApi";
 import type { HexGrid } from "../hexGrid";
 import type { MapData } from "../mapTypes";
-import { COUNTER, counterPalette, FRAME, NATION_COLORS, nationCode, nationInk, toCounter, unitSymbol, type SymbolPath } from "../unitSymbols";
+import { COUNTER, counterPalette, FRAME, RESERVE_TAB, reserveTabLabel, NATION_COLORS, nationCode, nationInk, toCounter, unitSymbol, type SymbolPath } from "../unitSymbols";
 import { COLORS, FONT_FAMILY } from "./style";
 
 const COUNTER_SIZE = COUNTER.size;
@@ -40,7 +40,7 @@ function tracePaths(g: Graphics, paths: SymbolPath[]): void {
 }
 
 /** Draws the unit's APP-6 symbol: frame, branch icon, modifier, echelon, and HQ staff. */
-function drawUnitSymbol(g: Graphics, unit: UnitState, ink: number): void {
+function drawUnitSymbol(g: Graphics, unit: UnitState, ink: number): string | null {
   const symbol = unitSymbol(unit);
   const topLeft = toCounter(FRAME.x1, FRAME.y1);
   const bottomRight = toCounter(FRAME.x2, FRAME.y2);
@@ -56,9 +56,10 @@ function drawUnitSymbol(g: Graphics, unit: UnitState, ink: number): void {
   if (symbol.headquarters) {
     g.moveTo(topLeft.x, bottomRight.y).lineTo(topLeft.x, bottomRight.y + COUNTER.staffLength).stroke({ color: ink, width: 2.4 });
   }
+  return symbol.label;
 }
 
-function buildCounter(unit: UnitState): Container {
+function buildCounter(unit: UnitState, reserve: boolean): Container {
   const palette = counterPalette(unit.sideId);
   const counter = new Container({ label: unit.id });
   counter.cullable = true;
@@ -71,8 +72,9 @@ function buildCounter(unit: UnitState): Container {
   const nationColor = NATION_COLORS[unit.nationId] ?? palette.edge;
   const { band } = COUNTER;
   g.rect(band.x, band.y, band.width, band.height).fill(nationColor);
-  drawUnitSymbol(g, unit, palette.ink);
+  const label = drawUnitSymbol(g, unit, palette.ink);
   counter.addChild(g);
+  if (label) counter.addChild(counterText(label, 14, toCounter(100, 100).y, palette.ink));
   counter.addChild(counterText(nationCode(unit.nationId), 10, band.y + band.height / 2, nationInk(nationColor)));
 
   const step = unit.steps[unit.strengthStepIndex];
@@ -87,6 +89,16 @@ function buildCounter(unit: UnitState): Container {
     const label = counterText(unit.disruption === "suppressed" ? "S" : "D", 17, half - 6, 0x05080c);
     label.x = -half + 6;
     counter.addChild(badge, label);
+  }
+
+  // Reserve/OMG Marker: a tab on the bottom edge, like a marker placed on the unit.
+  if (reserve) {
+    const { reserveTab: tab } = COUNTER;
+    const marker = new Graphics()
+      .roundRect(-tab.width / 2, tab.y, tab.width, tab.height, 3)
+      .fill(RESERVE_TAB.fill)
+      .stroke({ color: 0x05080c, width: 2 });
+    counter.addChild(marker, counterText(reserveTabLabel(unit.sideId), 11, tab.y + tab.height / 2, RESERVE_TAB.ink));
   }
   return counter;
 }
@@ -112,7 +124,13 @@ export function counterAt(hits: CounterHit[], wx: number, wy: number): string | 
  * Rebuilds the programmatically drawn counter layer from authoritative units.
  * Returns counter footprints in draw order (last is top-most).
  */
-export function populateUnitLayer(layer: Container, units: UnitState[], map: MapData, grid: HexGrid): CounterHit[] {
+export function populateUnitLayer(
+  layer: Container,
+  units: UnitState[],
+  map: MapData,
+  grid: HexGrid,
+  reserveUnitIds: ReadonlySet<string>,
+): CounterHit[] {
   for (const child of layer.removeChildren()) child.destroy({ children: true });
   const hits: CounterHit[] = [];
 
@@ -132,7 +150,7 @@ export function populateUnitLayer(layer: Container, units: UnitState[], map: Map
     const visible = stack.slice(-MAX_VISIBLE_STACK);
     const center = grid.center(hex.row, hex.col);
     visible.forEach((unit, index) => {
-      const counter = buildCounter(unit);
+      const counter = buildCounter(unit, reserveUnitIds.has(unit.id));
       const offset = (index - (visible.length - 1) / 2) * STACK_OFFSET;
       counter.position.set(center.x + offset, center.y - offset);
       layer.addChild(counter);

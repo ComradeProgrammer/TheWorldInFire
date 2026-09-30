@@ -9,6 +9,9 @@ import type {
   GameCommand,
   MovementMode,
   PhaseSnapshot,
+  PlannedMovement,
+  ReserveState,
+  RuleRejection,
   StrikePlan,
   StrikeTargetHex,
   UnitState,
@@ -41,11 +44,12 @@ function hexsideSummary(map: MapData, id: string): string[] {
   return out;
 }
 
-function UnitRow({ unit, onSelect }: { unit: UnitState; onSelect(): void }) {
+function UnitRow({ unit, marker, onSelect }: { unit: UnitState; marker?: string | null; onSelect(): void }) {
   const step = unit.steps[unit.strengthStepIndex];
   return (
     <button type="button" className={`unit-row side-${unit.sideId === "nato" ? "nato" : "pact"}`} onClick={onSelect}>
       <span>{unit.name}</span>
+      {marker && <em className="unit-status reserve" title={`${marker} marker`}>{marker}</em>}
       {unit.disruption && <em className="unit-status" title={readableId(unit.disruption)}>{unit.disruption === "suppressed" ? "S" : "D"}</em>}
       {step && <strong>{step.attack}–{step.defense}–{step.movement}</strong>}
     </button>
@@ -58,18 +62,93 @@ export interface MovementControl {
   onModeChange(mode: MovementMode): void;
 }
 
-function PlanningActions({ unit, plan, busy, movement, onCommand }: {
+/** Reserve (NATO) or OMG (WP): the marker's name for a side. */
+function reserveMarkerName(sideId: string): string {
+  return sideId === "nato" ? "Reserve" : "OMG";
+}
+
+/**
+ * Movement-mode selector, the core's hint for the selected mode, and Undo for
+ * the unit's moves in the current phase. Availability comes from the Rust core.
+ */
+function MovementGroup({ unit, movements, busy, movement, onCommand }: {
   unit: UnitState;
-  plan: BattlePlan;
+  /** This unit's moves in the current phase, oldest first. */
+  movements: PlannedMovement[];
   busy: boolean;
   movement: MovementControl;
   onCommand(command: GameCommand): void;
 }) {
-  const resupplySelected = plan.resupplyTargetUnitId === unit.id;
-  const movements = plan.movements.filter((entry) => entry.unitId === unit.id);
   const lastMovement = movements[movements.length - 1];
+  const status = movement.status;
+  const modes = status.state === "ready" ? status.modes : [];
+  const current = modes.find((entry) => entry.mode === movement.mode);
+  let hint: string;
+  let warn = false;
+  if (status.state === "loading") hint = "Checking legal destinations…";
+  else if (status.state === "failed") [hint, warn] = [status.reason, true];
+  else if (!current) hint = "";
+  else if (current.unavailable) [hint, warn] = [current.unavailable.message, true];
+  else if (current.options.length === 0) hint = "No legal destination with this movement mode.";
+  else hint = `Right-click a destination on the map (${current.options.length} legal ${current.options.length === 1 ? "hex" : "hexes"}).`;
+
+  return (
+    <div className="movement-command-group">
+      <h4>Movement</h4>
+      <div className="mode-selector" role="radiogroup" aria-label="Movement mode">
+        {MOVEMENT_MODES.map(({ mode, label }) => {
+          const entry = modes.find((candidate) => candidate.mode === mode);
+          return (
+            <button
+              key={mode}
+              type="button"
+              role="radio"
+              aria-checked={movement.mode === mode}
+              className={movement.mode === mode ? "selected" : undefined}
+              title={entry?.unavailable?.message}
+              disabled={busy || !entry || entry.unavailable !== null}
+              onClick={() => movement.onModeChange(mode)}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      <p className={warn ? "movement-hint warn" : "movement-hint"}>{hint}</p>
+      {lastMovement && (
+        <>
+          <p className="movement-summary">
+            {movements.length > 1 ? `${movements.length} legs · ` : ""}
+            {readableId(lastMovement.mode)} to {lastMovement.to}
+            {lastMovement.mode !== "airTransport" && (
+              <span>
+                {movements.reduce((sum, entry) => sum + entry.cost, 0)} {lastMovement.mode === "rail" ? "rail hexes" : "MP"} used
+              </span>
+            )}
+          </p>
+          <button type="button" className="action-toggle active" disabled={busy} onClick={() => onCommand({ type: "undoUnitMovement", unitId: unit.id })}>
+            Undo move to {lastMovement.to}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function PlanningActions({ unit, plan, reserveOption, busy, movement, onCommand }: {
+  unit: UnitState;
+  plan: BattlePlan;
+  /** The core's reason this unit cannot take a Reserve/OMG Marker; null when it can, undefined while loading. */
+  reserveOption: RuleRejection | null | undefined;
+  busy: boolean;
+  movement: MovementControl;
+  onCommand(command: GameCommand): void;
+}) {
+  const resupplySelected = plan.resupplyTargetUnitIds.includes(unit.id);
   const orderedEntraining = plan.entrainingUnitIds.includes(unit.id);
   const detrainedThisPlan = plan.detrainedUnitIds.includes(unit.id);
+  const reserveSelected = plan.reserveUnitIds.includes(unit.id);
+  const marker = reserveMarkerName(unit.sideId);
 
   let railButton;
   if (orderedEntraining) {
@@ -98,19 +177,6 @@ function PlanningActions({ unit, plan, busy, movement, onCommand }: {
     );
   }
 
-  // Availability, reasons, and destinations all come from the Rust core.
-  const status = movement.status;
-  const modes = status.state === "ready" ? status.modes : [];
-  const current = modes.find((entry) => entry.mode === movement.mode);
-  let hint: string;
-  let warn = false;
-  if (status.state === "loading") hint = "Checking legal destinations…";
-  else if (status.state === "failed") [hint, warn] = [status.reason, true];
-  else if (!current) hint = "";
-  else if (current.unavailable) [hint, warn] = [current.unavailable.message, true];
-  else if (current.options.length === 0) hint = "No legal destination with this movement mode.";
-  else hint = `Right-click a destination on the map (${current.options.length} legal ${current.options.length === 1 ? "hex" : "hexes"}).`;
-
   return (
     <section className="unit-actions">
       <h3>Planning actions</h3>
@@ -118,61 +184,71 @@ function PlanningActions({ unit, plan, busy, movement, onCommand }: {
         type="button"
         className={resupplySelected ? "action-toggle active" : "action-toggle"}
         disabled={busy}
-        onClick={() => onCommand({ type: "setResupplyTarget", unitId: resupplySelected ? null : unit.id })}
+        onClick={() => onCommand({ type: "setResupplyTarget", unitId: unit.id, selected: !resupplySelected })}
       >
         {resupplySelected ? "Undo resupply selection" : "Select for resupply"}
       </button>
 
-      <div className="movement-command-group">
-        <h4>Movement</h4>
-        <div className="mode-selector" role="radiogroup" aria-label="Movement mode">
-          {MOVEMENT_MODES.map(({ mode, label }) => {
-            const entry = modes.find((candidate) => candidate.mode === mode);
-            return (
-              <button
-                key={mode}
-                type="button"
-                role="radio"
-                aria-checked={movement.mode === mode}
-                className={movement.mode === mode ? "selected" : undefined}
-                title={entry?.unavailable?.message}
-                disabled={busy || !entry || entry.unavailable !== null}
-                onClick={() => movement.onModeChange(mode)}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-        <p className={warn ? "movement-hint warn" : "movement-hint"}>{hint}</p>
-        {lastMovement && (
-          <>
-            <p className="movement-summary">
-              {movements.length > 1 ? `${movements.length} legs · ` : ""}
-              {readableId(lastMovement.mode)} to {lastMovement.to}
-              {lastMovement.mode !== "airTransport" && (
-                <span>
-                  {movements.reduce((sum, entry) => sum + entry.cost, 0)} {lastMovement.mode === "rail" ? "rail hexes" : "MP"} used
-                </span>
-              )}
-            </p>
-            <button type="button" className="action-toggle active" disabled={busy} onClick={() => onCommand({ type: "undoUnitMovement", unitId: unit.id })}>
-              Undo move to {lastMovement.to}
-            </button>
-          </>
-        )}
-      </div>
+      <MovementGroup
+        unit={unit}
+        movements={plan.movements.filter((entry) => entry.unitId === unit.id)}
+        busy={busy}
+        movement={movement}
+        onCommand={onCommand}
+      />
 
       {railButton}
+
+      <div className="reserve-command">
+        <button
+          type="button"
+          className={reserveSelected ? "action-toggle active" : "action-toggle"}
+          disabled={busy || (!reserveSelected && reserveOption !== null)}
+          title={reserveOption?.message}
+          onClick={() => onCommand({ type: "setReserve", unitId: unit.id, selected: !reserveSelected })}
+        >
+          {reserveSelected ? `Undo ${marker} marker` : `Mark as ${marker}`}
+        </button>
+        <p className={!reserveSelected && reserveOption ? "movement-hint warn" : "movement-hint"}>
+          {reserveSelected
+            ? `Held back: it cannot attack, but moves again in the Reserve Phase.`
+            : reserveOption === undefined
+              ? "Checking reserve eligibility…"
+              : reserveOption?.message ?? `Hold it back from combat to move again in the Reserve Phase.`}
+        </p>
+      </div>
     </section>
   );
 }
 
-function UnitDetails({ unit, plan, activeSideId, planning, busy, movement, onBack, onCommand }: {
+function ReserveActions({ unit, reserve, busy, movement, onCommand }: {
+  unit: UnitState;
+  reserve: ReserveState;
+  busy: boolean;
+  movement: MovementControl;
+  onCommand(command: GameCommand): void;
+}) {
+  return (
+    <section className="unit-actions">
+      <h3>{reserveMarkerName(unit.sideId)} movement</h3>
+      <MovementGroup
+        unit={unit}
+        movements={reserve.movements.filter((entry) => entry.unitId === unit.id)}
+        busy={busy}
+        movement={movement}
+        onCommand={onCommand}
+      />
+    </section>
+  );
+}
+
+function UnitDetails({ unit, plan, reserve, reserveOption, activeSideId, phaseId, busy, movement, onBack, onCommand }: {
   unit: UnitState;
   plan: BattlePlan | null;
+  reserve: ReserveState | null;
+  reserveOption: RuleRejection | null | undefined;
   activeSideId?: string;
-  planning: boolean;
+  phaseId?: string;
   busy: boolean;
   movement: MovementControl;
   onBack(): void;
@@ -180,11 +256,21 @@ function UnitDetails({ unit, plan, activeSideId, planning, busy, movement, onBac
 }) {
   const step = unit.steps[unit.strengthStepIndex];
   const location = unit.location.type === "hex" ? `Hex ${unit.location.hexId}` : "Strategic Reserve";
+  const own = unit.sideId === activeSideId;
+  const marked = Boolean(plan?.reserveUnitIds.includes(unit.id));
+  let actions;
+  if (phaseId === "battlePlanning" && plan && own) {
+    actions = <PlanningActions unit={unit} plan={plan} reserveOption={reserveOption} busy={busy} movement={movement} onCommand={onCommand} />;
+  } else if (phaseId === "reserve" && reserve && own) {
+    actions = <ReserveActions unit={unit} reserve={reserve} busy={busy} movement={movement} onCommand={onCommand} />;
+  } else {
+    actions = <p className="readonly-note">This unit has no available actions in the current phase.</p>;
+  }
   return (
     <div className="unit-detail-view">
       <button type="button" className="panel-back" onClick={onBack}>← Back to hex</button>
       <div className="unit-identity">
-        <UnitCounterIcon unit={unit} size={72} />
+        <UnitCounterIcon unit={unit} size={72} reserve={marked} />
         <div>
           <span className="detail-eyebrow">{readableId(unit.nationId)}</span>
           <h2>{unit.name}</h2>
@@ -199,13 +285,10 @@ function UnitDetails({ unit, plan, activeSideId, planning, busy, movement, onBac
         <div><dt>Combat supply</dt><dd>{unit.supply.combat ? readableId(unit.supply.combat) : "N/A"}</dd></div>
         <div><dt>Rail status</dt><dd>{unit.trainStatus ? readableId(unit.trainStatus) : "Not entrained"}</dd></div>
         <div><dt>Status</dt><dd className={unit.disruption ? "status-disrupted" : undefined}>{unit.disruption ? readableId(unit.disruption) : "Ready"}</dd></div>
+        {marked && <div><dt>Reserve</dt><dd className="status-reserve">{reserveMarkerName(unit.sideId)} marker</dd></div>}
       </dl>
       {unit.traits.length > 0 && <div className="trait-list">{unit.traits.map((trait) => <span key={trait}>{readableId(trait)}</span>)}</div>}
-      {planning && plan && unit.sideId === activeSideId ? (
-        <PlanningActions unit={unit} plan={plan} busy={busy} movement={movement} onCommand={onCommand} />
-      ) : (
-        <p className="readonly-note">This unit has no available actions in the current phase.</p>
-      )}
+      {actions}
     </div>
   );
 }
@@ -282,6 +365,10 @@ export interface SidePanelProps {
   strike: StrikeContext | null;
   /** Combat Phase context; present only during that phase. */
   combat: CombatContext | null;
+  /** Battle Planning: the core's reason each unit cannot take a Reserve/OMG Marker (null when it can). */
+  reserveOptions: ReadonlyMap<string, RuleRejection | null>;
+  /** Reserve Phase state; present only during that phase. */
+  reserve: ReserveState | null;
   onGoTo(id: string): boolean;
   onSelectUnit(id: string | null): void;
   onPlanningCommand(command: GameCommand): void;
@@ -293,7 +380,10 @@ export function SidePanel(props: SidePanelProps) {
   const [goTo, setGoTo] = useState("");
   const [goToError, setGoToError] = useState(false);
   const activeSideId = props.currentStep?.actor.type === "side" ? props.currentStep.actor.sideId : undefined;
-  const planning = props.currentStep?.phaseId === "battlePlanning";
+  const phaseId = props.currentStep?.phaseId;
+  const planning = phaseId === "battlePlanning";
+  const markerOf = (unit: UnitState) =>
+    props.battlePlan?.reserveUnitIds.includes(unit.id) ? reserveMarkerName(unit.sideId) : null;
   const selectedUnit = props.units.find((unit) => unit.id === props.selectedUnitId) ?? null;
 
   const submit = (event: FormEvent) => {
@@ -310,8 +400,10 @@ export function SidePanel(props: SidePanelProps) {
           <UnitDetails
             unit={selectedUnit}
             plan={props.battlePlan}
+            reserve={props.reserve}
+            reserveOption={props.reserveOptions.get(selectedUnit.id)}
             activeSideId={activeSideId}
-            planning={planning}
+            phaseId={phaseId}
             busy={props.commandBusy}
             movement={props.movement}
             onBack={() => props.onSelectUnit(null)}
@@ -395,11 +487,22 @@ export function SidePanel(props: SidePanelProps) {
             <div className="unit-list context-units">
               <h3>Units in hex ({occupyingUnits.length})</h3>
               {occupyingUnits.length > 0
-                ? occupyingUnits.map((unit) => <UnitRow key={unit.id} unit={unit} onSelect={() => props.onSelectUnit(unit.id)} />)
+                ? occupyingUnits.map((unit) => <UnitRow key={unit.id} unit={unit} marker={markerOf(unit)} onSelect={() => props.onSelectUnit(unit.id)} />)
                 : <p className="empty">No units in this hex.</p>}
             </div>
           </div>
         ) : <p className="empty select-prompt">Select a hex on the map to inspect terrain and units.</p>}
+
+        {props.reserve && (
+          <div className="unit-list reserve-list">
+            <h3>{reserveMarkerName(props.reserve.sideId)} units to move ({props.reserve.unitIds.length})</h3>
+            {props.reserve.unitIds.length === 0 && <p className="empty">No units were held in reserve this turn.</p>}
+            {props.reserve.unitIds.flatMap((id) => {
+              const unit = props.units.find((candidate) => candidate.id === id);
+              return unit ? [<UnitRow key={id} unit={unit} marker={markerOf(unit)} onSelect={() => props.onSelectUnit(id)} />] : [];
+            })}
+          </div>
+        )}
 
         {reserveUnits.length > 0 && (
           <div className="unit-list reserve-list">

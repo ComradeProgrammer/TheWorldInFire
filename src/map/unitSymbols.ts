@@ -26,6 +26,8 @@ export interface UnitSymbol {
   echelon: SymbolPath[];
   /** Headquarters staff, down from the frame's lower-left corner. */
   headquarters: boolean;
+  /** Text printed in the frame's centre, e.g. `HQ`. */
+  label: string | null;
 }
 
 const line = (x1: number, y1: number, x2: number, y2: number): SymbolPath => [["M", x1, y1], ["L", x2, y2]];
@@ -84,7 +86,7 @@ export function unitSymbol(unit: UnitState): UnitSymbol {
   const echelon = echelonOf(unit.unitTypeId);
   const echelonMarks = echelon ? ECHELONS[echelon] : [];
   if (type === "headquarters" || unit.traits.includes("headquarters")) {
-    return { strokes: [], echelon: echelonMarks, headquarters: true };
+    return { strokes: [], echelon: echelonMarks, headquarters: true, label: "HQ" };
   }
 
   let strokes: SymbolPath[];
@@ -96,7 +98,7 @@ export function unitSymbol(unit: UnitState): UnitSymbol {
   else if (unit.traits.includes("airmobile")) strokes = [...strokes, ...AIR_ASSAULT];
   else if (unit.traits.includes("marine")) strokes = [...strokes, ...AMPHIBIOUS];
 
-  return { strokes, echelon: echelonMarks, headquarters: false };
+  return { strokes, echelon: echelonMarks, headquarters: false, label: null };
 }
 
 /** SVG path data for symbol paths, in symbol space. */
@@ -120,7 +122,17 @@ export const COUNTER = {
   band: { x: -36, y: -36, width: 72, height: 11 },
   staffLength: 6,
   valuesY: 27,
+  /** Reserve/OMG Marker tab straddling the counter's bottom edge. */
+  reserveTab: { width: 34, height: 14, y: 33 },
 } as const;
+
+/** Reserve/OMG Marker tab colours. */
+export const RESERVE_TAB = { fill: 0xf1d48c, ink: 0x101923 } as const;
+
+/** Short label on a counter's Reserve/OMG tab. */
+export function reserveTabLabel(sideId: string): string {
+  return sideId === "nato" ? "RES" : "OMG";
+}
 
 /** Maps a symbol-space point onto the counter. */
 export function toCounter(x: number, y: number): { x: number; y: number } {

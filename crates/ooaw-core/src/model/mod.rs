@@ -20,9 +20,10 @@ pub use map::{
     WaterArea,
 };
 pub use phase::{PhaseActor, PhaseDefinition, PhaseExecution, PhaseId, StepId};
+pub(crate) use planning::{has_incompatible_movement, movement_spent};
 pub use planning::{
     BattlePlan, CityControlChange, CityControlState, MovementModeOptions, MovementOption,
-    PlannedMovement,
+    PlannedMovement, ReserveOption, ReserveState,
 };
 pub use rules::{BattlePlanningRules, MovementMode, TrainStatus};
 pub use scenario::{

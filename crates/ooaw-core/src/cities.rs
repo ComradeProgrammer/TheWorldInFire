@@ -1,10 +1,10 @@
 //! City hex control (rule 30): Free and Conquered Cities.
 
+use crate::engine::GameEngine;
 use crate::event::GameEvent;
 use crate::model::{CityControlChange, CityControlState, HexId, SideId};
-use crate::state::GameState;
 
-impl GameState {
+impl GameEngine {
     /// Alliance that controlled the city at the start of play.
     pub(crate) fn city_owner(&self, hex_id: &HexId) -> Option<&SideId> {
         self.scenario

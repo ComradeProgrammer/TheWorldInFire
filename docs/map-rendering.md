@@ -54,7 +54,7 @@ Unit counters are generated at runtime with PixiJS primitives and text. NATO and
 - armour: a track outline;
 - mechanized infantry and motor rifle: the diagonals plus the track;
 - mobility modifiers on the bottom edge: a double canopy arc for airborne, a rotor "V" for airmobile/air assault, and a wave for marines (amphibious);
-- headquarters: an empty frame with a staff down from its lower-left corner;
+- headquarters: a frame labelled HQ with a staff down from its lower-left corner;
 - echelon marks above the frame: III for a regiment, X for a brigade, XX for a division.
 
 The symbol geometry lives in `src/map/unitSymbols.ts`, in the standard 200 × 200 symbol space. `render/unitLayer.ts` draws it with PixiJS, and `src/ui/UnitCounterIcon.tsx` renders the same counter as SVG for the unit detail view and the Battle Planner, so both always match. Combat values come from the active strength step in the Rust snapshot. Multiple units in one hex are offset as a stack and receive a numeric stack badge. No scanned or extracted counter image from the reference game is loaded by the frontend.

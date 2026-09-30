@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+use crate::engine::GameSnapshot;
 use crate::event::GameEvent;
 use crate::model::{AirPointKind, HexId, MovementMode, UnitId};
-use crate::state::GameSnapshot;
 
 /// A player or client request that may change the authoritative game state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -14,10 +14,12 @@ use crate::state::GameSnapshot;
 pub enum GameCommand {
     /// Finish the current interactive phase and advance the turn sequence.
     EndPhase,
-    /// Selects or replaces the unit that will receive this turn's resupply operation.
+    /// Adds or removes a stack from this turn's resupply operations.
     SetResupplyTarget {
-        /// Friendly combat unit identifying the stack, or `None` to cancel.
-        unit_id: Option<UnitId>,
+        /// Friendly combat unit identifying the stack.
+        unit_id: UnitId,
+        /// Whether the stack should be present in the plan.
+        selected: bool,
     },
     /// Adds or removes an enemy-occupied objective from the battle plan.
     SetAttackTarget {
@@ -34,6 +36,13 @@ pub enum GameCommand {
         destination: HexId,
         /// Movement system to use.
         mode: MovementMode,
+    },
+    /// Adds or removes a Reserve (NATO) or OMG (WP) Marker during Battle Planning (12.6).
+    SetReserve {
+        /// Friendly Maneuver unit.
+        unit_id: UnitId,
+        /// Whether the unit should carry the marker.
+        selected: bool,
     },
     /// Reverses the most recent movement order for one unit.
     UndoUnitMovement {

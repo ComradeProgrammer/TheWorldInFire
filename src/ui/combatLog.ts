@@ -22,14 +22,31 @@ function signed(value: number): string {
 }
 
 /**
- * Turns authoritative strike events into log lines. `units` must include units
+ * Turns authoritative combat, marker, and cleanup events into log lines. `units` must include units
  * eliminated by these events (pass the pre-command roster as well).
  */
 export function describeCombatEvents(events: GameEvent[], units: UnitState[], firstId: number): CombatLogEntry[] {
   const name = (id: string) => units.find((unit) => unit.id === id)?.name ?? id;
   const lines: Omit<CombatLogEntry, "id">[] = [];
+  // The phase whose automatic work produced the following events, if it started in this batch.
+  let phase: string | null = null;
   for (const event of events) {
     switch (event.type) {
+      case "phaseStarted":
+        phase = event.step.phaseId;
+        break;
+      case "reserveMarkersRemoved":
+        lines.push({
+          tone: "info",
+          text: `${sideLabel(event.sideId)} Reserve Phase ends: ${event.sideId === "nato" ? "Reserve" : "OMG"} markers removed from ${event.unitIds.map(name).join(", ")}`,
+        });
+        break;
+      case "breakthroughMarkersRemoved":
+        lines.push({ tone: "info", text: `Breakthrough markers removed from ${event.hexIds.join(", ")}` });
+        break;
+      case "airInterdictionZonesRemoved":
+        lines.push({ tone: "info", text: `${sideLabel(event.sideId)} Air Interdiction Zones lifted (${event.hexIds.join(", ")})` });
+        break;
       case "airStrikeResolved": {
         const { dieRoll, modifier, modifiedRoll, result } = event.resolution;
         lines.push({
@@ -83,6 +100,10 @@ export function describeCombatEvents(events: GameEvent[], units: UnitState[], fi
       case "unitDisruptionChanged":
         if (event.disruption) {
           lines.push({ tone: "hit", text: `${name(event.unitId)} ${event.disruption === "suppressed" ? "Suppressed" : "Disrupted"}` });
+        } else if (phase === "postBattle") {
+          lines.push({ tone: "info", text: `Post-Battle: ${name(event.unitId)} is no longer Suppressed` });
+        } else {
+          lines.push({ tone: "info", text: `Recovery: ${name(event.unitId)} is no longer Disrupted` });
         }
         break;
       case "breakthroughMarkerPlaced":

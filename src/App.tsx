@@ -4,6 +4,7 @@ import {
   fetchCombatOptions,
   fetchAttackTargetOptions,
   fetchMovementOptions,
+  fetchReserveOptions,
   loadInitialGame,
   submitGameCommand,
   type GameCommand,
@@ -13,6 +14,7 @@ import {
   type GameSnapshot,
   type MovementMode,
   type PhaseSnapshot,
+  type RuleRejection,
 } from "./gameApi";
 import { MapCanvas } from "./map/MapCanvas";
 import type { HexData, MapData } from "./map/mapTypes";
@@ -58,6 +60,11 @@ function phaseName(id: string): string {
   return PHASE_NAMES[id] ?? id;
 }
 
+/** Units carrying a Reserve/OMG Marker, for the counter tab. */
+function reserveMarkers(snapshot: GameSnapshot): ReadonlySet<string> {
+  return new Set(snapshot.battlePlan?.reserveUnitIds ?? []);
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "object" && error && "message" in error) return String(error.message);
@@ -81,6 +88,7 @@ function App() {
   const [modeChoice, setModeChoice] = useState<MovementMode | null>(null);
   const [movementStatus, setMovementStatus] = useState<MovementPreviewStatus>({ state: "loading" });
   const [attackTargets, setAttackTargets] = useState<ReadonlySet<string>>(new Set());
+  const [reserveOptions, setReserveOptions] = useState<ReadonlyMap<string, RuleRejection | null>>(new Map());
   const [strikeOptions, setStrikeOptions] = useState<AirStrikeOptionsResponse | null>(null);
   const [combatOptions, setCombatOptions] = useState<CombatOptionsResponse | null>(null);
   const [combatLog, setCombatLog] = useState<CombatLogEntry[]>([]);
@@ -141,10 +149,11 @@ function App() {
     };
   }, [snapshot, turnSequence]);
 
-  // The selected unit, when it belongs to the side currently planning.
+  // The selected unit, when it belongs to the side moving now: in Battle
+  // Planning, or in the Reserve Phase (where the core allows only marked units).
   const planningUnit = useMemo(() => {
     const step = snapshot?.turn.currentStep;
-    if (step?.phaseId !== "battlePlanning" || step.actor.type !== "side") return null;
+    if ((step?.phaseId !== "battlePlanning" && step?.phaseId !== "reserve") || step.actor.type !== "side") return null;
     const unit = snapshot?.units.find((candidate) => candidate.id === selectedUnitId);
     return unit && unit.sideId === step.actor.sideId ? unit : null;
   }, [snapshot, selectedUnitId]);
@@ -156,7 +165,7 @@ function App() {
       if (strikeOverlayRef.current) renderer.setStrikeOverlay(strikeOverlayRef.current);
       if (combatOverlayRef.current) renderer.setCombatOverlay(combatOverlayRef.current);
       if (!snapshot) return;
-      renderer.setUnits(snapshot.units);
+      renderer.setUnits(snapshot.units, reserveMarkers(snapshot));
       renderer.setBattlePlan(snapshot.battlePlan);
     },
     [snapshot],
@@ -195,7 +204,7 @@ function App() {
   const movementMode: MovementMode =
     modeChoice ??
     (movementStatus.state === "ready" && planningUnit
-      ? defaultMovementMode(planningUnit.id, snapshot?.battlePlan ?? null, movementStatus.modes)
+      ? defaultMovementMode(planningUnit.id, snapshot?.reserve?.movements ?? snapshot?.battlePlan?.movements ?? [], movementStatus.modes)
       : "tactical");
 
   useEffect(() => {
@@ -219,6 +228,24 @@ function App() {
     fetchAttackTargetOptions().then(
       (response) => {
         if (active && response.revision === revision) setAttackTargets(new Set(response.hexIds));
+      },
+      () => {},
+    );
+    return () => {
+      active = false;
+    };
+  }, [planningPhase, revision]);
+
+  // Reserve/OMG eligibility for every planning-side unit, from the core.
+  useEffect(() => {
+    setReserveOptions(new Map());
+    if (!planningPhase || revision === undefined) return;
+    let active = true;
+    fetchReserveOptions().then(
+      (response) => {
+        if (active && response.revision === revision) {
+          setReserveOptions(new Map(response.units.map((entry) => [entry.unitId, entry.unavailable])));
+        }
       },
       () => {},
     );
@@ -327,7 +354,7 @@ function App() {
 
   useEffect(() => {
     if (snapshot) {
-      rendererRef.current?.setUnits(snapshot.units);
+      rendererRef.current?.setUnits(snapshot.units, reserveMarkers(snapshot));
       rendererRef.current?.setBattlePlan(snapshot.battlePlan);
     }
   }, [snapshot]);
@@ -341,7 +368,7 @@ function App() {
       // Units eliminated by these events are only in the previous roster.
       const roster = [...response.snapshot.units, ...snapshot.units];
       setCombatLog((log) => [...log, ...describeCombatEvents(response.events, roster, (log.length > 0 ? log[log.length - 1].id : 0) + 1)]);
-      rendererRef.current?.setUnits(response.snapshot.units);
+      rendererRef.current?.setUnits(response.snapshot.units, reserveMarkers(response.snapshot));
       rendererRef.current?.setBattlePlan(response.snapshot.battlePlan);
       setCommandNotice(null);
       const arrivals = response.events.flatMap((event) =>
@@ -461,6 +488,8 @@ function App() {
           onSelectUnit={setSelectedUnitId}
           onPlanningCommand={(command) => void submitCommand(command)}
           onOpenBattle={setBattleHexId}
+          reserveOptions={reserveOptions}
+          reserve={snapshot.reserve}
         />
       )}
       {snapshot?.combat && map && combat && plannerHexId && (
@@ -483,6 +512,7 @@ function App() {
         plan={snapshot?.battlePlan ?? null}
         strikePlan={snapshot?.strikePlan ?? null}
         battles={snapshot?.combat?.battles ?? []}
+        reserve={snapshot?.reserve ?? null}
         units={[...roster.values()]}
         combatLog={combatLog}
         collapsed={logCollapsed}

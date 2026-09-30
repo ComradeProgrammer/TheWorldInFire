@@ -16,7 +16,7 @@ import { CITY_KIND_NAMES, TERRAIN_NAMES } from "../map/mapData";
 import type { HexData, MapData } from "../map/mapTypes";
 import { COLORS } from "../map/render/style";
 import { sideName } from "./unitFormat";
-import { UnitSymbolPaths } from "./UnitCounterIcon";
+import { UnitCounterIcon } from "./UnitCounterIcon";
 
 const MODIFIER_LABELS: Record<StrengthModifier, string> = {
   disrupted: "Disrupted ½",
@@ -61,7 +61,30 @@ function hexOf(unit: UnitState | undefined): string | null {
 
 // ------------------------------------------------------------------ mini-map
 
-/** The Objective hex and its six neighbours, with a chip for every unit in them. */
+/** Counter size (in hex half-widths) and columns for `count` units side by side in one hex. */
+function counterGrid(count: number): { size: number; columns: number } {
+  if (count <= 1) return { size: 0.95, columns: 1 };
+  if (count <= 4) return { size: 0.74, columns: 2 };
+  return { size: 0.56, columns: 3 };
+}
+
+function boundsOf(points: number[]) {
+  let [minX, minY, maxX, maxY] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < points.length; i += 2) {
+    minX = Math.min(minX, points[i]);
+    maxX = Math.max(maxX, points[i]);
+    minY = Math.min(minY, points[i + 1]);
+    maxY = Math.max(maxY, points[i + 1]);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+const polyline = (points: number[]) => `M${points.slice(0, 2).join(",")}L${points.slice(2).join(",")}`;
+
+/**
+ * The Objective hex and its six neighbours, drawn like the main map (terrain,
+ * water, city outlines, rivers) with every unit in them as its counter.
+ */
 function BattleMiniMap({ map, centerId, units, attackerSideId, activeIds }: {
   map: MapData;
   centerId: string;
@@ -78,113 +101,118 @@ function BattleMiniMap({ map, centerId, units, attackerSideId, activeIds }: {
     const around = neighborCoords(center.row, center.col).map(({ row, col }) => byId.get(toHexId(row, col)));
     return [center, ...around].filter((hex): hex is HexData => Boolean(hex));
   }, [centerId, map.hexes]);
-  const clusterIds = useMemo(() => new Set(cluster.map((hex) => hex.id)), [cluster]);
-  const rivers = useMemo(
-    () => map.hexsides.filter((side) =>
-      clusterIds.has(side.a) && clusterIds.has(side.b)
-      && side.features.some((feature) => feature === "majorRiver" || feature === "minorRiver")),
-    [clusterIds, map.hexsides],
-  );
+
+  // Map features that reach into the cluster, clipped to it when drawn.
+  const features = useMemo(() => {
+    const box = boundsOf(cluster.flatMap((hex) => grid.corners(hex.row, hex.col)));
+    const touches = (points: number[]) => {
+      const b = boundsOf(points);
+      return b.maxX >= box.minX && b.minX <= box.maxX && b.maxY >= box.minY && b.minY <= box.maxY;
+    };
+    return {
+      box,
+      water: map.water.filter((water) => touches(water.outer)),
+      cities: map.cities.filter((city) => touches(city.points)),
+      rivers: map.lines.filter((line) => (line.kind === "majorRiver" || line.kind === "minorRiver") && touches(line.points)),
+      coast: map.lines.filter((line) => line.kind === "coast" && touches(line.points)),
+    };
+  }, [cluster, grid, map.cities, map.lines, map.water]);
 
   if (cluster.length === 0) return null;
   const hw = grid.halfWidth;
   const ry = grid.radiusY;
-  const xs: number[] = [];
-  const ys: number[] = [];
-  for (const hex of cluster) {
-    const corners = grid.corners(hex.row, hex.col);
-    for (let i = 0; i < corners.length; i += 2) {
-      xs.push(corners[i]);
-      ys.push(corners[i + 1]);
-    }
-  }
-  const pad = hw * 0.12;
-  const minX = Math.min(...xs) - pad;
-  const minY = Math.min(...ys) - pad;
-  const viewBox = `${minX} ${minY} ${Math.max(...xs) + pad - minX} ${Math.max(...ys) + pad - minY}`;
+  const pad = hw * 0.1;
+  const { box } = features;
+  const viewBox = `${box.minX - pad} ${box.minY - pad} ${box.maxX - box.minX + 2 * pad} ${box.maxY - box.minY + 2 * pad}`;
   const points = (values: number[]) => values.join(" ");
-
-  const chipW = hw * 0.46;
-  const chipH = hw * 0.34;
-  const gap = hw * 0.06;
+  const clipId = `battle-minimap-clip-${centerId}`;
+  const center = cluster[0];
 
   return (
     <svg className="battle-minimap" viewBox={viewBox} role="img" aria-label={`Hex ${centerId} and its neighbours`}>
+      <defs>
+        <clipPath id={clipId}>
+          {cluster.map((hex) => <polygon key={hex.id} points={points(grid.corners(hex.row, hex.col))} />)}
+        </clipPath>
+      </defs>
+      <g clipPath={`url(#${clipId})`}>
+        {cluster.map((hex) => (
+          <polygon key={hex.id} points={points(grid.corners(hex.row, hex.col))} fill={cssColor(COLORS[hex.terrain])} />
+        ))}
+        {features.water.map((water, index) => (
+          <path
+            key={index}
+            d={[water.outer, ...(water.holes ?? [])].map((ring) => `${polyline(ring)}Z`).join(" ")}
+            fill={cssColor(COLORS.sea)}
+            fillRule="evenodd"
+          />
+        ))}
+        {features.coast.map((line, index) => (
+          <path key={index} d={polyline(line.points)} fill="none" stroke={cssColor(COLORS.coast)} strokeWidth={2.5} strokeOpacity={0.9} />
+        ))}
+        {features.cities.map((city, index) => (
+          <polygon
+            key={index}
+            points={points(city.points)}
+            fill={cssColor(COLORS[`${city.kind}City`])}
+            stroke={cssColor(COLORS[`${city.kind}CityEdge`])}
+            strokeWidth={1.8}
+          />
+        ))}
+        {features.rivers.map((line, index) => {
+          const major = line.kind === "majorRiver";
+          return (
+            <path
+              key={index}
+              d={polyline(line.points)}
+              fill="none"
+              stroke={cssColor(major ? COLORS.majorRiver : COLORS.minorRiver)}
+              strokeWidth={major ? 8 : 3.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          );
+        })}
+      </g>
       {cluster.map((hex) => {
         const { x, y } = grid.center(hex.row, hex.col);
-        const fill = hex.city
-          ? cssColor(COLORS[`${hex.city.kind}City`])
-          : cssColor(COLORS[hex.terrain]);
-        const here = units.filter((unit) => hexOf(unit) === hex.id);
-        const perRow = Math.min(here.length, 3);
-        const rows = Math.ceil(here.length / 3);
-        const top = y - (rows * chipH + (rows - 1) * gap) / 2 + hw * 0.12;
         return (
           <g key={hex.id}>
-            <polygon points={points(grid.corners(hex.row, hex.col))} fill={fill} stroke="#5fb7d6" strokeOpacity={0.5} strokeWidth={hw * 0.03} />
-            <text x={x} y={y - ry * 0.6} className="minimap-hex-id" fontSize={hw * 0.2}>{hex.id}</text>
+            <polygon points={points(grid.corners(hex.row, hex.col))} fill="none" stroke={cssColor(COLORS.grid)} strokeOpacity={0.55} strokeWidth={2} />
+            <text x={x} y={y - ry * 0.7} className="minimap-hex-id" fontSize={hw * 0.2}>{hex.id}</text>
             {(hex.city?.name ?? hex.town) && (
-              <text x={x} y={y + ry * 0.74} className="minimap-place" fontSize={hw * 0.16}>{hex.city?.name ?? hex.town}</text>
+              <text x={x} y={y + ry * 0.78} className="minimap-place" fontSize={hw * 0.17}>{hex.city?.name ?? hex.town}</text>
             )}
-            {here.map((unit, index) => {
-              const rowIndex = Math.floor(index / 3);
-              const inRow = rowIndex === rows - 1 ? here.length - rowIndex * 3 : perRow;
-              const left = x - (inRow * chipW + (inRow - 1) * gap) / 2 + (index % 3) * (chipW + gap);
-              const chipTop = top + rowIndex * (chipH + gap);
-              const dim = unit.sideId === attackerSideId && !activeIds.has(unit.id);
-              return (
-                <g key={unit.id} opacity={dim ? 0.45 : 1}>
-                  <rect
-                    data-chip={unit.id}
-                    x={left}
-                    y={chipTop}
-                    width={chipW}
-                    height={chipH}
-                    rx={hw * 0.04}
-                    fill={SIDE_COLORS[tone(unit.sideId)]}
-                    stroke="#05080c"
-                    strokeWidth={hw * 0.025}
-                  />
-                  <svg x={left} y={chipTop} width={chipW} height={chipH} viewBox="10 36 180 128" overflow="visible">
-                    <UnitSymbolPaths unit={unit} ink="#05080c" strokeScale={4} echelon={false} />
-                  </svg>
-                </g>
-              );
-            })}
           </g>
         );
       })}
-      {rivers.map((side) => {
-        const a = cluster.find((hex) => hex.id === side.a)!;
-        const b = cluster.find((hex) => hex.id === side.b)!;
-        const edge = grid.sharedSide(a, b);
-        if (!edge) return null;
-        const major = side.features.includes("majorRiver");
-        return (
-          <line
-            key={`${side.a}-${side.b}`}
-            x1={edge[0]}
-            y1={edge[1]}
-            x2={edge[2]}
-            y2={edge[3]}
-            stroke={cssColor(major ? COLORS.majorRiver : COLORS.minorRiver)}
-            strokeWidth={hw * (major ? 0.1 : 0.06)}
-            strokeLinecap="round"
-          />
-        );
+      <polygon
+        points={points(grid.corners(center.row, center.col, 0.95))}
+        fill="none"
+        stroke="#ff3b30"
+        strokeWidth={hw * 0.07}
+        strokeLinejoin="round"
+      />
+      {cluster.map((hex) => {
+        const { x, y } = grid.center(hex.row, hex.col);
+        const here = units.filter((unit) => hexOf(unit) === hex.id);
+        const { size: relative, columns } = counterGrid(here.length);
+        const size = hw * relative;
+        const gap = hw * 0.05;
+        const rows = Math.ceil(here.length / columns);
+        const top = y - (rows * size + (rows - 1) * gap) / 2 + ry * 0.03;
+        return here.map((unit, index) => {
+          const row = Math.floor(index / columns);
+          const inRow = Math.min(columns, here.length - row * columns);
+          const left = x - (inRow * size + (inRow - 1) * gap) / 2 + (index % columns) * (size + gap);
+          const dim = unit.sideId === attackerSideId && !activeIds.has(unit.id);
+          return (
+            <g key={unit.id} data-chip={unit.id} opacity={dim ? 0.45 : 1}>
+              <UnitCounterIcon unit={unit} size={size} x={left} y={top + row * (size + gap)} />
+            </g>
+          );
+        });
       })}
-      {(() => {
-        const center = cluster[0];
-        return (
-          <polygon
-            points={points(grid.corners(center.row, center.col, 0.94))}
-            fill="none"
-            stroke="#ff3b30"
-            strokeWidth={hw * 0.07}
-            strokeLinejoin="round"
-          />
-        );
-      })()}
     </svg>
   );
 }
@@ -302,10 +330,15 @@ function measureLinks(body: HTMLElement): Link[] {
     const right = row.dataset.anchor === "right";
     const x = (right ? r.right : r.left) - origin.left;
     const elbow = right ? x + 14 : x - 14;
-    const end = { x: c.left + c.width / 2 - origin.left, y: c.top + c.height / 2 - origin.top };
+    // Stop at the counter's nearest edge so the line never covers its face.
+    const rowY = y - origin.top;
+    const end = {
+      x: Math.min(Math.max(elbow, c.left - origin.left), c.right - origin.left),
+      y: Math.min(Math.max(rowY, c.top - origin.top), c.bottom - origin.top),
+    };
     links.push({
       key: `${row.dataset.anchor}:${row.dataset.link}`,
-      points: `${x},${y - origin.top} ${elbow},${y - origin.top} ${end.x},${end.y}`,
+      points: `${x},${rowY} ${elbow},${rowY} ${end.x},${end.y}`,
       end,
       side: row.dataset.side === "nato" ? "nato" : "pact",
       active: row.dataset.active === "1",

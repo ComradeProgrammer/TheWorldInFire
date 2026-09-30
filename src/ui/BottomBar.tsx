@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { AirMission, BattlePlan, BattleReport, MovementMode, StrikePlan, UnitState } from "../gameApi";
+import type { AirMission, BattlePlan, BattleReport, MovementMode, ReserveState, StrikePlan, UnitState } from "../gameApi";
 import type { CombatLogEntry } from "./combatLog";
 
 function unitName(units: UnitState[], id: string): string {
@@ -34,24 +34,29 @@ function battleText(battle: BattleReport, units: UnitState[]): string {
   return `${battle.hexId} · ${battle.odds?.finalOdds ?? ""} · rolled ${battle.dieRoll} → ${battle.result.code} · ${attackers}`;
 }
 
-export function BottomBar({ plan, strikePlan, battles, units, combatLog, collapsed, onToggleCollapsed }: {
+export function BottomBar({ plan, strikePlan, battles, reserve, units, combatLog, collapsed, onToggleCollapsed }: {
   plan: BattlePlan | null;
   strikePlan: StrikePlan | null;
   battles: BattleReport[];
+  /** Reserve Phase movement, while that phase is active. */
+  reserve: ReserveState | null;
   units: UnitState[];
   combatLog: CombatLogEntry[];
   collapsed: boolean;
   onToggleCollapsed(): void;
 }) {
   const orderCount = plan
-    ? (plan.resupplyTargetUnitId ? 1 : 0)
+    ? plan.resupplyTargetUnitIds.length
       + plan.attackTargets.length
       + plan.movements.length
       + plan.entrainingUnitIds.length
       + plan.detrainedUnitIds.length
+      + plan.reserveUnitIds.length
       + (strikePlan?.missions.length ?? 0)
       + battles.length
+      + (reserve?.movements.length ?? 0)
     : 0;
+  const reserveLabel = plan?.sideId === "nato" ? "Reserve" : "OMG";
   const logRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const body = logRef.current;
@@ -73,7 +78,7 @@ export function BottomBar({ plan, strikePlan, battles, units, combatLog, collaps
           <div className="readonly-log-body">
             {!plan && <p className="empty">No active battle plan.</p>}
             {plan && orderCount === 0 && <p className="empty">No orders have been added yet.</p>}
-            {plan?.resupplyTargetUnitId && <p><b>Resupply</b><span>{unitName(units, plan.resupplyTargetUnitId)}</span></p>}
+            {plan?.resupplyTargetUnitIds.map((id) => <p key={`resupply-${id}`}><b>Resupply</b><span>{unitName(units, id)}</span></p>)}
             {plan?.attackTargets.map((hex) => <p key={`attack-${hex}`}><b>Attack</b><span>Objective hex {hex}</span></p>)}
             {plan?.movements.map((movement, index) => (
               <p key={`${movement.unitId}-${index}`}>
@@ -83,6 +88,7 @@ export function BottomBar({ plan, strikePlan, battles, units, combatLog, collaps
             ))}
             {plan?.entrainingUnitIds.map((id) => <p key={`entrain-${id}`}><b>Entrain</b><span>{unitName(units, id)}</span></p>)}
             {plan?.detrainedUnitIds.map((id) => <p key={`detrain-${id}`}><b>Detrain</b><span>{unitName(units, id)}</span></p>)}
+            {plan?.reserveUnitIds.map((id) => <p key={`reserve-${id}`}><b>{reserveLabel}</b><span>{unitName(units, id)}</span></p>)}
             {battles.map((battle) => (
               <p key={`battle-${battle.id}`}>
                 <b>Battle</b>
@@ -93,6 +99,12 @@ export function BottomBar({ plan, strikePlan, battles, units, combatLog, collaps
               <p key={`mission-${mission.id}`}>
                 <b>{mission.kind.type === "strike" ? "Strike" : "Interdict"}</b>
                 <span>{missionText(mission, units)}</span>
+              </p>
+            ))}
+            {reserve?.movements.map((movement, index) => (
+              <p key={`reserve-move-${movement.unitId}-${index}`}>
+                <b>{reserveLabel} move</b>
+                <span>{unitName(units, movement.unitId)} · {fromLabel(movement)} → {movement.to}</span>
               </p>
             ))}
           </div>

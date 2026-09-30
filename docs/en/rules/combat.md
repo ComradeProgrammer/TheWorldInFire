@@ -16,6 +16,7 @@ Any friendly Maneuver unit adjacent to the Objective hex may attack, except:
 
 - HQs, which never attack;
 - units under a train marker;
+- units in reserve (see [Reserves](reserve.md));
 - units that would attack across a Blocked or All-Sea hexside or the Danish Ferry.
 
 Units with an Attack Strength of 0 may join an attack but never attack alone.

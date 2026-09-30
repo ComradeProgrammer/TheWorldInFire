@@ -6,7 +6,7 @@
 use std::io::{self, BufRead, Write};
 
 use ooaw_core::{
-    find_scenario, GameCommand, GameEvent, GameId, GameSnapshot, GameState, MapDefinition,
+    find_scenario, GameCommand, GameEngine, GameEvent, GameId, GameSnapshot, MapDefinition,
     ScenarioSummary,
 };
 use serde::{Deserialize, Serialize};
@@ -69,7 +69,7 @@ impl EngineResponse {
 
 #[derive(Default)]
 struct EngineSession {
-    game: Option<GameState>,
+    game: Option<GameEngine>,
 }
 
 impl EngineSession {
@@ -88,7 +88,7 @@ impl EngineSession {
                         format!("Unknown scenario: {scenario_id}"),
                     );
                 };
-                match GameState::new(GameId(game_id), scenario) {
+                match GameEngine::new(GameId(game_id), scenario) {
                     Ok(game) => {
                         let response = EngineResponse::GameStarted {
                             snapshot: game.snapshot(),

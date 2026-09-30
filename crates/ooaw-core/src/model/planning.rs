@@ -79,8 +79,8 @@ pub struct BattlePlan {
     pub game_turn: u16,
     /// Side that owns the plan.
     pub side_id: SideId,
-    /// Unit selected to receive the single resupply operation, if any.
-    pub resupply_target_unit_id: Option<UnitId>,
+    /// Units identifying the stacks selected for resupply operations.
+    pub resupply_target_unit_ids: Vec<UnitId>,
     /// Enemy-occupied objective hexes selected for later combat.
     pub attack_targets: Vec<HexId>,
     /// Movement orders already executed during planning.
@@ -91,6 +91,31 @@ pub struct BattlePlan {
     pub detrained_unit_ids: Vec<UnitId>,
     /// Airlift capacity already consumed by this plan.
     pub airlift_steps_used: u16,
+    /// Maneuver units marked with a Reserve (NATO) or OMG (WP) Marker (12.6).
+    #[serde(default)]
+    pub reserve_unit_ids: Vec<UnitId>,
+}
+
+/// The acting side's Reserve Phase (28.2): marked units and their movement.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReserveState {
+    /// Side moving its reserves.
+    pub side_id: SideId,
+    /// Units under a Reserve/OMG Marker that may move in this phase.
+    pub unit_ids: Vec<UnitId>,
+    /// Movement orders executed during this phase.
+    pub movements: Vec<PlannedMovement>,
+}
+
+/// Whether one friendly unit may receive a Reserve/OMG Marker now (12.6).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReserveOption {
+    /// Unit.
+    pub unit_id: UnitId,
+    /// Why the unit cannot be marked, if it cannot.
+    pub unavailable: Option<RuleError>,
 }
 
 impl BattlePlan {
@@ -99,28 +124,37 @@ impl BattlePlan {
         Self {
             game_turn,
             side_id,
-            resupply_target_unit_id: None,
+            resupply_target_unit_ids: Vec::new(),
             attack_targets: Vec::new(),
             movements: Vec::new(),
             entraining_unit_ids: Vec::new(),
             detrained_unit_ids: Vec::new(),
             airlift_steps_used: 0,
+            reserve_unit_ids: Vec::new(),
         }
     }
+}
 
-    /// Returns the movement already spent by a unit in the indicated mode.
-    pub(crate) fn movement_spent(&self, unit_id: &UnitId, mode: MovementMode) -> u16 {
-        self.movements
-            .iter()
-            .filter(|movement| movement.unit_id == *unit_id && movement.mode == mode)
-            .map(|movement| movement.cost)
-            .sum()
-    }
+/// Returns the movement already spent by a unit in the indicated mode.
+pub(crate) fn movement_spent(
+    movements: &[PlannedMovement],
+    unit_id: &UnitId,
+    mode: MovementMode,
+) -> u16 {
+    movements
+        .iter()
+        .filter(|movement| movement.unit_id == *unit_id && movement.mode == mode)
+        .map(|movement| movement.cost)
+        .sum()
+}
 
-    /// Returns whether the unit has already used a different movement system.
-    pub(crate) fn has_incompatible_movement(&self, unit_id: &UnitId, mode: MovementMode) -> bool {
-        self.movements
-            .iter()
-            .any(|movement| movement.unit_id == *unit_id && movement.mode != mode)
-    }
+/// Returns whether the unit has already used a different movement system.
+pub(crate) fn has_incompatible_movement(
+    movements: &[PlannedMovement],
+    unit_id: &UnitId,
+    mode: MovementMode,
+) -> bool {
+    movements
+        .iter()
+        .any(|movement| movement.unit_id == *unit_id && movement.mode != mode)
 }

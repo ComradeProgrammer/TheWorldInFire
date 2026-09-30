@@ -1,8 +1,8 @@
+use crate::engine::GameEngine;
 use crate::event::{GameEvent, UnitSupplyCheck};
 use crate::model::{PhaseActor, UnitLocation};
-use crate::state::GameState;
 
-impl GameState {
+impl GameEngine {
     pub(super) fn on_phase_started(&mut self, events: &mut Vec<GameEvent>) {
         let Some(phase_id) = self.current_step().map(|step| step.phase_id.0.clone()) else {
             return;
@@ -107,7 +107,9 @@ impl GameState {
         self.start_combat();
     }
 
-    fn resolve_reserve(&mut self, _events: &mut Vec<GameEvent>) {}
+    fn resolve_reserve(&mut self, _events: &mut Vec<GameEvent>) {
+        self.start_reserve();
+    }
 
     fn resolve_post_battle(&mut self, events: &mut Vec<GameEvent>) {
         self.remove_suppression(events);

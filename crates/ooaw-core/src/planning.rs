@@ -1,53 +1,66 @@
+use crate::engine::GameEngine;
 use crate::error::RuleError;
 use crate::event::GameEvent;
 use crate::model::{
     Airspace, BattlePlan, HexId, MovementMode, PhaseActor, PlannedMovement, SideId, SupplyStatus,
     TrainStatus, UnitId, UnitLocation, UnitState,
 };
-use crate::state::GameState;
+use crate::reserve::MovementPhase;
 
-impl GameState {
+impl GameEngine {
     pub(super) fn set_resupply_target(
         &mut self,
-        unit_id: Option<UnitId>,
+        unit_id: UnitId,
+        selected: bool,
     ) -> Result<Vec<GameEvent>, RuleError> {
         let side_id = self.battle_planning_side()?;
-        let Some(unit_id) = unit_id else {
-            self.active_plan_mut()?.resupply_target_unit_id = None;
-            return Ok(vec![GameEvent::ResupplyTargetSet {
-                side_id,
-                unit_id: None,
-            }]);
-        };
-        let unit = self.owned_unit(&unit_id, &side_id)?;
-        if unit.is_headquarters() {
-            return Err(RuleError::new(
-                "invalidResupplyTarget",
-                "Resupply operations may target combat units, not headquarters",
-            ));
-        }
-        if !matches!(unit.location, UnitLocation::Hex { .. }) {
-            return Err(RuleError::new(
-                "invalidResupplyTarget",
-                "The resupply target must be on the map",
-            ));
-        }
-        if self
-            .scenario
-            .battle_planning_rules
-            .resupply_operations_per_turn
-            == 0
-        {
-            return Err(RuleError::new(
-                "resupplyUnavailable",
-                "This scenario does not provide a resupply operation",
-            ));
+        if selected {
+            let unit = self.owned_unit(&unit_id, &side_id)?;
+            if unit.is_headquarters() {
+                return Err(RuleError::new(
+                    "invalidResupplyTarget",
+                    "Resupply operations may target combat units, not headquarters",
+                ));
+            }
+            if !matches!(unit.location, UnitLocation::Hex { .. }) {
+                return Err(RuleError::new(
+                    "invalidResupplyTarget",
+                    "The resupply target must be on the map",
+                ));
+            }
+
+            let limit = usize::from(
+                self.scenario
+                    .battle_planning_rules
+                    .resupply_operations_per_turn,
+            );
+            if limit == 0 {
+                return Err(RuleError::new(
+                    "resupplyUnavailable",
+                    "This scenario does not provide a resupply operation",
+                ));
+            }
+
+            let targets = &mut self.active_plan_mut()?.resupply_target_unit_ids;
+            if !targets.contains(&unit_id) {
+                if targets.len() >= limit {
+                    return Err(RuleError::new(
+                        "resupplyLimitReached",
+                        format!("This plan allows at most {limit} resupply operations"),
+                    ));
+                }
+                targets.push(unit_id.clone());
+            }
+        } else {
+            self.active_plan_mut()?
+                .resupply_target_unit_ids
+                .retain(|target| target != &unit_id);
         }
 
-        self.active_plan_mut()?.resupply_target_unit_id = Some(unit_id.clone());
         Ok(vec![GameEvent::ResupplyTargetSet {
             side_id,
-            unit_id: Some(unit_id),
+            unit_id,
+            selected,
         }])
     }
 
@@ -115,9 +128,9 @@ impl GameState {
         destination: HexId,
         mode: MovementMode,
     ) -> Result<Vec<GameEvent>, RuleError> {
-        let side_id = self.battle_planning_side()?;
+        let (side_id, phase) = self.movement_phase()?;
         let unit = self.owned_unit(&unit_id, &side_id)?.clone();
-        let (path, cost) = self.plan_movement(&side_id, &unit, &destination, mode)?;
+        let (path, cost) = self.plan_movement(&side_id, &unit, &destination, mode, phase)?;
         let from = unit.location.clone();
 
         self.units
@@ -142,14 +155,13 @@ impl GameState {
             path: path.clone(),
             city_control_changes,
         };
-        let plan = self.active_plan_mut()?;
         if mode == MovementMode::AirTransport {
-            plan.airlift_steps_used += unit.step_count();
+            self.active_plan_mut()?.airlift_steps_used += unit.step_count();
         }
-        plan.movements.push(movement);
+        self.phase_movements_mut(phase)?.push(movement);
 
         let mut events = vec![GameEvent::UnitMoved {
-            unit_id,
+            unit_id: unit_id.clone(),
             from,
             to: destination,
             mode,
@@ -157,6 +169,9 @@ impl GameState {
             path,
         }];
         events.extend(city_events);
+        if phase == MovementPhase::Planning {
+            self.recheck_reserve(&unit_id, &mut events);
+        }
         Ok(events)
     }
 
@@ -230,10 +245,12 @@ impl GameState {
         if !plan.entraining_unit_ids.contains(&unit_id) {
             plan.entraining_unit_ids.push(unit_id.clone());
         }
-        Ok(vec![GameEvent::TrainStatusChanged {
-            unit_id,
+        let mut events = vec![GameEvent::TrainStatusChanged {
+            unit_id: unit_id.clone(),
             status: Some(TrainStatus::Entraining),
-        }])
+        }];
+        self.recheck_reserve(&unit_id, &mut events);
+        Ok(events)
     }
 
     pub(super) fn detrain_unit(&mut self, unit_id: UnitId) -> Result<Vec<GameEvent>, RuleError> {
@@ -307,11 +324,10 @@ impl GameState {
         &mut self,
         unit_id: UnitId,
     ) -> Result<Vec<GameEvent>, RuleError> {
-        let side_id = self.battle_planning_side()?;
+        let (side_id, phase) = self.movement_phase()?;
         let unit = self.owned_unit(&unit_id, &side_id)?.clone();
         let movement_index = self
-            .active_plan()?
-            .movements
+            .phase_movements(phase)?
             .iter()
             .rposition(|movement| movement.unit_id == unit_id)
             .ok_or_else(|| {
@@ -320,7 +336,7 @@ impl GameState {
                     "This unit has no movement order to undo",
                 )
             })?;
-        let movement = self.active_plan()?.movements[movement_index].clone();
+        let movement = self.phase_movements(phase)?[movement_index].clone();
         if !matches!(&unit.location, UnitLocation::Hex { hex_id } if hex_id == &movement.to) {
             return Err(RuleError::new(
                 "movementUndoConflict",
@@ -335,9 +351,9 @@ impl GameState {
             .get_mut(&unit_id)
             .expect("validated unit exists")
             .location = movement.from.clone();
-        let plan = self.active_plan_mut()?;
-        plan.movements.remove(movement_index);
+        self.phase_movements_mut(phase)?.remove(movement_index);
         if movement.mode == MovementMode::AirTransport {
+            let plan = self.active_plan_mut()?;
             plan.airlift_steps_used = plan.airlift_steps_used.saturating_sub(unit.step_count());
         }
         let mut city_events = Vec::new();
@@ -347,6 +363,9 @@ impl GameState {
             movement,
         }];
         events.extend(city_events);
+        if phase == MovementPhase::Planning {
+            self.recheck_reserve(&unit_id, &mut events);
+        }
         Ok(events)
     }
 
@@ -395,24 +414,33 @@ impl GameState {
         let Some(plan) = &self.battle_plan else {
             return;
         };
-        let Some(target_id) = &plan.resupply_target_unit_id else {
-            return;
-        };
-        let Some(UnitLocation::Hex { hex_id }) =
-            self.units.get(target_id).map(|unit| unit.location.clone())
-        else {
-            return;
-        };
-        let mut unit_ids = Vec::new();
-        for unit in self.units.values_mut().filter(|unit| {
-            unit.definition.side_id == plan.side_id
-                && !unit.is_headquarters()
-                && matches!(&unit.location, UnitLocation::Hex { hex_id: occupied } if occupied == &hex_id)
-        }) {
-            unit.mark_fully_supplied();
-            unit_ids.push(unit.id().clone());
+        let side_id = plan.side_id.clone();
+        let target_ids = plan.resupply_target_unit_ids.clone();
+        let mut resupplied_hex_ids = Vec::new();
+        for target_id in target_ids {
+            let Some(UnitLocation::Hex { hex_id }) =
+                self.units.get(&target_id).map(|unit| unit.location.clone())
+            else {
+                continue;
+            };
+            // Two selected units may have moved into the same stack. Applying
+            // resupply once is sufficient and avoids duplicate events.
+            if resupplied_hex_ids.contains(&hex_id) {
+                continue;
+            }
+            resupplied_hex_ids.push(hex_id.clone());
+
+            let mut unit_ids = Vec::new();
+            for unit in self.units.values_mut().filter(|unit| {
+                unit.definition.side_id == side_id
+                    && !unit.is_headquarters()
+                    && matches!(&unit.location, UnitLocation::Hex { hex_id: occupied } if occupied == &hex_id)
+            }) {
+                unit.mark_fully_supplied();
+                unit_ids.push(unit.id().clone());
+            }
+            events.push(GameEvent::UnitsResupplied { hex_id, unit_ids });
         }
-        events.push(GameEvent::UnitsResupplied { hex_id, unit_ids });
     }
 
     pub(crate) fn battle_planning_side(&self) -> Result<SideId, RuleError> {

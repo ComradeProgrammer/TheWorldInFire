@@ -1,15 +1,16 @@
 use std::sync::Mutex;
 
 use ooaw_core::{
-    find_scenario, AirStrikeOptions, BattleOdds, CombatOptions, GameCommand, GameId, GameSnapshot, GameState, HexId, MapDefinition,
-    MovementModeOptions, PhaseDefinition, RuleError, ScenarioSummary, UnitId,
+    find_scenario, AirStrikeOptions, BattleOdds, CombatOptions, GameCommand, GameEngine, GameId,
+    GameSnapshot, HexId, MapDefinition,
+    MovementModeOptions, PhaseDefinition, ReserveOption, RuleError, ScenarioSummary, UnitId,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
 #[derive(Default)]
 struct AppState {
-    game: Mutex<Option<GameState>>,
+    game: Mutex<Option<GameEngine>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -73,7 +74,7 @@ fn new_game(scenario_id: String, state: State<'_, AppState>) -> Result<NewGameRe
             format!("Unknown scenario: {scenario_id}"),
         )
     })?;
-    let game = GameState::new(GameId(uuid::Uuid::new_v4().to_string()), scenario)?;
+    let game = GameEngine::new(GameId(uuid::Uuid::new_v4().to_string()), scenario)?;
     let snapshot = game.snapshot();
     let map = game.map().clone();
     let turn_sequence = game.turn_sequence().to_vec();
@@ -97,7 +98,7 @@ fn get_game_snapshot(state: State<'_, AppState>) -> Result<GameSnapshot, ApiErro
         .map_err(|_| ApiError::new("sessionUnavailable", "Game session lock is poisoned"))?;
     session
         .as_ref()
-        .map(GameState::snapshot)
+        .map(GameEngine::snapshot)
         .ok_or_else(|| ApiError::new("gameNotStarted", "No game has been started"))
 }
 
@@ -154,7 +155,7 @@ struct AttackTargetOptionsResponse {
 
 fn with_game<T>(
     state: &State<'_, AppState>,
-    read: impl FnOnce(&GameState) -> Result<T, RuleError>,
+    read: impl FnOnce(&GameEngine) -> Result<T, RuleError>,
 ) -> Result<T, ApiError> {
     let session = state
         .game
@@ -189,6 +190,24 @@ fn attack_target_options(state: State<'_, AppState>) -> Result<AttackTargetOptio
         Ok(AttackTargetOptionsResponse {
             revision: game.snapshot().revision,
             hex_ids: game.attack_target_options()?,
+        })
+    })
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReserveOptionsResponse {
+    revision: u64,
+    units: Vec<ReserveOption>,
+}
+
+/// Read-only preview of which planning-side units may take a Reserve/OMG Marker.
+#[tauri::command]
+fn reserve_options(state: State<'_, AppState>) -> Result<ReserveOptionsResponse, ApiError> {
+    with_game(&state, |game| {
+        Ok(ReserveOptionsResponse {
+            revision: game.snapshot().revision,
+            units: game.reserve_options()?,
         })
     })
 }
@@ -279,6 +298,7 @@ pub fn run() {
             submit_game_command,
             movement_options,
             attack_target_options,
+            reserve_options,
             air_strike_options,
             combat_options,
             battle_preview

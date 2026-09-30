@@ -59,12 +59,14 @@ pub enum GameEvent {
         /// Supply state recorded for each of the side's units in play.
         units: Vec<UnitSupplyCheck>,
     },
-    /// A battle-plan resupply target has been selected or replaced.
+    /// A stack has been added to or removed from the battle-plan resupply targets.
     ResupplyTargetSet {
         /// Side making the plan.
         side_id: SideId,
-        /// Friendly unit identifying the stack, or `None` after cancellation.
-        unit_id: Option<UnitId>,
+        /// Friendly unit identifying the stack.
+        unit_id: UnitId,
+        /// Whether the stack is now selected.
+        selected: bool,
     },
     /// An objective hex has been added to or removed from the battle plan.
     AttackTargetSet {
@@ -165,6 +167,22 @@ pub enum GameEvent {
         side_id: SideId,
         /// Marked hexes removed.
         hex_ids: Vec<HexId>,
+    },
+    /// A unit gained or lost its Reserve/OMG Marker (12.6).
+    ReserveStatusChanged {
+        /// Side owning the unit.
+        side_id: SideId,
+        /// Unit.
+        unit_id: UnitId,
+        /// Whether the unit now carries the marker.
+        selected: bool,
+    },
+    /// The Reserve Phase ended and its Reserve/OMG Markers came off (28.2.5).
+    ReserveMarkersRemoved {
+        /// Side whose markers were removed.
+        side_id: SideId,
+        /// Units that carried a marker.
+        unit_ids: Vec<UnitId>,
     },
     /// A unit became Disrupted or Suppressed, or recovered (`None`).
     UnitDisruptionChanged {

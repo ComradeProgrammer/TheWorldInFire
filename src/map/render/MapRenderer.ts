@@ -369,8 +369,9 @@ export class MapRenderer {
     this.camera.fit();
   }
 
-  setUnits(units: UnitState[]): void {
-    this.counterHits = populateUnitLayer(this.unitLayer, units, this.map, this.grid);
+  /** Redraws every counter; `reserveUnitIds` carry a Reserve/OMG Marker tab. */
+  setUnits(units: UnitState[], reserveUnitIds: ReadonlySet<string> = new Set()): void {
+    this.counterHits = populateUnitLayer(this.unitLayer, units, this.map, this.grid, reserveUnitIds);
   }
 
   /** Sets (or clears) the legal destinations that hover arrows and right-click orders use. */
@@ -533,6 +534,13 @@ export class MapRenderer {
       });
     }
 
+    // 25.9: the Breakthrough Zone (marker hex and its six neighbours), where Hard
+    // units moving in the Reserve Phase ignore the extra EZOC costs.
+    for (const hexId of overlay.breakthroughs) {
+      for (const hex of zoneHexes(hexId)) {
+        zones.poly(this.grid.corners(hex.row, hex.col)).fill({ color: BREAKTHROUGH_COLOR, alpha: 0.1 });
+      }
+    }
     for (const hexId of overlay.breakthroughs) {
       const hex = this.hexByKey.get(hexId);
       if (!hex) continue;

@@ -1,6 +1,6 @@
 # Movement
 
-Units move during the Battle Planning Phase. Each move order takes a unit to one destination hex along the cheapest legal route. A unit may use only one movement system per Battle Planning Phase: Tactical, March, Rail, or Air Transport. It may split that movement into several orders of the same system, as long as the total stays within its allowance.
+Units move during the Battle Planning Phase; units held in reserve move again in the Reserve Phase (see [Reserves](reserve.md)). Each move order takes a unit to one destination hex along the cheapest legal route. A unit may use only one movement system per Battle Planning Phase: Tactical, March, Rail, or Air Transport. It may split that movement into several orders of the same system, as long as the total stays within its allowance.
 
 ## Movement allowance
 

@@ -3,6 +3,7 @@
 //! Nuclear, Chemical, and Artillery Strikes and NATO Deep Interdiction are not
 //! implemented; the phase consists of the Air Strike Segment.
 
+use crate::engine::GameEngine;
 use crate::error::RuleError;
 use crate::event::GameEvent;
 use crate::model::{
@@ -11,7 +12,6 @@ use crate::model::{
     StrikePlan, StrikeResolution, StrikeResult, StrikeTargetHex, StrikeTargetUnit, Terrain, UnitId,
     UnitLocation, UnitState,
 };
-use crate::state::GameState;
 
 /// Steps one Air Point may strike (23.1.5).
 const STEPS_PER_AIR_STRIKE: u16 = 2;
@@ -31,7 +31,7 @@ fn is_tactical_airspace(airspace: Airspace) -> bool {
     matches!(airspace, Airspace::Friendly | Airspace::Contested)
 }
 
-impl GameState {
+impl GameEngine {
     // ------------------------------------------------------------------ phase hooks
 
     /// 23.1.1, 23.1.7: fresh Air Points each Joint Reinforcement Phase; unused

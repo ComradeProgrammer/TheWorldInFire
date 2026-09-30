@@ -127,15 +127,16 @@ fn commands_drive_the_engine_through_its_json_process_boundary() {
         "expectedRevision": 1,
         "command": {
             "type": "setResupplyTarget",
-            "unitId": "soviet.6thGuardsMotorRifleDivision"
+            "unitId": "soviet.6thGuardsMotorRifleDivision",
+            "selected": true
         }
     }));
     assert_eq!(planned["type"], "commandAccepted");
     assert_eq!(planned["revision"], 2);
     assert_eq!(event_types(&planned), vec!["resupplyTargetSet"]);
     assert_eq!(
-        planned["snapshot"]["battlePlan"]["resupplyTargetUnitId"],
-        "soviet.6thGuardsMotorRifleDivision"
+        planned["snapshot"]["battlePlan"]["resupplyTargetUnitIds"],
+        json!(["soviet.6thGuardsMotorRifleDivision"])
     );
 
     let stale = engine.send(json!({
@@ -150,7 +151,7 @@ fn commands_drive_the_engine_through_its_json_process_boundary() {
     assert_eq!(snapshot["type"], "snapshot");
     assert_eq!(snapshot["snapshot"]["revision"], 2);
     assert_eq!(
-        snapshot["snapshot"]["battlePlan"]["resupplyTargetUnitId"],
-        "soviet.6thGuardsMotorRifleDivision"
+        snapshot["snapshot"]["battlePlan"]["resupplyTargetUnitIds"],
+        json!(["soviet.6thGuardsMotorRifleDivision"])
     );
 }

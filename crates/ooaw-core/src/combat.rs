@@ -11,6 +11,7 @@ use std::cmp::Reverse;
 use std::collections::{HashMap, VecDeque};
 
 use crate::airspace::hex_distance;
+use crate::engine::GameEngine;
 use crate::error::RuleError;
 use crate::event::GameEvent;
 use crate::model::{
@@ -20,7 +21,6 @@ use crate::model::{
     UnitLocation, UnitState, UnitStrength, ODDS_COLUMNS,
 };
 use crate::movement::MovementContext;
-use crate::state::GameState;
 
 /// Combat Results Table as printed on the map: rows are die rolls 1-6,
 /// columns follow [`ODDS_COLUMNS`].
@@ -238,7 +238,7 @@ enum ObjectiveKind {
     BreakthroughOnly,
 }
 
-impl GameState {
+impl GameEngine {
     // ------------------------------------------------------------------ phase hooks
 
     pub(crate) fn start_combat(&mut self) {
@@ -1383,6 +1383,8 @@ impl GameState {
         unit.definition.side_id == *side_id
             && !unit.is_headquarters()
             && unit.train_status.is_none()
+            // 12.6: units under a Reserve/OMG Marker never attack.
+            && !self.is_reserve_unit(unit.id())
             && !self
                 .combat
                 .as_ref()

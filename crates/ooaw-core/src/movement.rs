@@ -1,19 +1,21 @@
 //! Movement rules shared by the `MoveUnit` command and movement previews.
 //!
 //! Rule references are to the NATO: The Cold War Goes Hot rulebook (2020).
-//! Every legal destination offered by [`GameState::movement_options`] is found
+//! Every legal destination offered by [`GameEngine::movement_options`] is found
 //! by the same search and destination checks that validate `MoveUnit`.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use crate::airspace::AirspaceMap;
+use crate::engine::GameEngine;
 use crate::error::RuleError;
 use crate::model::{
-    Airspace, HexId, HexsideFeature, MapHex, MovementMode, MovementModeOptions, MovementOption,
-    SideId, SupplyStatus, Terrain, TrainStatus, UnitId, UnitLocation, UnitState,
+    has_incompatible_movement, movement_spent, Airspace, HexId, HexsideFeature, MapHex,
+    MovementMode, MovementModeOptions, MovementOption, SideId, SupplyStatus, Terrain, TrainStatus,
+    UnitId, UnitLocation, UnitState,
 };
-use crate::state::GameState;
+use crate::reserve::MovementPhase;
 
 /// Precomputed map and unit lookups for one movement query.
 pub(crate) struct MovementContext<'a> {
@@ -29,10 +31,12 @@ pub(crate) struct MovementContext<'a> {
     airspace: AirspaceMap,
     /// Hexes inside an enemy Air Interdiction Zone (23.8).
     enemy_interdiction: HashSet<String>,
+    /// Breakthrough Zones: each Breakthrough Marker hex and its six neighbours (25.9).
+    breakthrough_zone: HashSet<String>,
 }
 
 impl<'a> MovementContext<'a> {
-    pub(crate) fn new(state: &'a GameState, side_id: &SideId) -> Self {
+    pub(crate) fn new(state: &'a GameEngine, side_id: &SideId) -> Self {
         let hexes: HashMap<_, _> = state
             .scenario
             .map
@@ -62,7 +66,14 @@ impl<'a> MovementContext<'a> {
             friendly_free_cities: HashSet::new(),
             airspace: state.airspace_map(side_id),
             enemy_interdiction: HashSet::new(),
+            breakthrough_zone: HashSet::new(),
         };
+        for marker in &state.breakthrough_markers {
+            context.breakthrough_zone.insert(marker.0.clone());
+            for neighbor in context.neighbors(&marker.0) {
+                context.breakthrough_zone.insert(neighbor.to_owned());
+            }
+        }
         for zone in state
             .air_interdiction_zones
             .iter()
@@ -260,13 +271,13 @@ fn dijkstra(
     search
 }
 
-impl GameState {
+impl GameEngine {
     /// Movement preview for every movement system, in a fixed order.
     ///
     /// A system the unit cannot use carries the structured reason instead of
     /// destinations, so clients never re-derive movement rules themselves.
     pub fn movement_modes(&self, unit_id: &UnitId) -> Result<Vec<MovementModeOptions>, RuleError> {
-        let side_id = self.battle_planning_side()?;
+        let (side_id, _) = self.movement_phase()?;
         self.owned_unit(unit_id, &side_id)?;
         Ok([
             MovementMode::Tactical,
@@ -299,15 +310,15 @@ impl GameState {
         unit_id: &UnitId,
         mode: MovementMode,
     ) -> Result<Vec<MovementOption>, RuleError> {
-        let side_id = self.battle_planning_side()?;
+        let (side_id, phase) = self.movement_phase()?;
         let unit = self.owned_unit(unit_id, &side_id)?;
         let context = MovementContext::new(self, &side_id);
-        self.movement_prerequisites(&context, unit, mode)?;
+        self.movement_prerequisites(&context, unit, mode, phase)?;
 
         let mut options = Vec::new();
         match mode {
             MovementMode::Tactical | MovementMode::March => {
-                let ground = self.ground_search(&context, unit, mode)?;
+                let ground = self.ground_search(&context, unit, mode, phase)?;
                 for hex_id in ground.search.cost.keys() {
                     if *hex_id == ground.search.origin {
                         continue;
@@ -328,7 +339,7 @@ impl GameState {
                     }
                 }
                 if mode == MovementMode::Tactical {
-                    options.extend(self.danish_ferry_options(&context, unit)?);
+                    options.extend(self.danish_ferry_options(&context, unit, phase)?);
                 }
             }
             MovementMode::Rail => {
@@ -379,6 +390,7 @@ impl GameState {
         unit: &UnitState,
         destination: &HexId,
         mode: MovementMode,
+        phase: MovementPhase,
     ) -> Result<(Vec<HexId>, u16), RuleError> {
         let context = MovementContext::new(self, side_id);
         if !context.hexes.contains_key(destination.0.as_str()) {
@@ -393,21 +405,21 @@ impl GameState {
                 "The unit already occupies that hex",
             ));
         }
-        self.movement_prerequisites(&context, unit, mode)?;
+        self.movement_prerequisites(&context, unit, mode, phase)?;
         self.check_destination(&context, unit, destination, mode)?;
 
         match mode {
             MovementMode::Tactical | MovementMode::March => {
                 if mode == MovementMode::Tactical {
                     if let Some(option) = self
-                        .danish_ferry_options(&context, unit)?
+                        .danish_ferry_options(&context, unit, phase)?
                         .into_iter()
                         .find(|option| option.hex_id == *destination)
                     {
                         return Ok((option.path, option.cost));
                     }
                 }
-                self.ground_search(&context, unit, mode)?
+                self.ground_search(&context, unit, mode, phase)?
                     .route(&destination.0)
             }
             MovementMode::Rail => {
@@ -441,9 +453,25 @@ impl GameState {
         context: &MovementContext,
         unit: &UnitState,
         mode: MovementMode,
+        phase: MovementPhase,
     ) -> Result<(), RuleError> {
-        let plan = self.active_plan()?;
-        if plan.has_incompatible_movement(unit.id(), mode) {
+        let movements = self.phase_movements(phase)?;
+        if phase == MovementPhase::Reserve {
+            if !self.reserve_state()?.unit_ids.contains(unit.id()) {
+                return Err(RuleError::new(
+                    "notInReserve",
+                    "Only units under a Reserve/OMG Marker move in the Reserve Phase",
+                ));
+            }
+            // 12.2.2, 28.2.1: Tactical (or Minimum) movement only.
+            if mode != MovementMode::Tactical {
+                return Err(RuleError::new(
+                    "reserveTacticalOnly",
+                    "Reserve movement uses Tactical or Minimum movement only",
+                ));
+            }
+        }
+        if has_incompatible_movement(movements, unit.id(), mode) {
             return Err(RuleError::new(
                 "movementModeAlreadyUsed",
                 "A unit may use only one movement system during a planning phase",
@@ -482,7 +510,7 @@ impl GameState {
                     ));
                 }
                 // 12.3.2: a Soft unit that has entered an EZOC must stop there.
-                let already_moved = plan.movements.iter().any(|m| m.unit_id == *unit.id());
+                let already_moved = movements.iter().any(|m| m.unit_id == *unit.id());
                 if already_moved && origin_zoc && !unit.is_hard() {
                     return Err(RuleError::new(
                         "mustStopInEnemyZoc",
@@ -565,7 +593,7 @@ impl GameState {
                         "An out-of-movement-supply unit may not use air transport",
                     ));
                 }
-                if plan.movements.iter().any(|m| m.unit_id == *unit.id()) {
+                if movements.iter().any(|m| m.unit_id == *unit.id()) {
                     return Err(RuleError::new(
                         "unitAlreadyMoved",
                         "A unit moved by air transport may not use another movement system",
@@ -598,7 +626,7 @@ impl GameState {
                     .scenario
                     .battle_planning_rules
                     .airlift_commands(&unit.definition.side_id);
-                if plan.airlift_steps_used + unit.step_count() > capacity {
+                if self.active_plan()?.airlift_steps_used + unit.step_count() > capacity {
                     return Err(RuleError::new(
                         "airliftCapacityExceeded",
                         format!("Airlifting this unit needs more than the side's {capacity} Airlift Commands"),
@@ -679,6 +707,7 @@ impl GameState {
         context: &MovementContext,
         unit: &UnitState,
         mode: MovementMode,
+        phase: MovementPhase,
     ) -> Result<GroundSearch, RuleError> {
         let UnitLocation::Hex { hex_id: origin } = &unit.location else {
             return Err(RuleError::new("unitOffMap", "Unit is not on the map"));
@@ -690,17 +719,29 @@ impl GameState {
         let allowance = match mode {
             // 25.6.4 (1): Disrupted units have only Minimum movement.
             _ if unit.disruption.is_some() => 0,
+            // 28.2.1: half the printed allowance, rounding fractions up.
+            _ if phase == MovementPhase::Reserve => printed.div_ceil(2),
             MovementMode::March => printed.saturating_mul(2),
             _ if unit.supply.movement == Some(SupplyStatus::OutOfSupply) => printed / 2,
             _ => printed,
         };
-        let plan = self.active_plan()?;
-        let spent = plan.movement_spent(unit.id(), mode);
-        let first_move = !plan.movements.iter().any(|m| m.unit_id == *unit.id());
+        let movements = self.phase_movements(phase)?;
+        let spent = movement_spent(movements, unit.id(), mode);
+        let first_move = !movements.iter().any(|m| m.unit_id == *unit.id());
         let rules = &self.scenario.battle_planning_rules;
         let march = mode == MovementMode::March;
         let hard = unit.is_hard();
         let origin_id = origin.0.as_str();
+        // 25.9.3, 28.2.1: in the Reserve Phase, Hard units using Tactical
+        // movement ignore the +1 to enter or leave an EZOC hex in a Breakthrough Zone.
+        let breakthrough =
+            phase == MovementPhase::Reserve && hard && mode == MovementMode::Tactical;
+        let zoc_cost = |id: &str| {
+            u16::from(
+                context.in_enemy_zoc(id)
+                    && !(breakthrough && context.breakthrough_zone.contains(id)),
+            )
+        };
 
         let remaining = allowance.saturating_sub(spent);
         let step_cost = |current: &str, next: &str| {
@@ -744,7 +785,7 @@ impl GameState {
             }
             // 12.3 (1), (2): +1 to enter and +1 to leave an EZOC hex.
             // 23.8: +1 to enter an enemy Air Interdiction Zone hex.
-            Some(cost + u16::from(current_zoc) + u16::from(next_zoc) + u16::from(interdicted))
+            Some(cost + zoc_cost(current) + zoc_cost(next) + u16::from(interdicted))
         };
         let neighbors = |id: &str| -> Vec<String> {
             context
@@ -787,9 +828,11 @@ impl GameState {
         let UnitLocation::Hex { hex_id: origin } = &unit.location else {
             return Err(RuleError::new("unitOffMap", "Unit is not on the map"));
         };
-        let spent = self
-            .active_plan()?
-            .movement_spent(unit.id(), MovementMode::Rail);
+        let spent = movement_spent(
+            &self.active_plan()?.movements,
+            unit.id(),
+            MovementMode::Rail,
+        );
         let remaining = self
             .scenario
             .battle_planning_rules
@@ -829,13 +872,13 @@ impl GameState {
         &self,
         context: &MovementContext,
         unit: &UnitState,
+        phase: MovementPhase,
     ) -> Result<Vec<MovementOption>, RuleError> {
         let UnitLocation::Hex { hex_id: origin } = &unit.location else {
             return Ok(Vec::new());
         };
-        let plan = self.active_plan()?;
-        if unit.definition.side_id.0 != "nato"
-            || plan.movements.iter().any(|m| m.unit_id == *unit.id())
+        let movements = self.phase_movements(phase)?;
+        if unit.definition.side_id.0 != "nato" || movements.iter().any(|m| m.unit_id == *unit.id())
         {
             return Ok(Vec::new());
         }
@@ -847,7 +890,7 @@ impl GameState {
             {
                 continue;
             }
-            let used = plan.movements.iter().any(|m| {
+            let used = movements.iter().any(|m| {
                 m.to.0 == next
                     && matches!(&m.from, UnitLocation::Hex { hex_id } if *hex_id == *origin)
             });

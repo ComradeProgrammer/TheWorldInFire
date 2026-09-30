@@ -2,8 +2,8 @@
 
 use std::collections::HashSet;
 
+use crate::engine::GameEngine;
 use crate::model::{Airspace, HexId, MapHex, SideId, SupplyStatus, UnitLocation, UnitState};
-use crate::state::GameState;
 
 /// Hexes within this distance of a supplied unit or friendly city are contested by its side.
 const AIRSPACE_RANGE: i32 = 5;
@@ -49,7 +49,7 @@ fn contests_airspace(unit: &UnitState) -> bool {
     supplied && matches!(unit.location, UnitLocation::Hex { .. })
 }
 
-impl GameState {
+impl GameEngine {
     /// Hexes within five hexes of the side's supplied units or controlled cities.
     fn contested_by(&self, side_id: &SideId) -> HashSet<String> {
         let hexes = &self.scenario.map.hexes;

@@ -40,6 +40,8 @@ export interface GameSnapshot {
   breakthroughMarkers: string[];
   eliminatedUnitIds: string[];
   combat: CombatState | null;
+  /** Marked units and their movement during the current Reserve Phase. */
+  reserve: ReserveState | null;
   pendingDecision: { kind: string } | null;
 }
 
@@ -277,6 +279,12 @@ export interface MovementOptionsResponse {
   modes: MovementModeOptions[];
 }
 
+export interface ReserveOptionsResponse {
+  revision: number;
+  /** Every planning-side unit on the map, with the reason it cannot be marked, if any. */
+  units: { unitId: string; unavailable: RuleRejection | null }[];
+}
+
 export interface AttackTargetOptionsResponse {
   revision: number;
   hexIds: string[];
@@ -297,19 +305,29 @@ export interface CityControlChange {
 export interface BattlePlan {
   gameTurn: number;
   sideId: string;
-  resupplyTargetUnitId: string | null;
+  resupplyTargetUnitIds: string[];
   attackTargets: string[];
   movements: PlannedMovement[];
   entrainingUnitIds: string[];
   detrainedUnitIds: string[];
   airliftStepsUsed: number;
+  /** Units under a Reserve (NATO) or OMG (WP) Marker. */
+  reserveUnitIds: string[];
+}
+
+/** The acting side's Reserve Phase: marked units and their movement. */
+export interface ReserveState {
+  sideId: string;
+  unitIds: string[];
+  movements: PlannedMovement[];
 }
 
 export type GameCommand =
   | { type: "endPhase" }
-  | { type: "setResupplyTarget"; unitId: string | null }
+  | { type: "setResupplyTarget"; unitId: string; selected: boolean }
   | { type: "setAttackTarget"; hexId: string; selected: boolean }
   | { type: "moveUnit"; unitId: string; destination: string; mode: MovementMode }
+  | { type: "setReserve"; unitId: string; selected: boolean }
   | { type: "undoUnitMovement"; unitId: string }
   | { type: "entrainUnit"; unitId: string }
   | { type: "detrainUnit"; unitId: string }
@@ -327,7 +345,7 @@ export type GameEvent =
   | { type: "gameTurnStarted"; gameTurn: number }
   | { type: "reinforcementsArrived"; gameTurn: number; units: UnitState[] }
   | { type: "preBattleSupplyChecked"; gameTurn: number; sideId: string; units: unknown[] }
-  | { type: "resupplyTargetSet"; sideId: string; unitId: string | null }
+  | { type: "resupplyTargetSet"; sideId: string; unitId: string; selected: boolean }
   | { type: "attackTargetSet"; sideId: string; hexId: string; selected: boolean }
   | { type: "unitMoved"; unitId: string; from: UnitLocation; to: string; mode: MovementMode; cost: number; path: string[] }
   | { type: "unitMovementUndone"; movement: PlannedMovement; restoredLocation: UnitLocation }
@@ -340,6 +358,8 @@ export type GameEvent =
   | { type: "airStrikeResolved"; sideId: string; missionId: number; hexId: string; unitIds: string[]; resolution: StrikeResolution }
   | { type: "airInterdictionZonePlaced"; sideId: string; hexId: string }
   | { type: "airInterdictionZonesRemoved"; sideId: string; hexIds: string[] }
+  | { type: "reserveStatusChanged"; sideId: string; unitId: string; selected: boolean }
+  | { type: "reserveMarkersRemoved"; sideId: string; unitIds: string[] }
   | { type: "unitDisruptionChanged"; unitId: string; disruption: Disruption | null }
   | { type: "unitStepLost"; unitId: string; strengthStepIndex: number }
   | { type: "unitEliminated"; unitId: string; hexId: string }
@@ -388,6 +408,11 @@ export function fetchMovementOptions(unitId: string): Promise<MovementOptionsRes
 /** Read-only preview of the hexes the planning side may mark as attack objectives. */
 export function fetchAttackTargetOptions(): Promise<AttackTargetOptionsResponse> {
   return invoke<AttackTargetOptionsResponse>("attack_target_options");
+}
+
+/** Read-only preview of which planning-side units may take a Reserve/OMG Marker. */
+export function fetchReserveOptions(): Promise<ReserveOptionsResponse> {
+  return invoke<ReserveOptionsResponse>("reserve_options");
 }
 
 /** Read-only preview of the phasing side's Air Strike Segment choices. */

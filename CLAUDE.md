@@ -88,7 +88,7 @@ The intended ownership split is:
 
 ```text
 Rust
-  authoritative GameState
+  authoritative GameEngine
   rules and command validation
   combat resolution and seeded randomness
   save/load and replay
@@ -131,7 +131,7 @@ Keep random outcomes reproducible through an explicit seeded random-number sourc
   - `src/model/`: units, sides, phases, scenario definitions, and scenario content.
   - `src/model/map.rs`: serializable map model and embedded map loader.
   - `src/model/scenario_baltap.rs`: BALTAP 1983 setup and reinforcement schedule.
-  - `src/engine.rs`, `src/state.rs`, and `src/phase.rs`: game-state execution at the crate root.
+  - `src/engine.rs` and `src/phase.rs`: game-state execution at the crate root.
 - `docs/`: durable design notes and decisions.
   - `docs/zh-CN/`: Chinese game-rule documentation.
   - `docs/en/`: matching English game-rule documentation.

@@ -1,4 +1,4 @@
-import type { BattlePlan, MovementMode, MovementModeOptions } from "../gameApi";
+import type { MovementMode, MovementModeOptions, PlannedMovement } from "../gameApi";
 
 export const MOVEMENT_MODES: { mode: MovementMode; label: string }[] = [
   { mode: "tactical", label: "Tactical" },
@@ -9,11 +9,11 @@ export const MOVEMENT_MODES: { mode: MovementMode; label: string }[] = [
 
 /**
  * The mode a newly selected unit starts with: the system it already used this
- * plan, otherwise the first system the core reports as usable with destinations.
+ * phase, otherwise the first system the core reports as usable with destinations.
  * Availability itself always comes from the Rust core.
  */
-export function defaultMovementMode(unitId: string, plan: BattlePlan | null, modes: MovementModeOptions[]): MovementMode {
-  const moved = plan?.movements.filter((movement) => movement.unitId === unitId) ?? [];
+export function defaultMovementMode(unitId: string, movements: PlannedMovement[], modes: MovementModeOptions[]): MovementMode {
+  const moved = movements.filter((movement) => movement.unitId === unitId);
   if (moved.length > 0) return moved[moved.length - 1].mode;
   const usable = modes.filter((entry) => entry.unavailable === null);
   return (usable.find((entry) => entry.options.length > 0) ?? usable[0] ?? modes[0])?.mode ?? "tactical";

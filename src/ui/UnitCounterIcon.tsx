@@ -6,6 +6,8 @@ import {
   NATION_COLORS,
   nationCode,
   nationInk,
+  RESERVE_TAB,
+  reserveTabLabel,
   svgPathData,
   unitSymbol,
 } from "../map/unitSymbols";
@@ -43,20 +45,37 @@ export function UnitSymbolPaths({ unit, ink, strokeScale, echelon = true }: {
   );
 }
 
-/** The same counter the map draws, as an SVG for the React UI. */
-export function UnitCounterIcon({ unit, size = 64 }: { unit: UnitState; size?: number }) {
+/**
+ * The same counter the map draws, as an SVG for the React UI. `x` and `y`
+ * place it when it is nested inside another SVG; `reserve` adds the
+ * Reserve/OMG Marker tab.
+ */
+export function UnitCounterIcon({ unit, size = 64, x, y, reserve = false }: {
+  unit: UnitState;
+  size?: number;
+  x?: number;
+  y?: number;
+  reserve?: boolean;
+}) {
   const palette = counterPalette(unit.sideId);
   const nationColor = NATION_COLORS[unit.nationId] ?? palette.edge;
   const step = unit.steps[unit.strengthStepIndex];
   const half = COUNTER.size / 2;
   const { band } = COUNTER;
   const scale = COUNTER.symbolScale;
+  const symbol = unitSymbol(unit);
+  const { reserveTab: tab } = COUNTER;
+  // Room below the counter for the marker tab when it is shown.
+  const extra = reserve ? tab.y + tab.height - half : 0;
+  const box = COUNTER.size + 6;
   return (
     <svg
       className="unit-counter-icon"
+      x={x}
+      y={y}
       width={size}
-      height={size}
-      viewBox={`${-half - 3} ${-half - 3} ${COUNTER.size + 6} ${COUNTER.size + 6}`}
+      height={(size * (box + extra)) / box}
+      viewBox={`${-half - 3} ${-half - 3} ${box} ${box + extra}`}
       role="img"
       aria-label={`${unit.name} counter`}
     >
@@ -69,6 +88,9 @@ export function UnitCounterIcon({ unit, size = 64 }: { unit: UnitState; size?: n
       <g transform={`translate(0 ${COUNTER.symbolY}) scale(${scale}) translate(-100 -100)`}>
         <UnitSymbolPaths unit={unit} ink={css(palette.ink)} strokeScale={1 / scale} />
       </g>
+      {symbol.label && (
+        <text x={0} y={COUNTER.symbolY} className="counter-icon-text" fontSize={14} fill={css(palette.ink)}>{symbol.label}</text>
+      )}
       {step && (
         <text x={0} y={COUNTER.valuesY} className="counter-icon-text" fontSize={18} fill={css(palette.ink)}>
           {`${step.attack}  ${step.defense}  ${step.movement}`}
@@ -79,6 +101,14 @@ export function UnitCounterIcon({ unit, size = 64 }: { unit: UnitState; size?: n
           <circle cx={-half + 6} cy={half - 6} r={15} fill="#ff9f1c" stroke="#05080c" strokeWidth={3} />
           <text x={-half + 6} y={half - 6} className="counter-icon-text" fontSize={17} fill="#05080c">
             {unit.disruption === "suppressed" ? "S" : "D"}
+          </text>
+        </>
+      )}
+      {reserve && (
+        <>
+          <rect x={-tab.width / 2} y={tab.y} width={tab.width} height={tab.height} rx={3} fill={css(RESERVE_TAB.fill)} stroke="#05080c" strokeWidth={2} />
+          <text x={0} y={tab.y + tab.height / 2} className="counter-icon-text" fontSize={11} fill={css(RESERVE_TAB.ink)}>
+            {reserveTabLabel(unit.sideId)}
           </text>
         </>
       )}
