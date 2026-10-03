@@ -52,8 +52,10 @@ Unit counters are generated at runtime with PixiJS primitives and text. NATO and
 
 - infantry: the frame's diagonals (also used for territorial and home defence brigades);
 - armour: a track outline;
+- field artillery: a solid dot;
+- armored cavalry: the rising reconnaissance diagonal plus the track;
 - mechanized infantry and motor rifle: the diagonals plus the track;
-- mobility modifiers on the bottom edge: a double canopy arc for airborne, a rotor "V" for airmobile/air assault, and a wave for marines (amphibious);
+- mobility modifiers on the bottom edge: a double canopy arc for airborne, a rotor "V" for airmobile/air assault, a wave for marines (amphibious), and a solid peak for mountain infantry;
 - headquarters: a frame labelled HQ with a staff down from its lower-left corner;
 - echelon marks above the frame: III for a regiment, X for a brigade, XX for a division.
 

@@ -22,6 +22,10 @@ export type Echelon = "regiment" | "brigade" | "division";
 export interface UnitSymbol {
   /** Branch icon and mobility modifier, stroked inside the frame. */
   strokes: SymbolPath[];
+  /** Solid shapes inside the frame, such as the mountain modifier. */
+  fills: SymbolPath[];
+  /** Solid dots inside the frame, such as the field artillery icon. */
+  dots: { x: number; y: number; r: number }[];
   /** Echelon marks above the frame. */
   echelon: SymbolPath[];
   /** Headquarters staff, down from the frame's lower-left corner. */
@@ -43,6 +47,15 @@ const ARMOUR: SymbolPath[] = [[
   ["L", 75, 120],
   ["C", 50, 120, 50, 80, 75, 80],
 ]];
+
+/** Reconnaissance / cavalry: the rising diagonal of the frame. */
+const RECONNAISSANCE: SymbolPath[] = [line(25, 150, 175, 50)];
+
+/** Field artillery: a solid dot in the centre. */
+const ARTILLERY_DOT = { x: 100, y: 100, r: 15 };
+
+/** Mountain (sector 2 modifier): a solid peak on the bottom edge. */
+const MOUNTAIN: SymbolPath[] = [[["M", 87, 142], ["L", 97, 122], ["L", 102, 132], ["L", 105, 127], ["L", 113, 142]]];
 
 /** Airborne (sector 2 modifier): parachute canopy on the bottom edge. */
 const AIRBORNE: SymbolPath[] = [[["M", 75, 140], ["C", 75, 125, 100, 125, 100, 140], ["C", 100, 125, 125, 125, 125, 140]]];
@@ -85,20 +98,28 @@ export function unitSymbol(unit: UnitState): UnitSymbol {
   const type = unit.unitTypeId.toLowerCase();
   const echelon = echelonOf(unit.unitTypeId);
   const echelonMarks = echelon ? ECHELONS[echelon] : [];
+  const base = { fills: [] as SymbolPath[], dots: [] as UnitSymbol["dots"], echelon: echelonMarks };
   if (type === "headquarters" || unit.traits.includes("headquarters")) {
-    return { strokes: [], echelon: echelonMarks, headquarters: true, label: "HQ" };
+    return { ...base, strokes: [], headquarters: true, label: "HQ" };
+  }
+  if (type.includes("artillery") || unit.traits.includes("artillery")) {
+    return { ...base, strokes: [], dots: [ARTILLERY_DOT], headquarters: false, label: null };
   }
 
   let strokes: SymbolPath[];
-  if (type.includes("tank") || type.includes("armored") || type.includes("panzer")) strokes = ARMOUR;
+  let fills: SymbolPath[] = [];
+  const armoured = type.includes("tank") || type.includes("armored") || type.includes("panzer");
+  if (type.includes("cavalry")) strokes = armoured ? [...RECONNAISSANCE, ...ARMOUR] : RECONNAISSANCE;
+  else if (armoured) strokes = ARMOUR;
   else if (type.includes("mechanized") || type.includes("motorrifle")) strokes = [...INFANTRY, ...ARMOUR];
   else strokes = INFANTRY;
 
   if (unit.traits.includes("airborne")) strokes = [...strokes, ...AIRBORNE];
   else if (unit.traits.includes("airmobile")) strokes = [...strokes, ...AIR_ASSAULT];
   else if (unit.traits.includes("marine")) strokes = [...strokes, ...AMPHIBIOUS];
+  else if (type.includes("mountain")) fills = MOUNTAIN;
 
-  return { strokes, echelon: echelonMarks, headquarters: false, label: null };
+  return { ...base, strokes, fills, headquarters: false, label: null };
 }
 
 /** SVG path data for symbol paths, in symbol space. */

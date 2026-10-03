@@ -61,6 +61,12 @@ struct NewGameResponse {
     turn_sequence: Vec<PhaseDefinition>,
 }
 
+/// Closes the application from the title screen's Quit button.
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 #[tauri::command]
 fn list_scenarios() -> Vec<ScenarioSummary> {
     ooaw_core::list_scenarios()
@@ -292,6 +298,7 @@ pub fn run() {
         .manage(AppState::default())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            quit_app,
             list_scenarios,
             new_game,
             get_game_snapshot,

@@ -49,6 +49,14 @@ function drawUnitSymbol(g: Graphics, unit: UnitState, ink: number): string | nul
     tracePaths(g, symbol.strokes);
     g.stroke({ color: ink, width: 2, cap: "round", join: "round" });
   }
+  if (symbol.fills.length > 0) {
+    tracePaths(g, symbol.fills);
+    g.fill(ink);
+  }
+  for (const dot of symbol.dots) {
+    const center = toCounter(dot.x, dot.y);
+    g.circle(center.x, center.y, dot.r * COUNTER.symbolScale).fill(ink);
+  }
   if (symbol.echelon.length > 0) {
     tracePaths(g, symbol.echelon);
     g.stroke({ color: ink, width: 1.8, cap: "round" });

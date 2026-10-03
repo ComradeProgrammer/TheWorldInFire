@@ -8,6 +8,7 @@
 use crate::engine::GameEngine;
 use crate::error::RuleError;
 use crate::event::GameEvent;
+use crate::movement::MovementContext;
 use crate::model::{
     movement_spent, MovementMode, PhaseActor, PlannedMovement, ReserveOption, ReserveState, SideId,
     SupplyStatus, UnitId, UnitLocation, UnitState,
@@ -32,7 +33,8 @@ impl GameEngine {
         let side_id = self.battle_planning_side()?;
         let unit = self.owned_unit(&unit_id, &side_id)?;
         if selected {
-            self.reserve_eligibility(&side_id, unit)?;
+            let context = MovementContext::new(self, &side_id);
+            self.reserve_eligibility(&context, unit)?;
             let reserves = &mut self.active_plan_mut()?.reserve_unit_ids;
             if !reserves.contains(&unit_id) {
                 reserves.push(unit_id.clone());
@@ -66,19 +68,25 @@ impl GameEngine {
     /// returned within the entries.
     pub fn reserve_options(&self) -> Result<Vec<ReserveOption>, RuleError> {
         let side_id = self.battle_planning_side()?;
+        // One context for every unit: building it covers the whole map.
+        let context = MovementContext::new(self, &side_id);
         Ok(self
             .units
             .values()
             .filter(|unit| unit.definition.side_id == side_id)
             .map(|unit| ReserveOption {
                 unit_id: unit.id().clone(),
-                unavailable: self.reserve_eligibility(&side_id, unit).err(),
+                unavailable: self.reserve_eligibility(&context, unit).err(),
             })
             .collect())
     }
 
     /// 12.6 (living rules, 1 Jan 2026): the conditions for a Reserve/OMG Marker.
-    fn reserve_eligibility(&self, side_id: &SideId, unit: &UnitState) -> Result<(), RuleError> {
+    fn reserve_eligibility(
+        &self,
+        context: &MovementContext,
+        unit: &UnitState,
+    ) -> Result<(), RuleError> {
         if unit.is_headquarters() {
             return Err(RuleError::new(
                 "notManeuverUnit",
@@ -156,7 +164,7 @@ impl GameEngine {
             ));
         }
         // (5): it may start in an EZOC but not end its movement in one.
-        if self.hex_in_enemy_zoc(side_id, hex_id) {
+        if context.in_enemy_zoc(&hex_id.0) {
             return Err(RuleError::new(
                 "enemyZoneOfControl",
                 "A unit in an enemy zone of control cannot be placed in reserve",
@@ -176,10 +184,10 @@ impl GameEngine {
             return;
         }
         let side_id = plan.side_id.clone();
-        let eligible = self
-            .units
-            .get(unit_id)
-            .is_some_and(|unit| self.reserve_eligibility(&side_id, unit).is_ok());
+        let eligible = self.units.get(unit_id).is_some_and(|unit| {
+            let context = MovementContext::new(self, &side_id);
+            self.reserve_eligibility(&context, unit).is_ok()
+        });
         if eligible {
             return;
         }

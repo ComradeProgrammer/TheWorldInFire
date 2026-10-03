@@ -5,13 +5,13 @@ import {
   fetchAttackTargetOptions,
   fetchMovementOptions,
   fetchReserveOptions,
-  loadInitialGame,
   submitGameCommand,
   type GameCommand,
   type AirStrikeOptionsResponse,
   type CombatOptionsResponse,
   type UnitState,
   type GameSnapshot,
+  type NewGameResponse,
   type MovementMode,
   type PhaseSnapshot,
   type RuleRejection,
@@ -71,15 +71,16 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
-function App() {
+/** The game screen for one started game. Remount it (by key) for a new game. */
+function App({ game }: { game: NewGameResponse }) {
   const rendererRef = useRef<MapRenderer | null>(null);
   const [selected, setSelected] = useState<HexData | null>(null);
   const [zoom, setZoom] = useState(1);
   const [layers, setLayers] = useState(DEFAULT_LAYERS);
-  const [snapshot, setSnapshot] = useState<GameSnapshot | null>(null);
-  const [map, setMap] = useState<MapData | null>(null);
-  const [turnSequence, setTurnSequence] = useState<PhaseSnapshot[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [snapshot, setSnapshot] = useState<GameSnapshot | null>(game.snapshot);
+  // The map and turn sequence never change during a game; the bootstrap carries them once.
+  const map: MapData = game.map;
+  const turnSequence: PhaseSnapshot[] = game.turnSequence;
   const [commandBusy, setCommandBusy] = useState(false);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -98,26 +99,6 @@ function App() {
   const movementPreviewRef = useRef<MovementPreview | null>(null);
   const strikeOverlayRef = useRef<StrikeOverlay | null>(null);
   const combatOverlayRef = useRef<CombatOverlay | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    loadInitialGame().then(
-      (next) => {
-        if (!active) return;
-        setSnapshot(next.snapshot);
-        setMap(next.map);
-        setTurnSequence(next.turnSequence);
-      },
-      (error: unknown) => {
-        if (!active) return;
-        const message = errorMessage(error);
-        setLoadError(message);
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, []);
 
   const hud = useMemo(() => {
     if (!snapshot) return PREVIEW_HUD;
@@ -450,21 +431,15 @@ function App() {
         onEndPhase={endPhase}
       />
       <main className="map-area">
-        {snapshot && map ? (
-          <MapCanvas
-            map={map}
-            onReady={onReady}
-            onHover={() => {}}
-            onSelect={onSelect}
-            onUnitSelect={setSelectedUnitId}
-            onMoveOrder={onMoveOrder}
-            onZoom={setZoom}
-          />
-        ) : (
-          <div className={`map-loading${loadError ? " error" : ""}`}>
-            {loadError ? `Game creation failed: ${loadError}` : "Creating game and loading map…"}
-          </div>
-        )}
+        <MapCanvas
+          map={map}
+          onReady={onReady}
+          onHover={() => {}}
+          onSelect={onSelect}
+          onUnitSelect={setSelectedUnitId}
+          onMoveOrder={onMoveOrder}
+          onZoom={setZoom}
+        />
       </main>
       {snapshot && map && (
         <SidePanel

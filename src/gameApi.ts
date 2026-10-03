@@ -8,6 +8,11 @@ export interface ScenarioSnapshot {
   mapId: string;
 }
 
+/** A registered scenario offered by the core, as listed on the scenario screen. */
+export interface ScenarioSummary extends ScenarioSnapshot {
+  sides: { id: string; name: string }[];
+}
+
 export interface PhaseActorSnapshot {
   type: "all" | "side";
   sideId?: string;
@@ -386,12 +391,19 @@ export interface NewGameResponse {
   turnSequence: PhaseSnapshot[];
 }
 
-let initialGame: Promise<NewGameResponse> | null = null;
+/** Every scenario registered in the core. */
+export function listScenarios(): Promise<ScenarioSummary[]> {
+  return invoke<ScenarioSummary[]>("list_scenarios");
+}
 
-/** Creates the initial desktop game once, including its authoritative map. */
-export function loadInitialGame(): Promise<NewGameResponse> {
-  initialGame ??= invoke<NewGameResponse>("new_game", { scenarioId: "nato-baltap-1983" });
-  return initialGame;
+/** Creates a game of the chosen scenario, returning its snapshot and authoritative map. */
+export function startNewGame(scenarioId: string): Promise<NewGameResponse> {
+  return invoke<NewGameResponse>("new_game", { scenarioId });
+}
+
+/** Closes the desktop application. */
+export function quitApp(): Promise<void> {
+  return invoke<void>("quit_app");
 }
 
 /** Submits an intent against the current authoritative revision. */

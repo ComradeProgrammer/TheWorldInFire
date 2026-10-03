@@ -262,19 +262,6 @@ select {
   touch-action: none;
 }
 
-.map-loading {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  color: var(--muted);
-  letter-spacing: 0.03em;
-}
-
-.map-loading.error {
-  color: var(--pact);
-}
-
 /* ---------------------------------------------------------------- side panel */
 
 .side-panel {

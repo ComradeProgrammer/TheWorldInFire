@@ -109,7 +109,9 @@ Keep random outcomes reproducible through an explicit seeded random-number sourc
 
 - `src/`: React and TypeScript frontend.
   - `main.tsx`: browser/WebView entry point.
-  - `App.tsx`: application shell, game-bootstrap consumer, and command/event coordinator.
+  - `Root.tsx`: screen flow from the title menu through scenario selection to the game.
+  - `menu/`: title screen, scenario selection, and their shared backdrop and styles.
+  - `App.tsx`: game screen for one started game: bootstrap consumer and command/event coordinator.
   - `gameApi.ts`: typed Tauri game bootstrap and command boundary.
   - `map/`: PixiJS renderer and client-side map presentation types.
   - `App.css`: application styling.

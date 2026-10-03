@@ -33,6 +33,8 @@ export function UnitSymbolPaths({ unit, ink, strokeScale, echelon = true }: {
     <g fill="none" stroke={ink} strokeLinecap="round" strokeLinejoin="round">
       <rect x={FRAME.x1} y={FRAME.y1} width={FRAME.x2 - FRAME.x1} height={FRAME.y2 - FRAME.y1} strokeWidth={2.4 * strokeScale} />
       {symbol.strokes.length > 0 && <path d={svgPathData(symbol.strokes)} strokeWidth={2 * strokeScale} />}
+      {symbol.fills.length > 0 && <path d={`${svgPathData(symbol.fills)}Z`} fill={ink} stroke="none" />}
+      {symbol.dots.map((dot, index) => <circle key={index} cx={dot.x} cy={dot.y} r={dot.r} fill={ink} stroke="none" />)}
       {echelon && symbol.echelon.length > 0 && <path d={svgPathData(symbol.echelon)} strokeWidth={1.8 * strokeScale} />}
       {symbol.headquarters && (
         <line
