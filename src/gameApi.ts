@@ -358,6 +358,7 @@ export type GameEvent =
   | { type: "airStrikeResolved"; sideId: string; missionId: number; hexId: string; unitIds: string[]; resolution: StrikeResolution }
   | { type: "airInterdictionZonePlaced"; sideId: string; hexId: string }
   | { type: "airInterdictionZonesRemoved"; sideId: string; hexIds: string[] }
+  | { type: "unitSupplyChanged"; unitId: string; supply: UnitState["supply"] }
   | { type: "reserveStatusChanged"; sideId: string; unitId: string; selected: boolean }
   | { type: "reserveMarkersRemoved"; sideId: string; unitIds: string[] }
   | { type: "unitDisruptionChanged"; unitId: string; disruption: Disruption | null }

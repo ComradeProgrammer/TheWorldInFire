@@ -33,12 +33,13 @@
 - 战斗计划路线与攻击目标的前端地图叠加显示；
 - 空域（规则 11）与进攻打击阶段的空中打击环节：空中点数、空中打击、空中遮断区、混乱/压制标记、战力面损失、消灭和突破标记，并使用带种子的骰子；
 - 预备队/OMG 状态、带突破区的预备队阶段，以及战后阶段的解除压制（见“预备队与战后阶段”）；
+- 在每方战前步骤中追踪的简化补给（见“简化补给”）；
 - 七回合与十四回合状态机测试。
 
 尚未实现：
 
 - 完整单位序列与尚未进入地图数据的道路、河流通行修正；
-- 基于地图控制、国家、城市、敌方控制区、HQ 支援范围和阻断边的动态补给线判定；
+- 完整的规则 10 补给模型（本国与友国、上级 HQ 隶属、港口、地图边缘补给源、城市补给链，以及每场战斗后重新检查战斗补给）；目前实现的是简化的两阵营版本；
 - 拦截、空运损失与升降机司令部完整编制；
 - 核打击、化学打击、炮兵打击、北约纵深遮断、北约防御性空中打击，以及下文“战斗阶段”所列的地面战斗未实现部分；
 - 预备队直升机移动（28.2.2），需要先实现直升机移动；
@@ -69,7 +70,7 @@ Pre-battle
 
 当前原型让双方都经过 `battlePlanning`，以便以后容纳双方的再补给选择。具体规则处理器可以进一步区分强制计划与非强制计划。
 
-`preBattle` 的第一层实现会为当前行动方的单位生成补给检查记录。增援到达时即以完全补给状态进入游戏；战略预备队内的 HQ 或战斗单位在每次检查时恢复为其适用补给类型的有补给状态。地图上的单位暂时保留已有的权威补给状态。完整 LOS 计算要等地图国家归属、城市控制、敌方控制区、HQ 支援范围和补给线阻断数据进入内核后再替换这一保留逻辑。
+`preBattle` 用下文的简化规则检查行动方每个单位的补给，并把结果记录在 `preBattleSupplyChecked` 中。增援到达时即以完全补给状态进入游戏，战略预备队中的单位始终有补给。
 
 `battlePlanning` 现在是行动方的统一命令阶段。选择再补给对象、添加或移除攻击目标、移动其他单位、命令装车、下车或空运之间没有人为规定的提交顺序；每条命令只校验其实际规则前置条件。移动会立即更新权威位置并保存内核选择的路线，攻击目标和再补给目标保存在 `battlePlan` 中。结束阶段时，对每个再补给目标所在格的己方战斗单位统一恢复适用补给状态，计划则保留给后续打击与战斗阶段使用。
 
@@ -170,6 +171,18 @@ jointStatus
 
 28.1 节仍写着预备队单位不能与敌方单位*相邻*；在线规则 12.6 改为不能*在敌方控制区内结束移动*。在线规则优先，因此内核采用 12.6。
 
+### 简化补给
+
+`src/supply.rs` 用一条只区分两大阵营的自定规则取代规则 10，因此不需要逐格的国家数据。
+
+- **补给线**（`los_distances`，与进攻支援共用）：广度优先搜索，不进入敌方单位、敌方控制的城市、全海格，以及没有己方单位或己方自由城市的敌控格，也不跨越阻断格边或全海格边。追踪补给时只有北约可以跨越丹麦渡轮；进攻支援保留原有的渡轮例外。
+- **HQ** 先检查：若一条不超过 10 格的补给线能到达本方控制的任意城市（自由或被占领），则有补给。有补给且不在铁路标记下的 HQ 为其支援范围（第一个战力面的攻击值）内的作战单位提供补给。被压制的 HQ 仍可提供补给。
+- **作战单位**：若补给线能到达 10 格以内的己方自由城市，或范围内提供补给的 HQ，则有补给。任何己方 HQ 都可为任何己方单位提供补给。
+- **西柏林**在地图数据中带有 `enclave: true`：只为距离 0 或 1 的单位提供补给，且从不为 HQ 提供补给。
+- 结果设置 HQ 补给，或同时设置移动补给和战斗补给；状态改变的每个单位都会发出 `unitSupplyChanged`。之后沿用已有效果：缺乏补给的单位战术移动减半，不能行军、铁路移动、空运或设为预备队，战斗力减半；缺乏补给的 HQ 以一半移动力移动，不能装车或提供进攻支援。只有有补给的单位投射空域。
+
+与规则 10 的有意差异：没有国家概念（因此深入敌方领土的单位仍可依靠 10 格以内的自由城市）、没有城市补给和港口补给、没有上级 HQ 隶属、没有地图边缘补给源，也不在每场战斗后重新检查战斗补给。
+
 ## 内核模块结构
 
 游戏状态机按职责拆分，同时由 crate 根统一导出公共类型：
@@ -198,6 +211,8 @@ src/
 ├─ strikes.rs   进攻打击阶段：空中任务、打击表与标记
 ├─ combat.rs    战斗阶段：战斗比、战斗结果表、结果、撤退与推进
 ├─ reserve.rs   预备队/OMG 状态与预备队阶段
+├─ supply.rs    简化补给与补给线追踪
+├─ setup.rs     用于测试的自定义起始局面（GameSetup）
 ├─ airspace.rs  各方视角的空域
 ├─ dice.rs      带种子、可复现的骰子
 ├─ movement.rs  移动规则、寻路与移动预览
@@ -226,7 +241,7 @@ new_game("nato-1983-standard")
 
 ```json
 {
-  "snapshot": { "protocolVersion": 15, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
+  "snapshot": { "protocolVersion": 16, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
   "map": {
     "id": "nato-central-europe",
     "version": 1,
@@ -259,7 +274,7 @@ new_game("nato-baltap-1983")
 
 ```json
 {
-  "protocolVersion": 15,
+  "protocolVersion": 16,
   "gameId": "generated-uuid",
   "revision": 0,
   "scenario": {
@@ -349,7 +364,7 @@ battle_preview({ "request": { "hexId": "2415", "unitIds": ["..."], "supportingHq
 { "type": "advanceAfterCombat", "unitIds": ["soviet.2gta.21motorRifleDivision"] }
 ```
 
-协议 12 在快照中新增 `combat`（战斗、已进攻的单位与格子、已交战单位、待决定的推进），并新增事件 `battleResolved`、`unitRetreated`、`advanceOffered` 和 `unitsAdvanced`。协议 13 加入进攻支援：战斗目标的 `supportHqIds`、战斗报告的 `supportingHqId`、`combat.supportingHqIds`，以及 `unitWithdrawn` 事件。协议 14 将单个 `resupplyTargetUnitId` 替换为 `resupplyTargetUnitIds`，并为再补给命令和事件增加 `selected` 字段。协议 15 加入预备队：`battlePlan.reserveUnitIds`、快照的 `reserve`、`setReserve` 命令，以及 `reserveStatusChanged` 和 `reserveMarkersRemoved` 事件。
+协议 12 在快照中新增 `combat`（战斗、已进攻的单位与格子、已交战单位、待决定的推进），并新增事件 `battleResolved`、`unitRetreated`、`advanceOffered` 和 `unitsAdvanced`。协议 13 加入进攻支援：战斗目标的 `supportHqIds`、战斗报告的 `supportingHqId`、`combat.supportingHqIds`，以及 `unitWithdrawn` 事件。协议 14 将单个 `resupplyTargetUnitId` 替换为 `resupplyTargetUnitIds`，并为再补给命令和事件增加 `selected` 字段。协议 15 加入预备队：`battlePlan.reserveUnitIds`、快照的 `reserve`、`setReserve` 命令，以及 `reserveStatusChanged` 和 `reserveMarkersRemoved` 事件。协议 16 新增 `unitSupplyChanged { unitId, supply }` 事件和地图城市标志 `enclave`。
 
 预备队查询与命令：
 
@@ -409,7 +424,7 @@ reserve_options()  →  { "revision": 4, "units": [{ "unitId": "...", "unavailab
 
 顶栏显示回合进度：行动方（或“Joint”联合）、“Round X / N”，以及由启动数据 `turnSequence` 中该行动者的非自动步骤组成的箭头进度条（Plan、Strike、Combat、Reserve）。`turn.stepIndex` 之前的步骤打勾，当前步骤以该方颜色填充，之后的步骤显示为暗色。
 
-战斗计划阶段中，单位详情视图增加“Mark as Reserve”（北约）或“Mark as OMG”（华约）切换按钮。按钮根据当前 revision 的 `reserve_options` 启用，否则显示内核给出的原因。被标记单位的算子（地图与侧栏）显示金色 RES/OMG 标签，单位数据中有“Reserve”一行，单位列表中有标记，战斗计划面板中也有一行。预备队阶段中，格子视图列出待移动的单位；选中后显示与计划阶段相同的移动控件（内核只保留战术移动可用），可右键下达移动并撤销，移动会显示在战斗计划面板中。地图以黄色阴影显示突破区。战斗日志会报告预备队阶段结束时移除的标记、恢复（移除混乱）以及战后阶段解除压制。
+战斗计划阶段中，单位详情视图增加“Mark as Reserve”（北约）或“Mark as OMG”（华约）切换按钮。按钮根据当前 revision 的 `reserve_options` 启用，否则显示内核给出的原因。被标记单位的算子（地图与侧栏）显示金色 RES/OMG 标签，单位数据中有“Reserve”一行，单位列表中有标记，战斗计划面板中也有一行。预备队阶段中，格子视图列出待移动的单位；选中后显示与计划阶段相同的移动控件（内核只保留战术移动可用），可右键下达移动并撤销，移动会显示在战斗计划面板中。地图以黄色阴影显示突破区。缺乏补给的单位在算子上方显示红色 OOS 标签；单位数据对 HQ 显示 HQ 补给，对其他单位显示移动/战斗补给，缺乏补给时高亮；战斗日志会报告补给变化。战斗日志会报告预备队阶段结束时移除的标记、恢复（移除混乱）以及战后阶段解除压制。
 
 显示选项（镜头缩放、适配地图和地图图层开关）位于右上角“设置”按钮打开的模态设置窗口中。底栏可折叠，并分为两个只读区域：左侧“战斗计划”实时渲染 `snapshot.battlePlan`，右侧“战斗日志”在战斗结算实现之前保持为空。
 

@@ -20,7 +20,9 @@ mod movement;
 mod phase;
 mod planning;
 mod reserve;
+mod setup;
 mod strikes;
+mod supply;
 
 pub use command::{CommandOutcome, GameCommand};
 pub use engine::{GameEngine, GameId, GameSnapshot, GameStatus, PendingDecision, TurnState};
@@ -41,6 +43,7 @@ pub use model::{
     TrainStatus, UnitDefinition, UnitId, UnitLocation, UnitState, UnitStepDefinition, UnitStrength,
     UnitSupplyState, UnitTraitId, UnitTypeId, WaterArea, ODDS_COLUMNS,
 };
+pub use setup::{GameSetup, SetupCity, SetupStart, SetupUnit};
 
 #[cfg(test)]
 mod tests;

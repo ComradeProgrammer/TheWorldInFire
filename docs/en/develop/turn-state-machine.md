@@ -33,12 +33,13 @@ Completed:
 - frontend map overlays for planned routes and attack objectives;
 - Airspace (rule 11) and the Offensive Strike Phase's Air Strike Segment: Air Points, Air Strikes, Air Interdiction Zones, Disrupted/Suppressed markers, step loss, elimination, and Breakthrough Markers, with seeded dice;
 - Reserve/OMG status, the Reserve Phase with Breakthrough Zones, and Post-Battle unsuppression (see "Reserve and Post-Battle Phases");
+- simplified supply traced in each side's Pre-Battle step (see "Simplified supply");
 - tests covering both seven-turn and fourteen-turn state machines.
 
 Not implemented yet:
 
 - the complete unit roster and road/river movement modifiers not yet represented in map data;
-- dynamic line-of-supply calculation based on map control, countries, cities, enemy zones of control, HQ support ranges, and blocked edges;
+- the full rule-10 supply model (home and friendly countries, Superior HQ assignments, ports, map-edge sources, city supply chains, and Combat Supply re-checked after each battle); a simplified two-alliance version is implemented instead;
 - interception, air-transport losses, and the complete Lift Command order of battle;
 - Nuclear, Chemical, and Artillery Strikes, NATO Deep Interdiction, NATO Defensive Air Strikes, and the parts of ground combat listed under "Combat Phase" below;
 - Reserve Helicopter movement (28.2.2), which needs helicopter movement;
@@ -69,7 +70,7 @@ Sides, action order, phase presence, and phase ownership are scenario or ruleset
 
 The current prototype gives both sides a `battlePlanning` phase so that it can eventually hold both sides' resupply choices. Concrete rule handlers can distinguish binding and non-binding plans.
 
-The first `preBattle` implementation records a supply check for every unit belonging to the acting side. Reinforcements enter play fully supplied, and headquarters or combat units in the Strategic Reserve are restored to supplied for every applicable supply type during each check. On-map units temporarily retain their existing authoritative supply state. Complete LOS calculation will replace this retained-state behavior after country ownership, city control, enemy zones of control, HQ support ranges, and supply-blocking map data exist in the core.
+`preBattle` checks the supply of every unit of the acting side with the simplified rule below and records the result in `preBattleSupplyChecked`. Reinforcements enter play fully supplied, and units in the Strategic Reserve are always supplied.
 
 `battlePlanning` is now the acting side's unified command phase. Resupply selection, adding or removing attack objectives, moving another unit, entraining, detraining, and air transport have no artificial submission order; each command checks only its real rule prerequisites. Movement immediately updates the authoritative location and records the route selected by the core. Objectives and resupply targets remain in `battlePlan`. Ending the phase restores applicable supply to the acting side's combat units in each selected target's hex, while the plan remains available to later strike and combat phases.
 
@@ -170,6 +171,18 @@ Not implemented: Attack Helicopters, Defender Reaction, NATO Defensive Strikes, 
 
 Section 28.1 still says a reserve unit may not be *adjacent* to an enemy unit; the living rules' 12.6 says it may not *end its movement in an EZOC*. The core follows 12.6, since the living rules take precedence.
 
+### Simplified supply
+
+`src/supply.rs` replaces rule 10 with a house rule that knows only the two alliances, so no per-hex country data is needed.
+
+- **Line of Supply** (`los_distances`, shared with Offensive Support): a breadth-first search that never enters enemy units, enemy-controlled cities, All-Sea hexes, or EZOC hexes without a friendly unit or friendly Free City, and never crosses Blocked or All-Sea hexsides. For supply, only NATO may cross the Danish Ferry; Offensive Support keeps its existing ferry exception.
+- **HQs** are checked first: supplied if a LOS of up to 10 hexes reaches any city the side controls (Free or Conquered). A supplied HQ not under a train marker supplies combat units within its Support Range (first-step Attack value). Suppressed HQs still supply.
+- **Combat units** are supplied if a LOS reaches a friendly Free City within 10 hexes or a supplying HQ within its range. Any friendly HQ supplies any friendly unit.
+- **West Berlin** carries `enclave: true` in the map data: it supplies only units at distance 0 or 1 and never HQs.
+- The result sets HQ supply, or both Movement and Combat Supply, and emits `unitSupplyChanged` for each unit whose state changed. Existing effects then apply: unsupplied units get half Tactical movement and no March, rail, air transport, or Reserve marker, and fight at half strength; unsupplied HQs move at half allowance and cannot entrain or give Offensive Support. Only supplied units project Airspace.
+
+Deliberate differences from rule 10: no countries (so a unit inside enemy territory can still draw on a Free City within 10 hexes), no city or port supply, no Superior HQ assignments, no map-edge sources, and Combat Supply is not re-checked after each battle.
+
 ## Core module layout
 
 The game state machine is split by responsibility while the crate root provides a stable public API:
@@ -198,6 +211,8 @@ src/
 ├─ strikes.rs   Offensive Strike Phase: air missions, Strike Table, markers
 ├─ combat.rs    Combat Phase: odds, CRT, results, retreat, advance
 ├─ reserve.rs   Reserve/OMG status and the Reserve Phase
+├─ supply.rs    simplified supply and Line of Supply tracing
+├─ setup.rs     custom starting situations (GameSetup) for tests
 ├─ airspace.rs  Airspace from each side's point of view
 ├─ dice.rs      seeded, reproducible dice
 ├─ movement.rs  movement rules, pathfinding, and movement previews
@@ -226,7 +241,7 @@ new_game("nato-1983-standard")
 
 ```json
 {
-  "snapshot": { "protocolVersion": 15, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
+  "snapshot": { "protocolVersion": 16, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
   "map": {
     "id": "nato-central-europe",
     "version": 1,
@@ -259,7 +274,7 @@ Current snapshot example:
 
 ```json
 {
-  "protocolVersion": 15,
+  "protocolVersion": 16,
   "gameId": "generated-uuid",
   "revision": 0,
   "scenario": {
@@ -349,7 +364,7 @@ battle_preview({ "request": { "hexId": "2415", "unitIds": ["..."], "supportingHq
 { "type": "advanceAfterCombat", "unitIds": ["soviet.2gta.21motorRifleDivision"] }
 ```
 
-Protocol 12 adds the snapshot's `combat` (battles, attacked units and hexes, Engaged units, pending advance) and the events `battleResolved`, `unitRetreated`, `advanceOffered`, and `unitsAdvanced`. Protocol 13 adds Offensive Support: `supportHqIds` on combat objectives, `supportingHqId` on battle reports, `combat.supportingHqIds`, and the `unitWithdrawn` event. Protocol 14 replaces the single `resupplyTargetUnitId` with `resupplyTargetUnitIds` and adds `selected` to the resupply command and event. Protocol 15 adds reserves: `battlePlan.reserveUnitIds`, the snapshot's `reserve`, the `setReserve` command, and the `reserveStatusChanged` and `reserveMarkersRemoved` events.
+Protocol 12 adds the snapshot's `combat` (battles, attacked units and hexes, Engaged units, pending advance) and the events `battleResolved`, `unitRetreated`, `advanceOffered`, and `unitsAdvanced`. Protocol 13 adds Offensive Support: `supportHqIds` on combat objectives, `supportingHqId` on battle reports, `combat.supportingHqIds`, and the `unitWithdrawn` event. Protocol 14 replaces the single `resupplyTargetUnitId` with `resupplyTargetUnitIds` and adds `selected` to the resupply command and event. Protocol 15 adds reserves: `battlePlan.reserveUnitIds`, the snapshot's `reserve`, the `setReserve` command, and the `reserveStatusChanged` and `reserveMarkersRemoved` events. Protocol 16 adds the `unitSupplyChanged { unitId, supply }` event and the map city flag `enclave`.
 
 Reserve query and command:
 
@@ -409,7 +424,7 @@ After a battle the objective hex is selected automatically. The top-bar action r
 
 The top bar shows the turn progress: the acting side (or Joint), "Round X / N", and a chevron track of that actor's non-automatic steps from the bootstrap `turnSequence` (Plan, Strike, Combat, Reserve). Steps before `turn.stepIndex` are ticked, the current one is filled in the side's colour, and later ones are dim.
 
-During Battle Planning the unit detail view adds a "Mark as Reserve" (NATO) or "Mark as OMG" (WP) toggle. It is enabled from `reserve_options` for the current revision and otherwise shows the core's reason. Marked units get a gold RES/OMG tab on their counter (map and sidebar), a Reserve row in the unit data, a tag in unit lists, and a line in the Battle Plan pane. In the Reserve Phase the hex view lists the units to move. Selecting one shows the same movement controls as planning (the core leaves only Tactical enabled), with right-click orders and Undo; its moves appear in the Battle Plan pane. Breakthrough Zones are shaded yellow on the map. The Combat Log reports the markers removed at the end of the Reserve Phase, Recovery (Disrupted removed), and Post-Battle unsuppression.
+During Battle Planning the unit detail view adds a "Mark as Reserve" (NATO) or "Mark as OMG" (WP) toggle. It is enabled from `reserve_options` for the current revision and otherwise shows the core's reason. Marked units get a gold RES/OMG tab on their counter (map and sidebar), a Reserve row in the unit data, a tag in unit lists, and a line in the Battle Plan pane. In the Reserve Phase the hex view lists the units to move. Selecting one shows the same movement controls as planning (the core leaves only Tactical enabled), with right-click orders and Undo; its moves appear in the Battle Plan pane. Breakthrough Zones are shaded yellow on the map. Out-of-supply units carry a red OOS tab above their counter; the unit data shows HQ supply for HQs and Movement/Combat supply for other units, highlighted when out of supply, and the Combat Log reports supply changes. The Combat Log reports the markers removed at the end of the Reserve Phase, Recovery (Disrupted removed), and Post-Battle unsuppression.
 
 Display options (camera zoom, fit, and map-layer toggles) live in a modal Settings dialog opened from the top-right Settings button. The bottom bar is collapsible and split into two read-only panes: Battle Plan, rendered live from `snapshot.battlePlan`, and Combat Log, which stays empty until combat resolution exists.
 

@@ -6,8 +6,8 @@
 use std::io::{self, BufRead, Write};
 
 use ooaw_core::{
-    find_scenario, GameCommand, GameEngine, GameEvent, GameId, GameSnapshot, MapDefinition,
-    ScenarioSummary,
+    find_scenario, GameCommand, GameEngine, GameEvent, GameId, GameSetup, GameSnapshot,
+    MapDefinition, ScenarioSummary,
 };
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +25,9 @@ enum EngineRequest {
         scenario_id: String,
         /// Client-selected game identifier, also used to seed deterministic dice.
         game_id: String,
+        /// Optional custom starting situation laid out over the scenario.
+        #[serde(default)]
+        setup: Option<GameSetup>,
     },
     GetSnapshot,
     SubmitCommand {
@@ -100,6 +103,7 @@ impl EngineSession {
             EngineRequest::NewGame {
                 scenario_id,
                 game_id,
+                setup,
             } => {
                 let Some(scenario) = find_scenario(&scenario_id) else {
                     return EngineResponse::error(
@@ -107,7 +111,11 @@ impl EngineSession {
                         format!("Unknown scenario: {scenario_id}"),
                     );
                 };
-                match GameEngine::new(GameId(game_id), scenario) {
+                let game = match &setup {
+                    Some(setup) => GameEngine::with_setup(GameId(game_id), scenario, setup),
+                    None => GameEngine::new(GameId(game_id), scenario),
+                };
+                match game {
                     Ok(game) => {
                         let response = EngineResponse::GameStarted {
                             snapshot: game.snapshot(),

@@ -168,6 +168,13 @@ pub enum GameEvent {
         /// Marked hexes removed.
         hex_ids: Vec<HexId>,
     },
+    /// A unit's supply status changed when its side's supply was checked.
+    UnitSupplyChanged {
+        /// Unit.
+        unit_id: UnitId,
+        /// New supply state.
+        supply: UnitSupplyState,
+    },
     /// A unit gained or lost its Reserve/OMG Marker (12.6).
     ReserveStatusChanged {
         /// Side owning the unit.

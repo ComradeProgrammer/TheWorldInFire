@@ -30,6 +30,8 @@ export interface CityData {
   defense: number;
   /** Side that controls the city at the start of play. */
   owner: string;
+  /** An isolated enclave (West Berlin) that supplies only units in or next to it. */
+  enclave?: boolean;
 }
 
 export interface HexData {

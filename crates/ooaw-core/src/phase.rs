@@ -1,6 +1,6 @@
 use crate::engine::GameEngine;
-use crate::event::{GameEvent, UnitSupplyCheck};
-use crate::model::{PhaseActor, UnitLocation};
+use crate::event::GameEvent;
+use crate::model::PhaseActor;
 
 impl GameEngine {
     /// Dispatches initialization and automatic rules for the newly active phase.
@@ -74,23 +74,9 @@ impl GameEngine {
             return;
         };
 
-        let mut checked_units = Vec::new();
-        for unit in self
-            .units
-            .values_mut()
-            .filter(|unit| unit.definition.side_id == side_id)
-        {
-            // Reinforcements and units in the Strategic Reserve are always supplied.
-            // On-map LOS calculation will replace the retained on-map state once the
-            // authoritative map-control and HQ-range model is available.
-            if matches!(unit.location, UnitLocation::StrategicReserve) {
-                unit.mark_fully_supplied();
-            }
-            checked_units.push(UnitSupplyCheck {
-                unit_id: unit.id().clone(),
-                supply: unit.supply.clone(),
-            });
-        }
+        // Simplified supply (see `supply.rs`): units in the Strategic Reserve are
+        // supplied; units on the map trace to a friendly Free City or a supplied HQ.
+        let checked_units = self.update_supply(&side_id, events);
 
         events.push(GameEvent::PreBattleSupplyChecked {
             game_turn: self.game_turn,

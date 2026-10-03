@@ -774,7 +774,12 @@ impl GameEngine {
             // 28.2.1: half the printed allowance, rounding fractions up.
             _ if phase == MovementPhase::Reserve => printed.div_ceil(2),
             MovementMode::March => printed.saturating_mul(2),
-            _ if unit.supply.movement == Some(SupplyStatus::OutOfSupply) => printed / 2,
+            // 10.4.3 (1), 10.5: unsupplied units and HQs move at half allowance.
+            _ if unit.supply.movement == Some(SupplyStatus::OutOfSupply)
+                || unit.supply.headquarters == Some(SupplyStatus::OutOfSupply) =>
+            {
+                printed / 2
+            }
             _ => printed,
         };
         let movements = self.phase_movements(phase)?;

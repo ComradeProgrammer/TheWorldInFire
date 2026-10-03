@@ -124,7 +124,18 @@ export const COUNTER = {
   valuesY: 27,
   /** Reserve/OMG Marker tab straddling the counter's bottom edge. */
   reserveTab: { width: 34, height: 14, y: 33 },
+  /** Out of Supply tab above the counter's top edge, clear of the nation band. */
+  supplyTab: { width: 34, height: 13, y: -49 },
 } as const;
+
+/** Out of Supply tab colours. */
+export const SUPPLY_TAB = { fill: 0xff3b30, ink: 0xffffff } as const;
+
+/** Whether the core reports any of the unit's supply types as out of supply. */
+export function outOfSupply(unit: UnitState): boolean {
+  const { headquarters, movement, combat } = unit.supply;
+  return [headquarters, movement, combat].includes("outOfSupply");
+}
 
 /** Reserve/OMG Marker tab colours. */
 export const RESERVE_TAB = { fill: 0xf1d48c, ink: 0x101923 } as const;

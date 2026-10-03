@@ -6,8 +6,10 @@ import {
   NATION_COLORS,
   nationCode,
   nationInk,
+  outOfSupply,
   RESERVE_TAB,
   reserveTabLabel,
+  SUPPLY_TAB,
   svgPathData,
   unitSymbol,
 } from "../map/unitSymbols";
@@ -64,9 +66,12 @@ export function UnitCounterIcon({ unit, size = 64, x, y, reserve = false }: {
   const { band } = COUNTER;
   const scale = COUNTER.symbolScale;
   const symbol = unitSymbol(unit);
-  const { reserveTab: tab } = COUNTER;
-  // Room below the counter for the marker tab when it is shown.
-  const extra = reserve ? tab.y + tab.height - half : 0;
+  const { reserveTab: tab, supplyTab } = COUNTER;
+  const unsupplied = outOfSupply(unit);
+  // Room around the counter for marker tabs when they are shown.
+  const below = reserve ? tab.y + tab.height - half : 0;
+  const above = unsupplied ? -supplyTab.y - half - 3 : 0;
+  const extra = below + above;
   const box = COUNTER.size + 6;
   return (
     <svg
@@ -75,7 +80,7 @@ export function UnitCounterIcon({ unit, size = 64, x, y, reserve = false }: {
       y={y}
       width={size}
       height={(size * (box + extra)) / box}
-      viewBox={`${-half - 3} ${-half - 3} ${box} ${box + extra}`}
+      viewBox={`${-half - 3} ${-half - 3 - above} ${box} ${box + extra}`}
       role="img"
       aria-label={`${unit.name} counter`}
     >
@@ -101,6 +106,14 @@ export function UnitCounterIcon({ unit, size = 64, x, y, reserve = false }: {
           <circle cx={-half + 6} cy={half - 6} r={15} fill="#ff9f1c" stroke="#05080c" strokeWidth={3} />
           <text x={-half + 6} y={half - 6} className="counter-icon-text" fontSize={17} fill="#05080c">
             {unit.disruption === "suppressed" ? "S" : "D"}
+          </text>
+        </>
+      )}
+      {unsupplied && (
+        <>
+          <rect x={-supplyTab.width / 2} y={supplyTab.y} width={supplyTab.width} height={supplyTab.height} rx={3} fill={css(SUPPLY_TAB.fill)} stroke="#05080c" strokeWidth={2} />
+          <text x={0} y={supplyTab.y + supplyTab.height / 2} className="counter-icon-text" fontSize={10} fill={css(SUPPLY_TAB.ink)}>
+            OOS
           </text>
         </>
       )}

@@ -164,3 +164,194 @@ fn commands_drive_the_engine_through_its_json_process_boundary() {
         json!(["soviet.6thGuardsMotorRifleDivision"])
     );
 }
+
+/// Submits a command at `revision` and returns the accepted response, or panics with the rejection.
+fn accepted(engine: &mut EngineProcess, revision: &mut u64, command: Value) -> Value {
+    let response = engine.send(json!({
+        "type": "submitCommand",
+        "expectedRevision": *revision,
+        "command": command
+    }));
+    assert_eq!(response["type"], "commandAccepted", "rejected: {response}");
+    *revision = response["revision"].as_u64().expect("accepted revision");
+    response
+}
+
+/// Phase id of the current step in a response's snapshot.
+fn phase(response: &Value) -> &str {
+    response["snapshot"]["turn"]["currentStep"]["phaseId"]
+        .as_str()
+        .expect("current phase")
+}
+
+/// Plays a BALTAP Warsaw Pact turn through Reserve/OMG marking, the Reserve
+/// Phase, Post-Battle, and NATO's supply check using only the JSON protocol.
+#[test]
+fn a_reserve_unit_moves_in_the_reserve_phase_and_supply_is_checked() {
+    const OMG: &str = "eastGermany.2gta.8motorRifleDivision";
+    const UNMARKED: &str = "soviet.2gta.21motorRifleDivision";
+    let mut engine = EngineProcess::start();
+    let started = engine.send(json!({
+        "type": "newGame",
+        "scenarioId": "nato-baltap-1983",
+        "gameId": "black-box-reserve"
+    }));
+    assert_eq!(started["type"], "gameStarted");
+    let mut revision = 0;
+
+    // Opening deployment, then the WP marks one division OMG.
+    let opening = accepted(&mut engine, &mut revision, json!({ "type": "endPhase" }));
+    assert_eq!(phase(&opening), "battlePlanning");
+    let marked = accepted(
+        &mut engine,
+        &mut revision,
+        json!({ "type": "setReserve", "unitId": OMG, "selected": true }),
+    );
+    assert_eq!(event_types(&marked), vec!["reserveStatusChanged"]);
+    assert_eq!(
+        marked["snapshot"]["battlePlan"]["reserveUnitIds"],
+        json!([OMG])
+    );
+
+    // Strike and Combat pass; the Reserve Phase opens with the marked unit.
+    accepted(&mut engine, &mut revision, json!({ "type": "endPhase" }));
+    accepted(&mut engine, &mut revision, json!({ "type": "endPhase" }));
+    let reserve = accepted(&mut engine, &mut revision, json!({ "type": "endPhase" }));
+    assert_eq!(phase(&reserve), "reserve");
+    assert_eq!(reserve["snapshot"]["reserve"]["unitIds"], json!([OMG]));
+
+    // Unmarked units stay put; marked ones move by Tactical movement only.
+    let unmarked = engine.send(json!({
+        "type": "submitCommand",
+        "expectedRevision": revision,
+        "command": { "type": "moveUnit", "unitId": UNMARKED, "destination": "2411", "mode": "tactical" }
+    }));
+    assert_eq!(unmarked["code"], "notInReserve");
+    let march = engine.send(json!({
+        "type": "submitCommand",
+        "expectedRevision": revision,
+        "command": { "type": "moveUnit", "unitId": OMG, "destination": "2111", "mode": "march" }
+    }));
+    assert_eq!(march["code"], "reserveTacticalOnly");
+    let moved = accepted(
+        &mut engine,
+        &mut revision,
+        json!({ "type": "moveUnit", "unitId": OMG, "destination": "2111", "mode": "tactical" }),
+    );
+    assert_eq!(event_types(&moved)[0], "unitMoved");
+    assert_eq!(moved["snapshot"]["reserve"]["movements"][0]["to"], "2111");
+
+    // Ending the Reserve Phase removes the marker, runs Post-Battle, and
+    // checks NATO's supply in its Pre-Battle step.
+    let ended = accepted(&mut engine, &mut revision, json!({ "type": "endPhase" }));
+    let events = event_types(&ended);
+    assert!(events.contains(&"reserveMarkersRemoved"));
+    assert!(events.contains(&"preBattleSupplyChecked"));
+    assert_eq!(ended["snapshot"]["reserve"], Value::Null);
+    assert_eq!(ended["snapshot"]["battlePlan"]["sideId"], "nato");
+    let nato_check = ended["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["type"] == "preBattleSupplyChecked")
+        .unwrap();
+    assert_eq!(nato_check["sideId"], "nato");
+    // Nobody is cut off in the opening position.
+    assert!(!events.contains(&"unitSupplyChanged"));
+    assert!(nato_check["units"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|check| !check["supply"].to_string().contains("outOfSupply")));
+}
+
+/// Starts a game from `setup` (see `GameSetup`) and returns the `gameStarted` response.
+fn start_game(engine: &mut EngineProcess, scenario_id: &str, game_id: &str, setup: Value) -> Value {
+    let started = engine.send(json!({
+        "type": "newGame",
+        "scenarioId": scenario_id,
+        "gameId": game_id,
+        "setup": setup
+    }));
+    assert_eq!(started["type"], "gameStarted", "setup rejected: {started}");
+    started
+}
+
+/// Finds a unit in a response's snapshot.
+fn unit<'a>(response: &'a Value, id: &str) -> &'a Value {
+    response["snapshot"]["units"]
+        .as_array()
+        .expect("snapshot units")
+        .iter()
+        .find(|unit| unit["id"] == id)
+        .unwrap_or_else(|| panic!("unit {id} not in snapshot"))
+}
+
+/// A setup lays out an encirclement that ordinary play would take turns to
+/// reach; NATO's next Pre-Battle supply check cuts the surrounded brigade off.
+#[test]
+fn a_setup_can_start_from_any_situation() {
+    const BRIGADE: &str = "westGermany.6panzergrenadierDivision.16panzergrenadierBrigade";
+    let mut engine = EngineProcess::start();
+    let started = start_game(
+        &mut engine,
+        "nato-baltap-1983",
+        "black-box-encircled",
+        json!({
+            "start": { "gameTurn": 1, "sideId": "warsawPact", "phaseId": "reserve" },
+            "units": [
+                { "id": BRIGADE, "hex": "2617" },
+                { "id": "soviet.2gta.21motorRifleDivision", "hex": "2516" },
+                { "id": "soviet.2gta.16guardsTankDivision", "hex": "2519" },
+                { "id": "soviet.2gta.94guardsMotorRifleDivision", "hex": "2817" }
+            ]
+        }),
+    );
+    assert_eq!(phase(&started), "reserve");
+    assert_eq!(started["snapshot"]["units"].as_array().unwrap().len(), 4);
+    assert_eq!(unit(&started, BRIGADE)["supply"]["movement"], "supplied");
+
+    let mut revision = 0;
+    let nato_turn = accepted(&mut engine, &mut revision, json!({ "type": "endPhase" }));
+    assert_eq!(phase(&nato_turn), "battlePlanning");
+    let cut_off = nato_turn["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["type"] == "unitSupplyChanged")
+        .expect("supply change event");
+    assert_eq!(cut_off["unitId"], BRIGADE);
+    assert_eq!(cut_off["supply"]["combat"], "outOfSupply");
+    assert_eq!(
+        unit(&nato_turn, BRIGADE)["supply"]["movement"],
+        "outOfSupply"
+    );
+
+    // Out of Movement Supply, the brigade may not March out of the pocket.
+    let march = engine.send(json!({
+        "type": "submitCommand",
+        "expectedRevision": revision,
+        "command": { "type": "moveUnit", "unitId": BRIGADE, "destination": "2717", "mode": "march" }
+    }));
+    assert_eq!(march["code"], "marchUnavailable");
+}
+
+/// Malformed setups are rejected with a reason instead of starting a game.
+#[test]
+fn invalid_setups_are_rejected() {
+    let mut engine = EngineProcess::start();
+    let new_game = |setup: Value| json!({ "type": "newGame", "scenarioId": "nato-baltap-1983", "gameId": "bad-setup", "setup": setup });
+    let unknown_unit = engine.send(new_game(
+        json!({ "units": [{ "id": "nobody", "hex": "2617" }] }),
+    ));
+    assert_eq!(unknown_unit["code"], "invalidSetup");
+    let unreachable = engine.send(new_game(
+        json!({ "start": { "gameTurn": 9, "sideId": "nato", "phaseId": "combat" } }),
+    ));
+    assert_eq!(unreachable["code"], "invalidSetup");
+    let typo = engine.send(new_game(json!({ "unit": [] })));
+    assert_eq!(typo["code"], "invalidRequest");
+    // No game was started by the rejected requests.
+    let snapshot = engine.send(json!({ "type": "getSnapshot" }));
+    assert_eq!(snapshot["code"], "gameNotStarted");
+}

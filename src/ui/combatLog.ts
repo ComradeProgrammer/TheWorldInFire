@@ -35,6 +35,12 @@ export function describeCombatEvents(events: GameEvent[], units: UnitState[], fi
       case "phaseStarted":
         phase = event.step.phaseId;
         break;
+      case "unitSupplyChanged": {
+        const { headquarters, movement, combat } = event.supply;
+        const out = [headquarters, movement, combat].includes("outOfSupply");
+        lines.push({ tone: out ? "hit" : "info", text: `${name(event.unitId)} ${out ? "is out of supply" : "is back in supply"}` });
+        break;
+      }
       case "reserveMarkersRemoved":
         lines.push({
           tone: "info",

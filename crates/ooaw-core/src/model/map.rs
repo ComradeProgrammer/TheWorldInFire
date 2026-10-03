@@ -119,6 +119,9 @@ pub struct MapCity {
         skip_serializing_if = "is_true"
     )]
     pub contests_airspace: bool,
+    /// An isolated enclave (West Berlin) that supplies only units in or adjacent to it (10.3.3.4).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub enclave: bool,
 }
 
 /// Defaults omitted city airspace participation to true during deserialization.
@@ -129,6 +132,11 @@ fn contests_airspace_by_default() -> bool {
 /// Identifies the default true value so serialization can omit the city airspace flag.
 fn is_true(value: &bool) -> bool {
     *value
+}
+
+/// Identifies the default false value so serialization can omit the enclave flag.
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Rules and presentation data for one playable hex.

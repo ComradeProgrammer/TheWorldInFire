@@ -210,7 +210,7 @@ impl GameEngine {
     /// A [`GameSnapshot`] that can be retained independently of the engine.
     pub fn snapshot(&self) -> GameSnapshot {
         GameSnapshot {
-            protocol_version: 15,
+            protocol_version: 16,
             game_id: self.game_id.clone(),
             revision: self.revision,
             scenario: ScenarioSummary::from(&self.scenario),
@@ -340,7 +340,7 @@ impl GameEngine {
     }
 
     /// Cleans up the current phase and resolves automatic phases until input is needed or the game ends.
-    fn end_phase(&mut self) -> Result<Vec<GameEvent>, RuleError> {
+    pub(crate) fn end_phase(&mut self) -> Result<Vec<GameEvent>, RuleError> {
         // Finishes the current interactive phase and advances to the next one.
         //
         // Phase-specific cleanup runs before `PhaseEnded` is emitted. Automatic

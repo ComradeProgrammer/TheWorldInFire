@@ -281,8 +281,14 @@ function UnitDetails({ unit, plan, reserve, reserveOption, activeSideId, phaseId
         <div><dt>Location</dt><dd>{location}</dd></div>
         <div><dt>Combat values</dt><dd>{step ? `${step.attack} / ${step.defense} / ${step.movement}` : "—"}</dd></div>
         <div><dt>Formation</dt><dd>{unit.formationId ? readableId(unit.formationId.slice(unit.formationId.lastIndexOf(".") + 1)) : "Independent"}</dd></div>
-        <div><dt>Movement supply</dt><dd>{unit.supply.movement ? readableId(unit.supply.movement) : "N/A"}</dd></div>
-        <div><dt>Combat supply</dt><dd>{unit.supply.combat ? readableId(unit.supply.combat) : "N/A"}</dd></div>
+        {unit.supply.headquarters ? (
+          <div><dt>HQ supply</dt><dd className={unit.supply.headquarters === "outOfSupply" ? "status-disrupted" : undefined}>{readableId(unit.supply.headquarters)}</dd></div>
+        ) : (
+          <>
+            <div><dt>Movement supply</dt><dd className={unit.supply.movement === "outOfSupply" ? "status-disrupted" : undefined}>{unit.supply.movement ? readableId(unit.supply.movement) : "N/A"}</dd></div>
+            <div><dt>Combat supply</dt><dd className={unit.supply.combat === "outOfSupply" ? "status-disrupted" : undefined}>{unit.supply.combat ? readableId(unit.supply.combat) : "N/A"}</dd></div>
+          </>
+        )}
         <div><dt>Rail status</dt><dd>{unit.trainStatus ? readableId(unit.trainStatus) : "Not entrained"}</dd></div>
         <div><dt>Status</dt><dd className={unit.disruption ? "status-disrupted" : undefined}>{unit.disruption ? readableId(unit.disruption) : "Ready"}</dd></div>
         {marked && <div><dt>Reserve</dt><dd className="status-reserve">{reserveMarkerName(unit.sideId)} marker</dd></div>}

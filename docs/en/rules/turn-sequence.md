@@ -28,7 +28,7 @@ Each player turn proceeds through these phases in order:
 
 The phases must be completed in this order. A player must finish the current phase before beginning the next and cannot return to a completed phase during the same player turn.
 
-The Pre-Battle Phase resolves automatically and requires no player input. On entering it, the game records the applicable HQ, movement, and combat supply state of each unit belonging to the acting side. Newly arrived reinforcements and units in the Strategic Reserve are supplied. Play then advances automatically to the Battle Planning Phase.
+The Pre-Battle Phase resolves automatically and requires no player input. On entering it, the game checks the supply of every unit belonging to the acting side (see [Supply](supply.md)). Newly arrived reinforcements and units in the Strategic Reserve are supplied. Play then advances automatically to the Battle Planning Phase.
 
 Battle Planning combines the player actions formerly spread across Movement, Recovery, and Battle Planning. In any order, the acting side may select one resupply target, move units, order units to entrain or detrain, use rail or air transport, add or remove attack objectives, and place units in reserve (see [Reserves](reserve.md)). Movement follows the [movement rules](movement.md). An attack objective must be a hex that currently contains at least one enemy unit, or an enemy Free City (see [Cities](cities.md)). Sea transport is not part of the current implementation. Entraining consumes one complete friendly planning phase; the unit becomes Entrained at the beginning of its side's next planning phase and may then move by rail.
 

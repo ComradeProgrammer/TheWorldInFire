@@ -8,7 +8,7 @@
 //! implemented.
 
 use std::cmp::Reverse;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 use crate::airspace::hex_distance;
 use crate::engine::GameEngine;
@@ -21,6 +21,7 @@ use crate::model::{
     UnitLocation, UnitState, UnitStrength, ODDS_COLUMNS,
 };
 use crate::movement::MovementContext;
+use crate::supply::{los_distances, support_range};
 
 /// Combat Results Table as printed on the map: rows are die rolls 1-6,
 /// columns follow [`ODDS_COLUMNS`].
@@ -1348,7 +1349,7 @@ impl GameEngine {
         {
             return unavailable("Each HQ may support only one battle per Combat Phase");
         }
-        let range = hq.definition.steps.first().map_or(0, |step| step.attack);
+        let range = support_range(hq);
         let distances = self.support_distances(side_id, hq_hex, range);
         let reaches = attackers.iter().any(|unit| {
             let subordinate = unit
@@ -1378,35 +1379,7 @@ impl GameEngine {
         // a friendly unit, All-Sea hexes, or Blocked and All-Sea hexsides (the
         // Danish Ferry excepted). The HQ's hex counts; the unit's does not.
         let context = MovementContext::new(self, side_id);
-        let mut distances = HashMap::from([(from.0.clone(), 0_u16)]);
-        let mut queue = VecDeque::from([from.0.clone()]);
-        while let Some(current) = queue.pop_front() {
-            let distance = distances[&current];
-            if distance >= range {
-                continue;
-            }
-            for next in context.neighbors(&current) {
-                if distances.contains_key(next) {
-                    continue;
-                }
-                let features = context.side_features(&current, next);
-                let blocked_side = context.prohibited_hexside(&current, next)
-                    && !features.contains(&HexsideFeature::DanishFerry);
-                let hex = context.hexes[next];
-                if blocked_side
-                    || hex.terrain == Terrain::Sea
-                    || context.enemy_occupied.contains(next)
-                    || context.enemy_free_cities.contains(next)
-                    || context.enemy_conquered_cities.contains(next)
-                    || (context.in_enemy_zoc(next) && !context.negates_ezoc_for_entry(next))
-                {
-                    continue;
-                }
-                distances.insert(next.to_owned(), distance + 1);
-                queue.push_back(next.to_owned());
-            }
-        }
-        distances
+        los_distances(&context, &from.0, range, true)
     }
 
     // ------------------------------------------------------------------ eligibility

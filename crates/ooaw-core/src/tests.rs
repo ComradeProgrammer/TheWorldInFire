@@ -33,7 +33,7 @@ fn new_game_starts_at_first_scenario_defined_step() {
     let step = snapshot.turn.current_step.unwrap();
 
     assert_eq!(snapshot.revision, 0);
-    assert_eq!(snapshot.protocol_version, 15);
+    assert_eq!(snapshot.protocol_version, 16);
     assert_eq!(snapshot.turn.game_turn, 1);
     assert_eq!(step.phase_id.0, "jointStatus");
     assert_eq!(step.actor, PhaseActor::All);
@@ -46,7 +46,7 @@ fn new_game_starts_at_first_scenario_defined_step() {
 fn snapshot_identifies_the_scenario_map_without_repeating_its_data() {
     let json = serde_json::to_value(new_game().snapshot()).unwrap();
 
-    assert_eq!(json["protocolVersion"], 15);
+    assert_eq!(json["protocolVersion"], 16);
     assert_eq!(json["scenario"]["mapId"], "nato-central-europe");
     assert!(json.get("map").is_none());
 }
@@ -2208,4 +2208,182 @@ fn set_reserve_deserializes_from_a_camel_case_ipc_message() {
     }))
     .unwrap();
     assert_eq!(command, set_reserve(GERMAN, true));
+}
+
+// ------------------------------------------------------------------ supply
+
+const LJ_HQ: &str = "westGermany.landjut.hq";
+const SOVIET_3: &str = "soviet.2gta.94guardsMotorRifleDivision";
+
+fn check_supply(game: &mut GameEngine, side: &str) -> Vec<GameEvent> {
+    let mut events = Vec::new();
+    game.update_supply(&SideId(side.to_owned()), &mut events);
+    events
+}
+
+fn supplied(game: &GameEngine, unit: &str) -> bool {
+    let supply = &game.units[&UnitId(unit.to_owned())].supply;
+    [supply.headquarters, supply.movement, supply.combat]
+        .iter()
+        .flatten()
+        .all(|status| *status == SupplyStatus::Supplied)
+}
+
+#[test]
+fn units_within_ten_hexes_of_a_friendly_free_city_are_supplied() {
+    // 2617 is two hexes from Lüneburg; 2402 is more than ten from any NATO city.
+    let mut game = baltap_planning("nato", &[(GERMAN, "2617"), (PZG_17, "2402")]);
+    let events = check_supply(&mut game, "nato");
+    assert!(supplied(&game, GERMAN));
+    assert!(!supplied(&game, PZG_17));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        GameEvent::UnitSupplyChanged { unit_id, .. } if unit_id.0 == PZG_17
+    )));
+    // An unchanged unit produces no event.
+    assert!(events.iter().all(|event| !matches!(
+        event,
+        GameEvent::UnitSupplyChanged { unit_id, .. } if unit_id.0 == GERMAN
+    )));
+}
+
+#[test]
+fn an_encircled_unit_is_out_of_supply() {
+    // Three Soviet divisions two hexes away cover all six neighbours with their ZOCs.
+    let mut game = baltap_planning(
+        "nato",
+        &[
+            (GERMAN, "2617"),
+            (SOVIET, "2516"),
+            (SOVIET_2, "2519"),
+            (SOVIET_3, "2817"),
+        ],
+    );
+    check_supply(&mut game, "nato");
+    assert!(!supplied(&game, GERMAN));
+    // Opening one side of the ring restores the Line of Supply.
+    game.units.remove(&UnitId(SOVIET_3.to_owned()));
+    check_supply(&mut game, "nato");
+    assert!(supplied(&game, GERMAN));
+}
+
+#[test]
+fn a_supplied_hq_supplies_units_within_its_support_range() {
+    // LANDJUT (Support Range 3) at 2305 reaches Lübeck and the brigade at 2402.
+    let mut game = baltap_planning("nato", &[(PZG_17, "2402"), (LJ_HQ, "2305")]);
+    check_supply(&mut game, "nato");
+    assert!(supplied(&game, LJ_HQ));
+    assert!(supplied(&game, PZG_17));
+
+    // An HQ under a train marker supplies no one.
+    game.units
+        .get_mut(&UnitId(LJ_HQ.to_owned()))
+        .unwrap()
+        .train_status = Some(TrainStatus::Entraining);
+    check_supply(&mut game, "nato");
+    assert!(!supplied(&game, PZG_17));
+
+    // Nor does an eliminated one.
+    game.units
+        .get_mut(&UnitId(LJ_HQ.to_owned()))
+        .unwrap()
+        .train_status = None;
+    check_supply(&mut game, "nato");
+    assert!(supplied(&game, PZG_17));
+    game.units.remove(&UnitId(LJ_HQ.to_owned()));
+    check_supply(&mut game, "nato");
+    assert!(!supplied(&game, PZG_17));
+}
+
+#[test]
+fn an_unsupplied_hq_supplies_no_one_and_moves_at_half_allowance() {
+    let mut game = baltap_planning("nato", &[(LJ_HQ, "2402"), (PZG_17, "2403")]);
+    check_supply(&mut game, "nato");
+    assert!(!supplied(&game, LJ_HQ));
+    assert!(!supplied(&game, PZG_17));
+    // Movement Allowance 4 halves to 2; only a single-hex Minimum move may cost more.
+    let options = game
+        .movement_options(&UnitId(LJ_HQ.to_owned()), MovementMode::Tactical)
+        .unwrap();
+    assert!(!options.is_empty());
+    assert!(options
+        .iter()
+        .all(|option| option.cost <= 2 || option.path.len() == 1));
+}
+
+#[test]
+fn west_berlin_supplies_only_units_in_or_next_to_it() {
+    let mut game = baltap_planning(
+        "nato",
+        &[(GERMAN, "3007"), (PZG_17, "3008"), (DANE, "3009")],
+    );
+    // Every hex near West Berlin is within ten hexes of a West German city, so
+    // hand all other NATO cities to the WP to leave West Berlin as the only source.
+    for (hex_id, controller) in game.city_control.iter_mut() {
+        if hex_id.0 != "3007" && controller.0 == "nato" {
+            *controller = SideId("warsawPact".to_owned());
+        }
+    }
+    check_supply(&mut game, "nato");
+    assert!(supplied(&game, GERMAN));
+    assert!(supplied(&game, PZG_17));
+    assert!(!supplied(&game, DANE));
+}
+
+#[test]
+fn pre_battle_checks_the_acting_sides_supply() {
+    let mut game = baltap_planning("nato", &[(PZG_17, "2402")]);
+    assert!(supplied(&game, PZG_17));
+    advance_to(&mut game, "warsawPact", "battlePlanning");
+    // The WP Pre-Battle Phase does not check NATO units.
+    assert!(supplied(&game, PZG_17));
+    advance_to(&mut game, "nato", "battlePlanning");
+    assert!(!supplied(&game, PZG_17));
+}
+
+// ------------------------------------------------------------------ setup
+
+#[test]
+fn a_setup_can_start_in_the_reserve_phase_with_its_own_markers() {
+    let setup: crate::GameSetup = serde_json::from_value(serde_json::json!({
+        "start": { "gameTurn": 2, "sideId": "nato", "phaseId": "reserve" },
+        "units": [
+            { "id": GERMAN, "hex": "3321" },
+            { "id": PZG_17, "hex": "3320", "step": 0, "disruption": "disrupted" }
+        ],
+        "reserveUnitIds": [GERMAN],
+        "breakthroughMarkers": ["3319"]
+    }))
+    .unwrap();
+    let game = GameEngine::with_setup(
+        GameId("setup".to_owned()),
+        find_scenario("nato-baltap-1983").unwrap(),
+        &setup,
+    )
+    .unwrap();
+    let snapshot = game.snapshot();
+    assert_eq!(snapshot.turn.game_turn, 2);
+    assert_eq!(snapshot.units.len(), 2);
+    assert_eq!(
+        snapshot.reserve.unwrap().unit_ids,
+        vec![UnitId(GERMAN.to_owned())]
+    );
+    assert_eq!(
+        snapshot.breakthrough_markers,
+        vec![HexId("3319".to_owned())]
+    );
+    let disrupted = &game.units[&UnitId(PZG_17.to_owned())];
+    assert_eq!(disrupted.disruption, Some(Disruption::Disrupted));
+
+    // Battle-plan entries need a battle plan to exist at the start step.
+    let setup: crate::GameSetup =
+        serde_json::from_value(serde_json::json!({ "attackTargets": ["2415"] })).unwrap();
+    let error = GameEngine::with_setup(
+        GameId("setup".to_owned()),
+        find_scenario("nato-baltap-1983").unwrap(),
+        &setup,
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.code, "invalidSetup");
 }

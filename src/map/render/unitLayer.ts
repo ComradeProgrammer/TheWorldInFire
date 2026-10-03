@@ -2,7 +2,7 @@ import { Container, Graphics, Text, type TextStyleOptions } from "pixi.js";
 import type { UnitState } from "../../gameApi";
 import type { HexGrid } from "../hexGrid";
 import type { MapData } from "../mapTypes";
-import { COUNTER, counterPalette, FRAME, RESERVE_TAB, reserveTabLabel, NATION_COLORS, nationCode, nationInk, toCounter, unitSymbol, type SymbolPath } from "../unitSymbols";
+import { COUNTER, counterPalette, FRAME, outOfSupply, RESERVE_TAB, reserveTabLabel, SUPPLY_TAB, NATION_COLORS, nationCode, nationInk, toCounter, unitSymbol, type SymbolPath } from "../unitSymbols";
 import { COLORS, FONT_FAMILY } from "./style";
 
 const COUNTER_SIZE = COUNTER.size;
@@ -99,6 +99,16 @@ function buildCounter(unit: UnitState, reserve: boolean): Container {
       .fill(RESERVE_TAB.fill)
       .stroke({ color: 0x05080c, width: 2 });
     counter.addChild(marker, counterText(reserveTabLabel(unit.sideId), 11, tab.y + tab.height / 2, RESERVE_TAB.ink));
+  }
+
+  // Out of Supply marker: a red tab above the top edge.
+  if (outOfSupply(unit)) {
+    const { supplyTab: tab } = COUNTER;
+    const marker = new Graphics()
+      .roundRect(-tab.width / 2, tab.y, tab.width, tab.height, 3)
+      .fill(SUPPLY_TAB.fill)
+      .stroke({ color: 0x05080c, width: 2 });
+    counter.addChild(marker, counterText("OOS", 10, tab.y + tab.height / 2, SUPPLY_TAB.ink));
   }
   return counter;
 }
