@@ -26,5 +26,7 @@ dist-ssr
 
 # Local scratch output (e.g. extracted PDF text)
 /tmp/
+# Rust build output (workspace target; per-crate targets from before the workspace)
+/target/
 /crates/ooaw-core/target/
 /crates/ooaw-core/Cargo.lock

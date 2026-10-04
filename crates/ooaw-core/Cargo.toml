@@ -2,9 +2,16 @@
 name = "ooaw-core"
 version = "0.1.0"
 edition = "2021"
+description = "OOAW game kernel: authoritative state, dice, turn sequencer, and WebAssembly rules-plugin host"
+build = "build.rs"
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-
-[dev-dependencies]
+ooaw-plugin-api = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+wasmtime = { version = "49", default-features = false, features = [
+    "std",
+    "runtime",
+    "cranelift",
+    "parallel-compilation",
+] }

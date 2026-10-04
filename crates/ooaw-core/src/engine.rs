@@ -1,49 +1,29 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
-
-use crate::command::{CommandOutcome, GameCommand};
-use crate::dice::Dice;
-use crate::error::RuleError;
-use crate::event::GameEvent;
-use crate::model::{
-    AirInterdictionZone, AirPoints, BattlePlan, CityControlState, CombatState, HexId,
-    MapDefinition, PhaseActor, PhaseDefinition, PhaseExecution, ReserveState, ScenarioDefinition,
-    ScenarioSummary, SideId, StrikePlan, UnitId, UnitState,
+use ooaw_plugin_api::protocol::{
+    PluginCall, ScenarioRequest, ScenarioSetup, DEBUG_COMMAND_PREFIX, END_PHASE_COMMAND,
 };
+use ooaw_plugin_api::serde_json::{self, Value};
+use ooaw_plugin_api::{
+    CityControlState, GameId, GameStatus, HexId, MapDefinition, PendingDecision, PhaseActor,
+    PhaseDefinition, PhaseExecution, PhaseId, RuleError, ScenarioSummary, SideId, TurnState, Unit,
+};
+use serde::{Deserialize, Serialize};
+use wasmtime::Store;
 
-/// Stable identifier for one running or saved game session.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct GameId(
-    /// String representation exchanged with clients and stored in saves.
-    pub String,
-);
+use crate::dice::Dice;
+use crate::runtime::{dispatch, new_store, official_plugin, HostData, PluginModule, Sandbox, Slot};
+use crate::state::{check_unit, KernelState};
 
-/// High-level lifecycle state of a game.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum GameStatus {
-    /// Commands may still advance the game.
-    InProgress,
-    /// The scenario has ended and no further game commands are accepted.
-    Completed,
-}
-
-/// Current position within a scenario's turn sequence.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TurnState {
-    /// One-based game-turn number.
-    pub game_turn: u16,
-    /// Zero-based index into the scenario-defined turn sequence.
-    pub step_index: usize,
-    /// Active phase, or `None` after the game has completed.
-    pub current_step: Option<PhaseDefinition>,
-}
+/// Version of the serialized snapshot contract.
+pub const PROTOCOL_VERSION: u16 = 17;
 
 /// Complete client-facing representation of the authoritative game state.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Rules plugins add their own top-level entries (for example `battlePlan` or
+/// `combat`), which serialize alongside the kernel's fields.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GameSnapshot {
     /// Version of the serialized snapshot contract.
@@ -58,102 +38,236 @@ pub struct GameSnapshot {
     pub status: GameStatus,
     /// Current game turn and phase.
     pub turn: TurnState,
-    /// All units that have entered play so far.
-    pub units: Vec<UnitState>,
-    /// Plan currently being assembled or carried into later combat phases.
-    pub battle_plan: Option<BattlePlan>,
+    /// All units in play.
+    pub units: Vec<Unit>,
     /// Control of every city hex on the map.
     pub cities: Vec<CityControlState>,
-    /// Air Points held by each side.
-    pub air_points: Vec<AirPoints>,
-    /// Air missions of the current Offensive Strike Phase.
-    pub strike_plan: Option<StrikePlan>,
-    /// Active Air Interdiction Zones.
-    pub air_interdiction_zones: Vec<AirInterdictionZone>,
-    /// Hexes holding a Breakthrough Marker (25.9).
-    pub breakthrough_markers: Vec<HexId>,
-    /// Units eliminated so far, in order of elimination.
-    pub eliminated_unit_ids: Vec<UnitId>,
-    /// Battles and restrictions of the current Combat Phase.
-    pub combat: Option<CombatState>,
-    /// Marked units and their movement in the current Reserve Phase.
-    pub reserve: Option<ReserveState>,
-    /// Player decision that must be resolved before automatic play can continue.
+    /// Player decision that must be resolved before play can continue.
     pub pending_decision: Option<PendingDecision>,
+    /// Rules-owned state entries, flattened into the snapshot object.
+    #[serde(flatten)]
+    pub rules: BTreeMap<String, Value>,
 }
 
-/// Description of an input currently required from a player.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// The events and current snapshot produced by an accepted game command.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PendingDecision {
-    /// Stable identifier for the kind of decision the client must present.
-    pub kind: String,
+pub struct CommandOutcome {
+    /// The authoritative revision after the command has been applied.
+    pub revision: u64,
+    /// Ordered domain events, each a JSON object with a `type` tag.
+    pub events: Vec<Value>,
+    /// The complete authoritative state after command processing.
+    pub snapshot: GameSnapshot,
 }
 
-/// Mutable authoritative state and command processor for a game session.
+/// Phase events emitted by the kernel's turn sequencer.
+#[derive(Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum KernelEvent<'a> {
+    PhaseEnded {
+        game_turn: u16,
+        step: &'a PhaseDefinition,
+    },
+    PhaseStarted {
+        game_turn: u16,
+        step: &'a PhaseDefinition,
+    },
+    GameTurnStarted {
+        game_turn: u16,
+    },
+    GameCompleted {
+        game_turn: u16,
+    },
+}
+
+impl KernelEvent<'_> {
+    fn into_value(self) -> Value {
+        serde_json::to_value(self).expect("kernel events serialize")
+    }
+}
+
+/// Step at which a custom setup starts, from the setup document's `start` entry.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetupStart {
+    game_turn: u16,
+    phase_id: PhaseId,
+    #[serde(default)]
+    side_id: Option<SideId>,
+}
+
+/// Which plugin handles each phase, command, and query.
+#[derive(Default)]
+struct Registry {
+    phases: HashMap<String, usize>,
+    commands: HashMap<String, usize>,
+    queries: HashMap<String, usize>,
+}
+
+/// Authoritative game state, turn sequencer, and command router for one game.
+///
+/// The engine owns the state and the dice and advances the turn sequence.
+/// What each phase and command does is decided by the loaded rules plugins,
+/// which run as WebAssembly. A command either succeeds as a whole or leaves
+/// the game exactly as it was.
 pub struct GameEngine {
     /// Stable identifier for this game session and its initial dice seed.
-    pub(super) game_id: GameId,
-    /// Selected scenario content, map, rules, and scheduled unit arrivals and withdrawals.
-    pub(super) scenario: ScenarioDefinition,
-    /// Count of successfully executed commands, exposed for client concurrency checks.
-    pub(super) revision: u64,
-    /// Whether the game still accepts commands or has completed its final turn.
-    pub(super) status: GameStatus,
-    /// One-based game-turn number within the scenario.
-    pub(super) game_turn: u16,
-    /// Zero-based position in the scenario's repeated turn sequence.
-    pub(super) step_index: usize,
-    /// Units currently in play, indexed and iterated by stable unit identifier.
-    pub(super) units: BTreeMap<UnitId, UnitState>,
-    /// Acting side's planning selections and movement history carried into later phases.
-    pub(super) battle_plan: Option<BattlePlan>,
-    /// Current controlling side for each city hex, initially its scenario owner.
-    pub(super) city_control: BTreeMap<HexId, SideId>,
-    /// Remaining recurring and one-time Air Point pools for each side.
-    pub(super) air_points: Vec<AirPoints>,
-    /// Missions and resolution state for the current Offensive Strike Phase.
-    pub(super) strike_plan: Option<StrikePlan>,
-    /// Active interdiction centers that restrict enemy movement in nearby hexes.
-    pub(super) air_interdiction_zones: Vec<AirInterdictionZone>,
-    /// Cleared hexes with Breakthrough Markers affecting combat and reserve movement.
-    pub(super) breakthrough_markers: Vec<HexId>,
-    /// Identifiers of units destroyed so far, in elimination order.
-    pub(super) eliminated_units: Vec<UnitId>,
-    /// Current battles, attack restrictions, support use, and pending advance choice.
-    pub(super) combat: Option<CombatState>,
-    /// Marked reserve units and their movement history for the current Reserve Phase.
-    pub(super) reserve: Option<ReserveState>,
-    /// Seeded dice; saves must persist this state to replay identically.
-    pub(super) dice: Dice,
+    game_id: GameId,
+    /// Scenario the game was created from.
+    scenario_request: ScenarioRequest,
+    /// Client-facing scenario metadata.
+    scenario: ScenarioSummary,
+    /// Authoritative map.
+    map: MapDefinition,
+    /// Ordered steps repeated every game turn.
+    turn_sequence: Vec<PhaseDefinition>,
+    /// Number of game turns after which the scenario ends.
+    max_game_turns: u16,
+    /// Original owner of every city hex.
+    city_owners: BTreeMap<HexId, SideId>,
+    /// Count of successfully executed commands.
+    revision: u64,
+    /// Whether `debug.*` commands are accepted.
+    debug_commands: bool,
+    /// Plugin that created the scenario.
+    owner: usize,
+    /// Handlers by phase, command, and query.
+    registry: Registry,
+    /// Plugin instances together with the authoritative state and dice.
+    store: Store<HostData>,
 }
 
 impl GameEngine {
-    /// Creates a game at the first step of the supplied scenario.
+    /// Creates a game from a scenario of the bundled official rules plugin.
     ///
-    /// The game starts on turn one at revision zero, with city control and Air
-    /// Point pools initialized from the scenario. Units enter play through the
-    /// reinforcement phase; constructing the engine does not resolve phases.
-    ///
-    /// # Parameters
-    ///
-    /// - `game_id`: Stable session identifier, also used to seed reproducible dice.
-    /// - `scenario`: Owned scenario definition containing the map, participating
-    ///   sides, turn sequence, rules, and unit arrival schedule.
-    ///
-    /// # Returns
-    ///
-    /// An initialized engine ready to accept commands for the first phase.
+    /// The game opens on the first step that needs a player: the scenario's
+    /// leading automatic phases are resolved and their events dropped.
     ///
     /// # Errors
     ///
-    /// Returns `invalidScenario` for invalid turn counts, an empty sequence or
-    /// map, duplicate hex or unit IDs, unknown side or hex references, or an
-    /// invalid reinforcement turn or strength-step setup.
-    pub fn new(game_id: GameId, scenario: ScenarioDefinition) -> Result<Self, RuleError> {
-        validate_scenario(&scenario)?;
-        let city_control = scenario
-            .map
+    /// Returns `scenarioNotFound` for an unknown scenario, `invalidScenario` if
+    /// its content is inconsistent, or a plugin error.
+    pub fn new(game_id: GameId, scenario: impl Into<ScenarioRequest>) -> Result<Self, RuleError> {
+        Self::with_plugins(game_id, vec![official_plugin()?], scenario.into(), None)
+    }
+
+    /// Creates a game from a bundled scenario and lays out a custom starting
+    /// situation.
+    ///
+    /// The setup document is in the scenario plugin's own format. If it has a
+    /// `start` entry (`gameTurn`, `phaseId`, and optional `sideId`), the engine
+    /// first plays through the turn sequence to that step.
+    ///
+    /// # Errors
+    ///
+    /// Returns `invalidSetup` for a start step that is never reached or a
+    /// setup the plugin rejects, in addition to the errors of [`Self::new`].
+    pub fn with_setup(
+        game_id: GameId,
+        scenario: impl Into<ScenarioRequest>,
+        setup: Value,
+    ) -> Result<Self, RuleError> {
+        Self::with_plugins(
+            game_id,
+            vec![official_plugin()?],
+            scenario.into(),
+            Some(setup),
+        )
+    }
+
+    /// Creates a game with an explicit list of rules plugins, in load order.
+    ///
+    /// A later plugin overrides an earlier one's phases, commands, and queries,
+    /// and every plugin listing a filter takes part in it. The scenario comes
+    /// from the last plugin offering its ID.
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::new`] and [`Self::with_setup`].
+    pub fn with_plugins(
+        game_id: GameId,
+        plugins: Vec<Arc<PluginModule>>,
+        scenario: ScenarioRequest,
+        setup: Option<Value>,
+    ) -> Result<Self, RuleError> {
+        let owner = plugins
+            .iter()
+            .rposition(|plugin| {
+                plugin
+                    .manifest()
+                    .scenarios
+                    .iter()
+                    .any(|summary| summary.id == scenario.id)
+            })
+            .ok_or_else(|| {
+                RuleError::new(
+                    "scenarioNotFound",
+                    format!("Unknown scenario: {}", scenario.id),
+                )
+            })?;
+        let mut registry = Registry::default();
+        let mut filters: HashMap<String, Vec<usize>> = HashMap::new();
+        for (index, plugin) in plugins.iter().enumerate() {
+            let manifest = plugin.manifest();
+            for phase in &manifest.phases {
+                registry.phases.insert(phase.clone(), index);
+            }
+            for command in &manifest.commands {
+                registry.commands.insert(command.clone(), index);
+            }
+            for query in &manifest.queries {
+                registry.queries.insert(query.clone(), index);
+            }
+            for filter in &manifest.filters {
+                filters.entry(filter.clone()).or_default().push(index);
+            }
+        }
+
+        let placeholder = KernelState::opening(Default::default());
+        let sandbox = if plugins.iter().all(|plugin| plugin.is_trusted()) {
+            Sandbox::Trusted
+        } else {
+            Sandbox::Guarded
+        };
+        let mut data = HostData::new(
+            sandbox,
+            placeholder,
+            Dice::from_seed_text(&game_id.0),
+            HashSet::new(),
+        );
+        data.slots = plugins.into_iter().map(Slot::new).collect();
+        data.filters = filters;
+        let mut store = new_store(data);
+
+        let response = dispatch(
+            &mut store,
+            owner,
+            PluginCall::CreateGame {
+                game_id: game_id.clone(),
+                scenario: scenario.clone(),
+            },
+        )?;
+        let setup_value = response.result?;
+        let content: ScenarioSetup = serde_json::from_value(setup_value).map_err(|error| {
+            RuleError::protocol(format!("Malformed scenario from plugin: {error}"))
+        })?;
+        let ScenarioSetup {
+            scenario: summary,
+            map,
+            turn_sequence,
+            state,
+        } = content;
+        let hexes = validate_content(&summary, &map, &turn_sequence)?;
+        for unit in &state.units {
+            check_unit(unit, &hexes)
+                .map_err(|error| RuleError::new("invalidScenario", error.message))?;
+        }
+        let city_owners = map
             .hexes
             .iter()
             .filter_map(|hex| {
@@ -162,389 +276,451 @@ impl GameEngine {
                     .map(|city| (hex.id.clone(), city.owner.clone()))
             })
             .collect();
-        let air_points = scenario
-            .sides
-            .iter()
-            .map(|side| AirPoints {
-                side_id: side.id.clone(),
-                tactical: 0,
-                operational: 0,
-                bonus_tactical: scenario
-                    .battle_planning_rules
-                    .air_power
-                    .for_side(&side.id)
-                    .bonus_tactical,
-            })
-            .collect();
-        let dice = Dice::from_seed_text(&game_id.0);
+
+        {
+            let data = store.data_mut();
+            data.state = KernelState::opening(state);
+            data.hexes = hexes;
+            data.invalidate();
+            for (index, slot) in data.slots.iter_mut().enumerate() {
+                slot.attach = Some(PluginCall::Attach {
+                    game_id: game_id.clone(),
+                    scenario: scenario.clone(),
+                    summary: summary.clone(),
+                    turn_sequence: turn_sequence.clone(),
+                    map: (index != owner).then(|| Box::new(map.clone())),
+                });
+            }
+        }
+        for index in 0..store.data().slots.len() {
+            if index != owner {
+                let attach = store.data().slots[index].attach.clone().expect("set above");
+                dispatch(&mut store, index, attach)?.result?;
+            }
+        }
+
         let mut game = Self {
             game_id,
-            scenario,
+            scenario_request: scenario,
+            max_game_turns: summary.max_game_turns,
+            scenario: summary,
+            map,
+            turn_sequence,
+            city_owners,
             revision: 0,
-            status: GameStatus::InProgress,
-            game_turn: 1,
-            step_index: 0,
-            units: BTreeMap::new(),
-            battle_plan: None,
-            city_control,
-            air_points,
-            strike_plan: None,
-            air_interdiction_zones: Vec::new(),
-            breakthrough_markers: Vec::new(),
-            eliminated_units: Vec::new(),
-            combat: None,
-            reserve: None,
-            dice,
+            debug_commands: false,
+            owner,
+            registry,
+            store,
         };
         // Resolve the scenario's leading automatic phases (such as Joint Status,
         // Joint Reinforcement, and Pre-Battle) so play opens on the first step
         // that needs a player. Their events precede any client and are dropped.
         let mut events = Vec::new();
-        game.on_phase_started(&mut events);
-        game.advance_automatic_steps(&mut events);
+        game.start_current_phase(&mut events)?;
+        game.advance_automatic_steps(&mut events)?;
+        if let Some(setup) = setup {
+            game.apply_setup(setup)?;
+        }
         Ok(game)
+    }
+
+    /// Plays to a setup's start step and passes the setup to the scenario plugin.
+    fn apply_setup(&mut self, setup: Value) -> Result<(), RuleError> {
+        let invalid = |message: String| RuleError::new("invalidSetup", message);
+        if let Some(start) = setup.get("start").filter(|start| !start.is_null()) {
+            let start: SetupStart = serde_json::from_value(start.clone())
+                .map_err(|error| invalid(format!("Invalid start: {error}")))?;
+            loop {
+                let never = || {
+                    invalid("The setup's start step is never reached in this scenario".to_owned())
+                };
+                let state = &self.store.data().state;
+                if state.status == GameStatus::Completed || state.game_turn > start.game_turn {
+                    return Err(never());
+                }
+                let step = self.current_step().expect("game in progress has a step");
+                let side = match &step.actor {
+                    PhaseActor::Side { side_id } => Some(side_id),
+                    PhaseActor::All => None,
+                };
+                if state.game_turn == start.game_turn
+                    && step.phase_id == start.phase_id
+                    && side == start.side_id.as_ref()
+                {
+                    break;
+                }
+                self.end_phase()?;
+            }
+        }
+        let response = dispatch(
+            &mut self.store,
+            self.owner,
+            PluginCall::ApplySetup { setup },
+        )?;
+        response.result?;
+        Ok(())
     }
 
     /// Returns an owned, serializable snapshot of the current game state.
     ///
-    /// Includes the revision, current phase, units, city control, planning and
-    /// combat state, and any pending advance decision. Static map data is
-    /// represented by its scenario identifier; retrieve it with [`Self::map`].
-    /// Cloning the state does not advance phases or consume dice.
-    ///
-    /// # Returns
-    ///
-    /// A [`GameSnapshot`] that can be retained independently of the engine.
+    /// Static map data is represented by its scenario identifier; retrieve it
+    /// with [`Self::map`].
     pub fn snapshot(&self) -> GameSnapshot {
+        let state = &self.store.data().state;
         GameSnapshot {
-            protocol_version: 17,
+            protocol_version: PROTOCOL_VERSION,
             game_id: self.game_id.clone(),
             revision: self.revision,
-            scenario: ScenarioSummary::from(&self.scenario),
-            status: self.status,
+            scenario: self.scenario.clone(),
+            status: state.status,
             turn: TurnState {
-                game_turn: self.game_turn,
-                step_index: self.step_index,
+                game_turn: state.game_turn,
+                step_index: state.step_index,
                 current_step: self.current_step().cloned(),
             },
-            units: self.units.values().cloned().collect(),
-            battle_plan: self.battle_plan.clone(),
-            cities: self.city_states(),
-            air_points: self.air_points.clone(),
-            strike_plan: self.strike_plan.clone(),
-            air_interdiction_zones: self.air_interdiction_zones.clone(),
-            breakthrough_markers: self.breakthrough_markers.clone(),
-            eliminated_unit_ids: self.eliminated_units.clone(),
-            combat: self.combat.clone(),
-            reserve: self.reserve.clone(),
-            // The Attacker must decide on an advance before fighting on (25.8).
-            pending_decision: self
-                .combat
-                .as_ref()
-                .and_then(|combat| combat.pending_advance.as_ref())
-                .map(|_| PendingDecision {
-                    kind: "advanceAfterCombat".to_owned(),
-                }),
+            units: state.units.values().cloned().collect(),
+            cities: state
+                .city_control
+                .iter()
+                .filter_map(|(hex_id, controller)| {
+                    let owner = self.city_owners.get(hex_id)?.clone();
+                    Some(CityControlState {
+                        hex_id: hex_id.clone(),
+                        free: owner == *controller,
+                        owner,
+                        controller: controller.clone(),
+                    })
+                })
+                .collect(),
+            pending_decision: state.pending_decision.clone(),
+            rules: state.rules.clone(),
         }
     }
 
-    /// Returns the active scenario step, or none once the game has completed.
-    pub(super) fn current_step(&self) -> Option<&PhaseDefinition> {
-        if self.status == GameStatus::Completed {
-            None
-        } else {
-            self.scenario.turn_sequence.get(self.step_index)
-        }
+    /// Returns the number of commands executed so far.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Returns the authoritative map selected by this game's scenario.
-    ///
-    /// # Returns
-    ///
-    /// A shared reference to the static hexes, hexside features, and presentation
-    /// data. Current city control is available separately in [`Self::snapshot`].
     pub fn map(&self) -> &MapDefinition {
-        &self.scenario.map
+        &self.map
     }
 
     /// Returns the scenario's ordered phase steps repeated every game turn.
-    ///
-    /// # Returns
-    ///
-    /// A shared slice containing each step's actor and execution mode. Use the
-    /// turn state in [`Self::snapshot`] to identify the currently active step.
     pub fn turn_sequence(&self) -> &[PhaseDefinition] {
-        &self.scenario.turn_sequence
+        &self.turn_sequence
+    }
+
+    /// Returns the scenario this game was created from.
+    pub fn scenario_request(&self) -> &ScenarioRequest {
+        &self.scenario_request
+    }
+
+    /// Returns the loaded plugins' manifests in load order.
+    pub fn plugins(&self) -> Vec<&ooaw_plugin_api::protocol::PluginManifest> {
+        self.store
+            .data()
+            .slots
+            .iter()
+            .map(|slot| slot.plugin.manifest())
+            .collect()
+    }
+
+    /// Returns the active scenario step, or none once the game has completed.
+    fn current_step(&self) -> Option<&PhaseDefinition> {
+        let state = &self.store.data().state;
+        if state.status == GameStatus::Completed {
+            None
+        } else {
+            self.turn_sequence.get(state.step_index)
+        }
     }
 
     /// Validates and executes a command against the authoritative game state.
     ///
-    /// A successful command increments the revision once and returns its ordered
-    /// events and resulting snapshot. Ending a phase also runs phase cleanup and
-    /// advances through automatic phases until input is required or the game ends.
-    ///
-    /// # Parameters
-    ///
-    /// - `command`: Owned action to perform, including any unit identifiers,
-    ///   destinations, targets, or selections required by its variant.
-    ///
-    /// # Returns
-    ///
-    /// The new revision, emitted events, and post-command state in a
-    /// [`CommandOutcome`].
+    /// The command is a JSON object with a `type` tag. `endPhase` is handled by
+    /// the kernel's turn sequencer; every other type goes to the plugin that
+    /// declared it. A successful command increments the revision once and
+    /// returns its ordered events and the resulting snapshot.
     ///
     /// # Errors
     ///
-    /// Returns `gameComplete` after the scenario ends, or a command-specific
-    /// [`RuleError`] for an invalid phase, actor, target, resource use, or other
-    /// rule violation. A rejected command does not increment the revision.
-    pub fn execute(&mut self, command: GameCommand) -> Result<CommandOutcome, RuleError> {
-        if self.status == GameStatus::Completed {
-            return Err(RuleError::game_complete());
+    /// Returns `gameComplete` after the scenario ends, `unknownCommand` for a
+    /// type no plugin handles, or the handling plugin's rejection. A rejected
+    /// command leaves state, dice, and revision unchanged.
+    pub fn execute(&mut self, command: Value) -> Result<CommandOutcome, RuleError> {
+        if self.store.data().state.status == GameStatus::Completed {
+            return Err(RuleError::new(
+                "gameComplete",
+                "The game has already completed",
+            ));
+        }
+        let kind = command
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or_else(|| RuleError::new("invalidCommand", "A command needs a string type"))?
+            .to_owned();
+        if kind.starts_with(DEBUG_COMMAND_PREFIX) && !self.debug_commands {
+            return Err(RuleError::new(
+                "debugCommandsDisabled",
+                "Debug commands are disabled in this game",
+            ));
         }
 
-        let events = match command {
-            GameCommand::EndPhase => self.end_phase(),
-            GameCommand::SetResupplyTarget { unit_id, selected } => {
-                self.set_resupply_target(unit_id, selected)
+        let backup = {
+            let data = self.store.data();
+            (data.state.clone(), data.dice.clone())
+        };
+        let result = if kind == END_PHASE_COMMAND {
+            self.end_phase()
+        } else {
+            match self.registry.commands.get(&kind).copied() {
+                Some(slot) => dispatch(&mut self.store, slot, PluginCall::Command { command })
+                    .and_then(|response| response.result.map(|_| response.events)),
+                None => Err(RuleError::new(
+                    "unknownCommand",
+                    format!("No rules plugin handles the command {kind}"),
+                )),
             }
-            GameCommand::SetAttackTarget { hex_id, selected } => {
-                self.set_attack_target(hex_id, selected)
+        };
+        match result {
+            Ok(events) => {
+                self.revision += 1;
+                Ok(CommandOutcome {
+                    revision: self.revision,
+                    events,
+                    snapshot: self.snapshot(),
+                })
             }
-            GameCommand::MoveUnit {
-                unit_id,
-                destination,
-                mode,
-            } => self.move_unit(unit_id, destination, mode),
-            GameCommand::SetReserve { unit_id, selected } => self.set_reserve(unit_id, selected),
-            GameCommand::UndoUnitMovement { unit_id } => self.undo_unit_movement(unit_id),
-            GameCommand::EntrainUnit { unit_id } => self.entrain_unit(unit_id),
-            GameCommand::DetrainUnit { unit_id } => self.detrain_unit(unit_id),
-            GameCommand::UndoDetrainUnit { unit_id } => self.undo_detrain_unit(unit_id),
-            GameCommand::PlanAirStrike {
-                hex_id,
-                unit_ids,
-                air_point,
-            } => self.plan_air_strike(hex_id, unit_ids, air_point),
-            GameCommand::PlanAirInterdiction { hex_id, air_point } => {
-                self.plan_air_interdiction(hex_id, air_point)
+            Err(error) => {
+                let data = self.store.data_mut();
+                (data.state, data.dice) = backup;
+                data.invalidate();
+                Err(error)
             }
-            GameCommand::CancelAirMission { mission_id } => self.cancel_air_mission(mission_id),
-            GameCommand::ResolveAirStrikes => self.resolve_air_strikes(),
-            GameCommand::ResolveBattle {
-                hex_id,
-                unit_ids,
-                supporting_hq_id,
-            } => self.resolve_battle(hex_id, unit_ids, supporting_hq_id),
-            GameCommand::AdvanceAfterCombat { unit_ids } => self.advance_after_combat(unit_ids),
-        }?;
-        self.revision += 1;
-        Ok(CommandOutcome {
-            revision: self.revision,
-            events,
-            snapshot: self.snapshot(),
-        })
+        }
     }
 
-    /// Cleans up the current phase and resolves automatic phases until input is needed or the game ends.
-    pub(crate) fn end_phase(&mut self) -> Result<Vec<GameEvent>, RuleError> {
-        // Finishes the current interactive phase and advances to the next one.
-        //
-        // Phase-specific cleanup runs before `PhaseEnded` is emitted. Automatic
-        // phases are then resolved and skipped until the next interactive phase
-        // is reached or the game ends.
+    /// Answers a read-only rules query, such as a movement or combat preview.
+    ///
+    /// Queries never change state or consume dice.
+    ///
+    /// # Errors
+    ///
+    /// Returns `unknownQuery` for a name no plugin answers, or the plugin's
+    /// rejection.
+    pub fn query(&mut self, name: &str, input: Value) -> Result<Value, RuleError> {
+        let slot = self.registry.queries.get(name).copied().ok_or_else(|| {
+            RuleError::new(
+                "unknownQuery",
+                format!("No rules plugin answers the query {name}"),
+            )
+        })?;
+        self.store.data_mut().read_only = true;
+        let response = dispatch(
+            &mut self.store,
+            slot,
+            PluginCall::Query {
+                name: name.to_owned(),
+                input,
+            },
+        );
+        self.store.data_mut().read_only = false;
+        response?.result
+    }
+
+    /// Accepts `debug.*` commands, which rules plugins may provide for tests
+    /// and development tools.
+    pub fn enable_debug_commands(&mut self) {
+        self.debug_commands = true;
+    }
+
+    /// Edits the authoritative state directly, bypassing every rule.
+    ///
+    /// Intended for tests and development tools. Every plugin's mirror is
+    /// resynchronised before its next call.
+    pub fn edit_state(&mut self, edit: impl FnOnce(&mut KernelState)) {
+        let data = self.store.data_mut();
+        edit(&mut data.state);
+        data.invalidate();
+    }
+
+    /// Returns the authoritative state.
+    pub fn state(&self) -> &KernelState {
+        &self.store.data().state
+    }
+
+    /// Returns the game's dice.
+    pub fn dice(&self) -> &Dice {
+        &self.store.data().dice
+    }
+
+    /// Replaces the game's dice, for tests that need a specific roll.
+    pub fn set_dice(&mut self, dice: Dice) {
+        self.store.data_mut().dice = dice;
+    }
+
+    /// Ends the current phase and resolves automatic phases until input is
+    /// needed or the game ends.
+    fn end_phase(&mut self) -> Result<Vec<Value>, RuleError> {
         let mut events = Vec::new();
         if let Some(step) = self.current_step().cloned() {
-            // Combat cannot end while the rules still require a player decision.
-            if step.phase_id.0 == "combat" {
-                self.check_combat_can_end()?;
-            }
-
-            // Apply any effects that occur when leaving this phase before
-            // announcing that the phase has ended.
-            match step.phase_id.0.as_str() {
-                "battlePlanning" => self.finish_battle_plan(&mut events),
-                "offensiveStrike" => self.finish_offensive_strike(&mut events),
-                "combat" => self.finish_combat(&mut events),
-                "reserve" => {
-                    self.finish_reserve(&mut events);
-                    self.remove_reserve_markers(&mut events);
+            // The phase's plugin cleans up first, or rejects ending the phase.
+            self.phase_hook(&step, false, &mut events)?;
+            events.push(
+                KernelEvent::PhaseEnded {
+                    game_turn: self.store.data().state.game_turn,
+                    step: &step,
                 }
-                _ => {}
-            }
-            events.push(GameEvent::PhaseEnded {
-                game_turn: self.game_turn,
-                step,
-            });
+                .into_value(),
+            );
         }
-
-        self.move_to_next_step(&mut events);
-        self.advance_automatic_steps(&mut events);
+        self.move_to_next_step(&mut events)?;
+        self.advance_automatic_steps(&mut events)?;
         Ok(events)
     }
 
-    /// Automatic phases perform their work in `on_phase_started`; clients never
-    /// stop on them, so keep advancing until input is required again.
-    fn advance_automatic_steps(&mut self, events: &mut Vec<GameEvent>) {
-        while self.status == GameStatus::InProgress
-            && self
-                .current_step()
-                .is_some_and(|step| matches!(step.execution, PhaseExecution::Automatic))
+    /// Automatic phases do their work when they start; clients never stop on
+    /// them, so keep advancing until input is required again.
+    fn advance_automatic_steps(&mut self, events: &mut Vec<Value>) -> Result<(), RuleError> {
+        while let Some(step) = self
+            .current_step()
+            .filter(|step| matches!(step.execution, PhaseExecution::Automatic))
+            .cloned()
         {
-            let step = self.current_step().expect("checked above").clone();
-            events.push(GameEvent::PhaseEnded {
-                game_turn: self.game_turn,
-                step,
-            });
-            self.move_to_next_step(events);
+            self.phase_hook(&step, false, events)?;
+            events.push(
+                KernelEvent::PhaseEnded {
+                    game_turn: self.store.data().state.game_turn,
+                    step: &step,
+                }
+                .into_value(),
+            );
+            self.move_to_next_step(events)?;
         }
+        Ok(())
     }
 
-    /// Starts the next phase, rolls into a new turn, or completes the game after its final turn.
-    fn move_to_next_step(&mut self, events: &mut Vec<GameEvent>) {
-        // Starts the next phase, rolling over to a new turn or completing the game
-        // when the current turn has no remaining phases.
-        self.step_index += 1;
-
-        // Passing the end of the turn sequence either starts a new turn or,
-        // after the scenario's final turn, completes the game.
-        if self.step_index >= self.scenario.turn_sequence.len() {
-            if self.game_turn >= self.scenario.max_game_turns {
-                self.status = GameStatus::Completed;
-                self.step_index = self.scenario.turn_sequence.len();
-                events.push(GameEvent::GameCompleted {
-                    game_turn: self.game_turn,
-                });
-                return;
+    /// Starts the next phase, rolls into a new turn, or completes the game
+    /// after its final turn.
+    fn move_to_next_step(&mut self, events: &mut Vec<Value>) -> Result<(), RuleError> {
+        let sequence_len = self.turn_sequence.len();
+        let max_game_turns = self.max_game_turns;
+        let state = &mut self.store.data_mut().state;
+        state.step_index += 1;
+        if state.step_index >= sequence_len {
+            if state.game_turn >= max_game_turns {
+                state.status = GameStatus::Completed;
+                state.step_index = sequence_len;
+                events.push(
+                    KernelEvent::GameCompleted {
+                        game_turn: state.game_turn,
+                    }
+                    .into_value(),
+                );
+                return Ok(());
             }
-            self.game_turn += 1;
-            self.step_index = 0;
-            events.push(GameEvent::GameTurnStarted {
-                game_turn: self.game_turn,
-            });
+            state.game_turn += 1;
+            state.step_index = 0;
+            events.push(
+                KernelEvent::GameTurnStarted {
+                    game_turn: state.game_turn,
+                }
+                .into_value(),
+            );
         }
+        if let Some(step) = self.current_step() {
+            events.push(
+                KernelEvent::PhaseStarted {
+                    game_turn: self.store.data().state.game_turn,
+                    step,
+                }
+                .into_value(),
+            );
+        }
+        self.start_current_phase(events)
+    }
 
-        // Starting a phase may immediately apply automatic rules and append
-        // more events, such as reinforcements arriving or supply being checked.
+    /// Runs the starting hook of the current phase.
+    fn start_current_phase(&mut self, events: &mut Vec<Value>) -> Result<(), RuleError> {
         if let Some(step) = self.current_step().cloned() {
-            events.push(GameEvent::PhaseStarted {
-                game_turn: self.game_turn,
-                step,
-            });
-            self.on_phase_started(events);
+            self.phase_hook(&step, true, events)?;
         }
+        Ok(())
+    }
+
+    /// Sends a phase's start or end to the plugin handling its phase type.
+    fn phase_hook(
+        &mut self,
+        step: &PhaseDefinition,
+        starting: bool,
+        events: &mut Vec<Value>,
+    ) -> Result<(), RuleError> {
+        let Some(slot) = self.registry.phases.get(&step.phase_id.0).copied() else {
+            return Ok(());
+        };
+        let phase = step.clone();
+        let call = if starting {
+            PluginCall::PhaseStarted { phase }
+        } else {
+            PluginCall::PhaseEnding { phase }
+        };
+        let response = dispatch(&mut self.store, slot, call)?;
+        response.result?;
+        events.extend(response.events);
+        Ok(())
     }
 }
 
-/// Checks scenario turns, map references, ownership, and reinforcement strength-step setup.
-fn validate_scenario(scenario: &ScenarioDefinition) -> Result<(), RuleError> {
-    if scenario.max_game_turns == 0 {
-        return Err(RuleError::new(
-            "invalidScenario",
-            "A scenario must contain at least one game turn",
+/// Lists the scenarios of the bundled official rules plugin.
+///
+/// # Errors
+///
+/// Returns `pluginLoad` if the bundled plugin cannot be loaded.
+pub fn list_scenarios() -> Result<Vec<ScenarioSummary>, RuleError> {
+    Ok(official_plugin()?.manifest().scenarios.clone())
+}
+
+/// Checks the structural consistency of plugin-supplied scenario content and
+/// returns the set of map hexes.
+fn validate_content(
+    summary: &ScenarioSummary,
+    map: &MapDefinition,
+    turn_sequence: &[PhaseDefinition],
+) -> Result<HashSet<HexId>, RuleError> {
+    let invalid = |message: String| RuleError::new("invalidScenario", message);
+    if summary.max_game_turns == 0 {
+        return Err(invalid(
+            "A scenario must contain at least one game turn".to_owned(),
         ));
     }
-    if scenario.turn_sequence.is_empty() {
-        return Err(RuleError::new(
-            "invalidScenario",
-            "A scenario must contain at least one turn step",
+    if turn_sequence.is_empty() {
+        return Err(invalid(
+            "A scenario must contain at least one turn step".to_owned(),
         ));
     }
-
-    if scenario.map.hexes.is_empty() {
-        return Err(RuleError::new(
-            "invalidScenario",
-            "A scenario map must contain at least one hex",
+    if map.hexes.is_empty() {
+        return Err(invalid(
+            "A scenario map must contain at least one hex".to_owned(),
         ));
     }
-
-    let mut map_hex_ids = HashSet::new();
-    for hex in &scenario.map.hexes {
-        if !map_hex_ids.insert(hex.id.clone()) {
-            return Err(RuleError::new(
-                "invalidScenario",
-                format!("Duplicate map hex ID: {}", hex.id.0),
-            ));
+    let mut hexes = HashSet::new();
+    for hex in &map.hexes {
+        if !hexes.insert(hex.id.clone()) {
+            return Err(invalid(format!("Duplicate map hex ID: {}", hex.id.0)));
         }
     }
-    for hex in &scenario.map.hexes {
-        if let Some(city) = &hex.city {
-            if !scenario.sides.iter().any(|side| side.id == city.owner) {
-                return Err(RuleError::new(
-                    "invalidScenario",
-                    format!("City in hex {} has an unknown owner", hex.id.0),
-                ));
-            }
-        }
-    }
-    for hexside in &scenario.map.hexsides {
-        if !map_hex_ids.contains(&hexside.a) || !map_hex_ids.contains(&hexside.b) {
-            return Err(RuleError::new(
-                "invalidScenario",
-                format!(
-                    "Map hexside references an unknown hex: {}-{}",
-                    hexside.a.0, hexside.b.0
-                ),
-            ));
-        }
-    }
-
-    for step in &scenario.turn_sequence {
+    for step in turn_sequence {
         if let PhaseActor::Side { side_id } = &step.actor {
-            if !scenario.sides.iter().any(|side| side.id == *side_id) {
-                return Err(RuleError::new(
-                    "invalidScenario",
-                    format!("Turn step references unknown side: {}", side_id.0),
-                ));
+            if !summary.sides.iter().any(|side| side.id == *side_id) {
+                return Err(invalid(format!(
+                    "Turn step references unknown side: {}",
+                    side_id.0
+                )));
             }
         }
     }
-
-    let mut unit_ids = HashSet::new();
-    for reinforcement in &scenario.reinforcements {
-        let unit = &reinforcement.unit;
-        if reinforcement.game_turn == 0 || reinforcement.game_turn > scenario.max_game_turns {
-            return Err(RuleError::new(
-                "invalidScenario",
-                format!(
-                    "Unit {} has an invalid reinforcement turn: {}",
-                    unit.id().0,
-                    reinforcement.game_turn
-                ),
-            ));
-        }
-        if !unit_ids.insert(unit.id().clone()) {
-            return Err(RuleError::new(
-                "invalidScenario",
-                format!("Duplicate unit ID: {}", unit.id().0),
-            ));
-        }
-        if !scenario
-            .sides
-            .iter()
-            .any(|side| side.id == unit.definition.side_id)
-        {
-            return Err(RuleError::new(
-                "invalidScenario",
-                format!("Unit {} references an unknown side", unit.id().0),
-            ));
-        }
-        if unit.definition.steps.is_empty()
-            || unit.strength_step_index >= unit.definition.steps.len()
-        {
-            return Err(RuleError::new(
-                "invalidScenario",
-                format!("Unit {} has an invalid strength-step setup", unit.id().0),
-            ));
-        }
-        if let crate::model::UnitLocation::Hex { hex_id } = &unit.location {
-            if !map_hex_ids.contains(hex_id) {
-                return Err(RuleError::new(
-                    "invalidScenario",
-                    format!("Unit {} references an unknown map hex", unit.id().0),
-                ));
-            }
-        }
-    }
-    Ok(())
+    Ok(hexes)
 }

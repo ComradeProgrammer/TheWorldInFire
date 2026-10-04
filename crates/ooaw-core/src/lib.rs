@@ -1,49 +1,25 @@
-//! UI-independent rules engine and domain model for OOA Wargame.
+//! The OOAW game kernel.
 //!
-//! The [`model`] module contains scenario and unit data. The crate-level types
-//! execute commands, advance the turn state machine, and produce IPC-friendly
-//! snapshots and events.
+//! The kernel owns everything that is not a game rule: the authoritative
+//! mutable state, the seeded dice, the turn sequencer, command routing, and
+//! all-or-nothing command execution. Game rules live in rules plugins compiled
+//! to WebAssembly and run in a deterministic sandbox. The official NATO rules
+//! are such a plugin, bundled into this crate at build time.
+//!
+//! The kernel/plugin protocol and the shared game model are defined in
+//! [`ooaw_plugin_api`], re-exported here as [`api`].
 
 #![deny(missing_docs)]
 
-mod airspace;
-mod cities;
-mod combat;
-mod command;
 mod dice;
 mod engine;
-mod error;
-mod event;
-/// Domain data for sides, phases, scenarios, and units.
-pub mod model;
-mod movement;
-mod phase;
-mod planning;
-mod reserve;
-mod setup;
-mod strikes;
-mod supply;
+mod runtime;
+mod state;
 
-pub use command::{CommandOutcome, GameCommand};
-pub use engine::{GameEngine, GameId, GameSnapshot, GameStatus, PendingDecision, TurnState};
-pub use error::RuleError;
-pub use event::{GameEvent, UnitSupplyCheck};
-pub use model::{
-    find_scenario, list_scenarios, AirInterdictionZone, AirMission, AirMissionKind, AirPointKind,
-    AirPointSource, AirPoints, AirPowerRules, AirStrikeOptions, Airspace, BattleOdds, BattlePlan,
-    BattlePlanningRules, BattleReport, Causeway, CityControlChange, CityControlState, CityKind,
-    CityOutline, ColumnShift, ColumnShiftReason, CombatObjective, CombatOptions, CombatResult,
-    CombatState, CommandLine, CommandZone, CounterattackRoll, Disruption, FormationId, HexId,
-    HexsideFeature, LabelKind, LineKind, MapCity, MapDefinition, MapGrid, MapHex, MapHexside,
-    MapLabel, MapLine, MapSymbol, MovementMode, MovementModeOptions, MovementOption, NationId,
-    OffensiveSupportHq, PendingAdvance, PhaseActor, PhaseDefinition, PhaseExecution, PhaseId,
-    PlannedMovement, ReinforcementDefinition, ReinforcementSector, ReserveOption, ReserveState, ScenarioDefinition,
-    ScenarioSummary, SideAirPower, SideDefinition, SideId, StepId, StrengthModifier, StrikePlan,
-    StrikeResolution, StrikeResult, StrikeTargetHex, StrikeTargetUnit, SupplyStatus, Terrain,
-    TrainStatus, UnitDefinition, UnitId, UnitLocation, UnitState, UnitStepDefinition, UnitStrength,
-    UnitSupplyState, UnitTraitId, UnitTypeId, WaterArea, ODDS_COLUMNS,
-};
-pub use setup::{GameSetup, SetupCity, SetupStart, SetupUnit};
-
-#[cfg(test)]
-mod tests;
+pub use dice::Dice;
+pub use engine::{list_scenarios, CommandOutcome, GameEngine, GameSnapshot, PROTOCOL_VERSION};
+pub use ooaw_plugin_api as api;
+pub use ooaw_plugin_api::protocol::ScenarioRequest;
+pub use ooaw_plugin_api::{GameId, MapDefinition, PhaseDefinition, RuleError, ScenarioSummary};
+pub use runtime::{official_plugin, PluginModule};
+pub use state::KernelState;

@@ -147,7 +147,7 @@ export interface CombatResult {
   retreat: number;
 }
 
-export type StrengthModifier =
+export type KnownStrengthModifier =
   | "disrupted"
   | "outOfCombatSupply"
   | "armorIntoCityOrMountain"
@@ -155,6 +155,11 @@ export type StrengthModifier =
   | "majorRiver"
   | "softUnitCover"
   | "provisionalDefense";
+
+/** A printed modifier, or the name of one added by another rules plugin. */
+export type StrengthModifier = KnownStrengthModifier | (string & {});
+
+export type KnownShiftReason = "terrain" | "flankAttack" | "concentricAttack" | "surprise" | "offensiveSupport";
 
 export interface UnitStrength {
   unitId: string;
@@ -165,7 +170,8 @@ export interface UnitStrength {
 }
 
 export interface ColumnShift {
-  reason: "terrain" | "flankAttack" | "concentricAttack" | "surprise" | "offensiveSupport";
+  /** A printed reason, or the name of one added by another rules plugin. */
+  reason: KnownShiftReason | (string & {});
   shift: number;
 }
 
@@ -413,32 +419,48 @@ export function submitGameCommand(expectedRevision: number, command: GameCommand
   });
 }
 
+interface RulesQueryResponse<T> {
+  revision: number;
+  result: T;
+}
+
+/** Asks the rules plugin that declared `name` for a read-only preview. */
+function rulesQuery<T>(name: string, input: unknown = null): Promise<RulesQueryResponse<T>> {
+  return invoke<RulesQueryResponse<T>>("rules_query", { request: { name, input } });
+}
+
 /** Read-only preview: availability and legal destinations for every movement system of one unit. */
-export function fetchMovementOptions(unitId: string): Promise<MovementOptionsResponse> {
-  return invoke<MovementOptionsResponse>("movement_options", { request: { unitId } });
+export async function fetchMovementOptions(unitId: string): Promise<MovementOptionsResponse> {
+  const { revision, result } = await rulesQuery<MovementModeOptions[]>("movementModes", { unitId });
+  return { revision, unitId, modes: result };
 }
 
 /** Read-only preview of the hexes the planning side may mark as attack objectives. */
-export function fetchAttackTargetOptions(): Promise<AttackTargetOptionsResponse> {
-  return invoke<AttackTargetOptionsResponse>("attack_target_options");
+export async function fetchAttackTargetOptions(): Promise<AttackTargetOptionsResponse> {
+  const { revision, result } = await rulesQuery<string[]>("attackTargetOptions");
+  return { revision, hexIds: result };
 }
 
 /** Read-only preview of which planning-side units may take a Reserve/OMG Marker. */
-export function fetchReserveOptions(): Promise<ReserveOptionsResponse> {
-  return invoke<ReserveOptionsResponse>("reserve_options");
+export async function fetchReserveOptions(): Promise<ReserveOptionsResponse> {
+  const { revision, result } = await rulesQuery<ReserveOptionsResponse["units"]>("reserveOptions");
+  return { revision, units: result };
 }
 
 /** Read-only preview of the phasing side's Air Strike Segment choices. */
-export function fetchAirStrikeOptions(): Promise<AirStrikeOptionsResponse> {
-  return invoke<AirStrikeOptionsResponse>("air_strike_options");
+export async function fetchAirStrikeOptions(): Promise<AirStrikeOptionsResponse> {
+  const { revision, result } = await rulesQuery<Omit<AirStrikeOptionsResponse, "revision">>("airStrikeOptions");
+  return { revision, ...result };
 }
 
 /** Read-only preview of the Combat Phase: attackable hexes and eligible attackers. */
-export function fetchCombatOptions(): Promise<CombatOptionsResponse> {
-  return invoke<CombatOptionsResponse>("combat_options");
+export async function fetchCombatOptions(): Promise<CombatOptionsResponse> {
+  const { revision, result } = await rulesQuery<Omit<CombatOptionsResponse, "revision">>("combatOptions");
+  return { revision, ...result };
 }
 
 /** Read-only odds for a proposed attack. */
-export function fetchBattlePreview(hexId: string, unitIds: string[], supportingHqId: string | null): Promise<BattlePreviewResponse> {
-  return invoke<BattlePreviewResponse>("battle_preview", { request: { hexId, unitIds, supportingHqId } });
+export async function fetchBattlePreview(hexId: string, unitIds: string[], supportingHqId: string | null): Promise<BattlePreviewResponse> {
+  const { revision, result } = await rulesQuery<BattleOdds>("battlePreview", { hexId, unitIds, supportingHqId });
+  return { revision, odds: result };
 }

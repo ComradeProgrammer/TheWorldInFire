@@ -1,13 +1,11 @@
 use std::sync::Mutex;
 
+use ooaw_core::api::serde_json::Value;
 use ooaw_core::{
-    find_scenario, AirStrikeOptions, BattleOdds, CombatOptions, GameCommand, GameEngine, GameId,
-    GameSnapshot, HexId, MapDefinition,
-    MovementModeOptions, PhaseDefinition, ReserveOption, RuleError, ScenarioSummary, UnitId,
+    GameEngine, GameId, GameSnapshot, MapDefinition, PhaseDefinition, RuleError, ScenarioSummary,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
-
 #[derive(Default)]
 struct AppState {
     game: Mutex<Option<GameEngine>>,
@@ -42,14 +40,15 @@ impl From<RuleError> for ApiError {
 #[serde(rename_all = "camelCase")]
 struct CommandRequest {
     expected_revision: u64,
-    command: GameCommand,
+    /// Command object with a `type` tag, executed by the kernel or a rules plugin.
+    command: Value,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CommandResponse {
     revision: u64,
-    events: Vec<ooaw_core::GameEvent>,
+    events: Vec<Value>,
     snapshot: GameSnapshot,
 }
 
@@ -68,19 +67,16 @@ fn quit_app(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn list_scenarios() -> Vec<ScenarioSummary> {
-    ooaw_core::list_scenarios()
+fn list_scenarios() -> Result<Vec<ScenarioSummary>, ApiError> {
+    Ok(ooaw_core::list_scenarios()?)
 }
 
 #[tauri::command]
 fn new_game(scenario_id: String, state: State<'_, AppState>) -> Result<NewGameResponse, ApiError> {
-    let scenario = find_scenario(&scenario_id).ok_or_else(|| {
-        ApiError::new(
-            "scenarioNotFound",
-            format!("Unknown scenario: {scenario_id}"),
-        )
-    })?;
-    let game = GameEngine::new(GameId(uuid::Uuid::new_v4().to_string()), scenario)?;
+    let game = GameEngine::new(
+        GameId(uuid::Uuid::new_v4().to_string()),
+        scenario_id.as_str(),
+    )?;
     let snapshot = game.snapshot();
     let map = game.map().clone();
     let turn_sequence = game.turn_sequence().to_vec();
@@ -120,7 +116,7 @@ fn submit_game_command(
     let game = session
         .as_mut()
         .ok_or_else(|| ApiError::new("gameNotStarted", "No game has been started"))?;
-    let actual_revision = game.snapshot().revision;
+    let actual_revision = game.revision();
     if request.expected_revision != actual_revision {
         return Err(ApiError::new(
             "revisionMismatch",
@@ -140,160 +136,51 @@ fn submit_game_command(
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct MovementOptionsRequest {
-    unit_id: UnitId,
+struct RulesQueryRequest {
+    /// Query name declared by a rules plugin, such as `battlePreview`.
+    name: String,
+    /// Query input; `null` when the query takes none.
+    #[serde(default)]
+    input: Value,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct MovementOptionsResponse {
+struct RulesQueryResponse {
     revision: u64,
-    unit_id: UnitId,
-    modes: Vec<MovementModeOptions>,
+    result: Value,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AttackTargetOptionsResponse {
-    revision: u64,
-    hex_ids: Vec<HexId>,
-}
-
-fn with_game<T>(
-    state: &State<'_, AppState>,
-    read: impl FnOnce(&GameEngine) -> Result<T, RuleError>,
-) -> Result<T, ApiError> {
-    let session = state
+/// Read-only rules preview, such as movement options or battle odds, answered
+/// by the rules plugin that declared the query.
+#[tauri::command]
+fn rules_query(
+    request: RulesQueryRequest,
+    state: State<'_, AppState>,
+) -> Result<RulesQueryResponse, ApiError> {
+    let mut session = state
         .game
         .lock()
         .map_err(|_| ApiError::new("sessionUnavailable", "Game session lock is poisoned"))?;
     let game = session
-        .as_ref()
+        .as_mut()
         .ok_or_else(|| ApiError::new("gameNotStarted", "No game has been started"))?;
-    Ok(read(game)?)
-}
-
-/// Read-only movement preview: availability and legal destinations for every
-/// movement system of one unit.
-#[tauri::command]
-fn movement_options(
-    request: MovementOptionsRequest,
-    state: State<'_, AppState>,
-) -> Result<MovementOptionsResponse, ApiError> {
-    with_game(&state, |game| {
-        Ok(MovementOptionsResponse {
-            revision: game.snapshot().revision,
-            modes: game.movement_modes(&request.unit_id)?,
-            unit_id: request.unit_id,
-        })
-    })
-}
-
-/// Read-only preview of the hexes the planning side may mark as attack objectives.
-#[tauri::command]
-fn attack_target_options(state: State<'_, AppState>) -> Result<AttackTargetOptionsResponse, ApiError> {
-    with_game(&state, |game| {
-        Ok(AttackTargetOptionsResponse {
-            revision: game.snapshot().revision,
-            hex_ids: game.attack_target_options()?,
-        })
-    })
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ReserveOptionsResponse {
-    revision: u64,
-    units: Vec<ReserveOption>,
-}
-
-/// Read-only preview of which planning-side units may take a Reserve/OMG Marker.
-#[tauri::command]
-fn reserve_options(state: State<'_, AppState>) -> Result<ReserveOptionsResponse, ApiError> {
-    with_game(&state, |game| {
-        Ok(ReserveOptionsResponse {
-            revision: game.snapshot().revision,
-            units: game.reserve_options()?,
-        })
-    })
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AirStrikeOptionsResponse {
-    revision: u64,
-    #[serde(flatten)]
-    options: AirStrikeOptions,
-}
-
-/// Read-only preview of the phasing side's Air Strike Segment: Airspace for
-/// Tactical Air Points and every targetable enemy unit with its modifier.
-#[tauri::command]
-fn air_strike_options(state: State<'_, AppState>) -> Result<AirStrikeOptionsResponse, ApiError> {
-    with_game(&state, |game| {
-        Ok(AirStrikeOptionsResponse {
-            revision: game.snapshot().revision,
-            options: game.air_strike_options()?,
-        })
-    })
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CombatOptionsResponse {
-    revision: u64,
-    #[serde(flatten)]
-    options: CombatOptions,
-}
-
-/// Read-only preview of the Combat Phase: attackable hexes and eligible attackers.
-#[tauri::command]
-fn combat_options(state: State<'_, AppState>) -> Result<CombatOptionsResponse, ApiError> {
-    with_game(&state, |game| {
-        Ok(CombatOptionsResponse {
-            revision: game.snapshot().revision,
-            options: game.combat_options()?,
-        })
-    })
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BattlePreviewRequest {
-    hex_id: HexId,
-    unit_ids: Vec<UnitId>,
-    #[serde(default)]
-    supporting_hq_id: Option<UnitId>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct BattlePreviewResponse {
-    revision: u64,
-    odds: BattleOdds,
-}
-
-/// Read-only odds for a proposed attack; the battle itself is `resolveBattle`.
-#[tauri::command]
-fn battle_preview(
-    request: BattlePreviewRequest,
-    state: State<'_, AppState>,
-) -> Result<BattlePreviewResponse, ApiError> {
-    with_game(&state, |game| {
-        Ok(BattlePreviewResponse {
-            revision: game.snapshot().revision,
-            odds: game.battle_preview(
-                &request.hex_id,
-                &request.unit_ids,
-                request.supporting_hq_id.as_ref(),
-            )?,
-        })
+    let result = game.query(&request.name, request.input)?;
+    Ok(RulesQueryResponse {
+        revision: game.revision(),
+        result,
     })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Builds and starts the Tauri desktop application.
 pub fn run() {
+    // Compile the bundled rules plugin while the title screen loads.
+    std::thread::spawn(|| {
+        if let Err(error) = ooaw_core::official_plugin() {
+            eprintln!("cannot load the official rules plugin: {error}");
+        }
+    });
     tauri::Builder::default()
         .manage(AppState::default())
         .plugin(tauri_plugin_opener::init())
@@ -303,12 +190,7 @@ pub fn run() {
             new_game,
             get_game_snapshot,
             submit_game_command,
-            movement_options,
-            attack_target_options,
-            reserve_options,
-            air_strike_options,
-            combat_options,
-            battle_preview
+            rules_query
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

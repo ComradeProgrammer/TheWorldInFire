@@ -1,0 +1,13 @@
+[package]
+name = "ooaw-example-night-fighting"
+version = "0.1.0"
+edition = "2021"
+description = "Example third-party OOAW rules plugin that adjusts official NATO combat through a filter"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ooaw-plugin-sdk = { workspace = true }
+serde_json = { workspace = true }

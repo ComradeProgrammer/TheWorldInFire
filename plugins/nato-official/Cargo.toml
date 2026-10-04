@@ -1,0 +1,19 @@
+[package]
+name = "ooaw-nato"
+version = "0.1.0"
+edition = "2021"
+description = "Official OOAW rules plugin: NATO: The Cold War Goes Hot"
+
+[lib]
+# `cdylib` is the WebAssembly plugin the kernel loads; `rlib` lets tests and
+# other plugins use the rules' typed model natively.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+ooaw-plugin-api = { workspace = true }
+ooaw-plugin-sdk = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+ooaw-core = { workspace = true }

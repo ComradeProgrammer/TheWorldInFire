@@ -1,0 +1,10 @@
+[package]
+name = "ooaw-plugin-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Guest-side support for writing OOAW rules plugins in Rust"
+
+[dependencies]
+ooaw-plugin-api = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ooaw-plugin-api",
+    "crates/ooaw-plugin-sdk",
+    "crates/ooaw-core",
+    "plugins/nato-official",
+    "plugins/examples/night-fighting",
+    "src-tauri",
+]
+default-members = [
+    "crates/ooaw-plugin-api",
+    "crates/ooaw-plugin-sdk",
+    "crates/ooaw-core",
+    "plugins/nato-official",
+    "plugins/examples/night-fighting",
+]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ooaw-plugin-api = { path = "crates/ooaw-plugin-api" }
+ooaw-plugin-sdk = { path = "crates/ooaw-plugin-sdk" }
+ooaw-core = { path = "crates/ooaw-core" }
+
+# Wasmtime compiles plugins with Cranelift at load time. Unoptimised Cranelift
+# takes seconds per module, so optimise the compiler even in dev and test builds.
+[profile.dev.package.cranelift-codegen]
+opt-level = 3
+[profile.dev.package.cranelift-frontend]
+opt-level = 3
+[profile.dev.package.cranelift-entity]
+opt-level = 3
+[profile.dev.package.cranelift-bforest]
+opt-level = 3
+[profile.dev.package.regalloc2]
+opt-level = 3
+[profile.dev.package.wasmtime-internal-cranelift]
+opt-level = 3
+[profile.dev.package.wasmtime-environ]
+opt-level = 3
+[profile.dev.package.wasmparser]
+opt-level = 3
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

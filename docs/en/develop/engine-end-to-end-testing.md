@@ -1,8 +1,9 @@
 # Engine end-to-end testing
 
-The engine has a line-oriented JSON process adapter named `ooaw-engine`. It is
-intended for automated clients, replay tools, and black-box tests that must not
-link to Rust engine internals.
+The kernel has a line-oriented JSON process adapter named `ooaw-engine`
+(`crates/ooaw-core/src/bin/ooaw-engine.rs`). It runs games with the bundled
+official rules plugin and is intended for automated clients, replay tools, and
+black-box tests that must not link to Rust engine internals.
 
 Each line written to standard input is one request. The process writes exactly
 one JSON response line to standard output. It retains one game session until a
@@ -34,7 +35,7 @@ checks NATO's Pre-Battle supply report.
 
 ## Starting from a custom situation
 
-`newGame` accepts an optional `setup` (`GameSetup` in `crates/ooaw-core/src/setup.rs`) so a test can begin from any situation. The engine creates the scenario, ends phases until it reaches `start` (running every phase on the way, including reinforcements and supply), and then lays out the rest of the setup. Every field is optional:
+`newGame` accepts an optional `setup` so a test can begin from any situation. The kernel creates the scenario and ends phases until it reaches `start` (running every phase on the way, including reinforcements and supply). It then passes the setup to the plugin that owns the scenario, which lays out the rest. For the NATO rules the format is `GameSetup` in `plugins/nato-official/src/setup.rs`. Every field is optional:
 
 | Field | Effect |
 | --- | --- |
@@ -46,14 +47,14 @@ checks NATO's Pre-Battle supply report.
 | `airPoints` | Replaces the listed sides' Air Points: `[{ sideId, tactical, operational, bonusTactical }]`. |
 | `attackTargets`, `reserveUnitIds` | Set the active battle plan's objectives and Reserve/OMG units; they need a battle plan, so `start` must be at or after that side's Battle Planning. |
 
-The situation replaces state without re-checking rules, so tests can build positions ordinary play would take many turns to reach. Automatic work of the start step itself has already run: to have the engine check supply for a laid-out position, start at the previous side's Reserve Phase and submit `endPhase`. An unknown unit, hex, or side, or an unreachable `start`, is rejected with `invalidSetup`; an unknown field is rejected with `invalidRequest`. No game is started by a rejected request.
+The situation replaces state without re-checking rules, so tests can build positions ordinary play would take many turns to reach. Automatic work of the start step itself has already run: to have the engine check supply for a laid-out position, start at the previous side's Reserve Phase and submit `endPhase`. An unknown unit, hex, side, or field, or an unreachable `start`, is rejected with `invalidSetup`. No game is started by a rejected request.
 
 The black-box tests use this to surround a West German brigade with three Soviet divisions and check that NATO's next Pre-Battle step puts it out of supply, and to check the rejections.
 
 Run it with:
 
 ```sh
-cargo test --manifest-path crates/ooaw-core/Cargo.toml --test engine_black_box
+cargo test -p ooaw-core --test engine_black_box
 ```
 
 Example session:

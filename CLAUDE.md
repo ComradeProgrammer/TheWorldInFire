@@ -37,6 +37,8 @@ Known reference material includes:
 
 Game rules must eventually live in a UI-independent Rust core. Treat that core as the authoritative game state and rules implementation. It should be deterministic, testable without a window, serializable, and usable later by a local client, multiplayer server, AI, or replay tool.
 
+The core is split into a kernel and rules plugins (see `docs/en/develop/plugin-architecture.md`). The kernel (`crates/ooaw-core`) owns state, seeded dice, the turn sequencer, command routing, and transactions, and knows no game rule. Every game rule lives in a rules plugin compiled to WebAssembly and run by the kernel in a deterministic Wasmtime sandbox. The official NATO rules (`plugins/nato-official`) are such a plugin, bundled into the kernel and always loaded. Implement or change rules in the plugin, not in the kernel; extend the kernel only for rule-independent services, and extend the plugin protocol (`crates/ooaw-plugin-api`) deliberately, keeping it versioned.
+
 ### Tauri IPC boundary
 
 Use a command-and-event boundary across Tauri IPC:
@@ -78,7 +80,7 @@ Pointer movement and visual animation stay in the frontend. During counter dragg
 
 Do not poll or transfer the complete game state every frame. Do not use Tauri events as a substitute for the renderer's frame loop. IPC should occur at meaningful gameplay boundaries such as submitting an order, resolving an action, changing a phase, loading a save, or requesting an explicit resynchronization.
 
-Scenario map definitions are authoritative structured rules data owned by `ooaw-core`. The Tauri `new_game` bootstrap sends the selected map to the frontend once; ordinary command snapshots identify it by stable map ID and must not resend the complete map. Counter textures, fonts, audio, and other immutable presentation assets should be loaded as application resources by the frontend or asset layer. Do not send image bytes or base64 data through IPC.
+Scenario map definitions are authoritative structured rules data owned by the rules plugin that provides the scenario and held by the kernel for the game. The Tauri `new_game` bootstrap sends the selected map to the frontend once; ordinary command snapshots identify it by stable map ID and must not resend the complete map. Counter textures, fonts, audio, and other immutable presentation assets should be loaded as application resources by the frontend or asset layer. Do not send image bytes or base64 data through IPC.
 
 Frontend previews are advisory. React or PixiJS may highlight reachable hexes or estimate combat odds for responsiveness, but submitting the action must cause Rust to recompute and validate the result. A preview must never mutate authoritative state.
 
@@ -127,13 +129,22 @@ Keep random outcomes reproducible through an explicit seeded random-number sourc
 - `internet/`: ignored local reference material described above.
 - `dist/`: generated Vite production output; do not edit.
 - `node_modules/`: generated npm dependencies; do not edit.
-- `src-tauri/target/`: generated Rust build artifacts; do not edit.
-- `crates/ooaw-core/`: UI-independent Rust game core.
-  - `data/natoMap.json`: authoritative NATO scenario-map definition embedded in the core.
-  - `src/model/`: units, sides, phases, scenario definitions, and scenario content.
-  - `src/model/map.rs`: serializable map model and embedded map loader.
+- `Cargo.toml`: Cargo workspace root for every Rust crate, including `src-tauri`.
+- `target/`: generated Rust build artifacts for the workspace (`target/wasm-plugins/` holds the plugin builds); do not edit.
+- `crates/ooaw-plugin-api/`: shared game model (identifiers, map, phases, generic units) and the kernel/plugin protocol.
+- `crates/ooaw-plugin-sdk/`: support for writing rules plugins in Rust.
+- `crates/ooaw-core/`: UI-independent game kernel.
+  - `build.rs`: builds the rules plugins for `wasm32-unknown-unknown` and embeds the official one.
+  - `src/engine.rs`: `GameEngine`, turn sequencer, command routing, transactions, and snapshots.
+  - `src/runtime.rs`: Wasmtime plugin host.
+  - `src/bin/ooaw-engine.rs`: line-oriented JSON process adapter.
+- `plugins/nato-official/`: official NATO rules plugin (`ooaw-nato`).
+  - `data/natoMap.json`: authoritative NATO scenario-map definition embedded in the plugin.
+  - `src/model/`: units, scenario definitions, battle and air models, and scenario content.
   - `src/model/scenario_baltap.rs`: BALTAP 1983 setup and reinforcement schedule.
-  - `src/engine.rs` and `src/phase.rs`: game-state execution at the crate root.
+  - `src/rules.rs`, `src/plugin.rs`, and the other modules: phase and command rules.
+  - `tests/`: rules tests run through the kernel and the WebAssembly plugin.
+- `plugins/examples/`: example third-party plugins used by the kernel's tests.
 - `docs/`: durable design notes and decisions.
   - `docs/zh-CN/`: Chinese game-rule documentation.
   - `docs/en/`: matching English game-rule documentation.
@@ -146,6 +157,12 @@ Keep documentation categories strict:
 - `docs/zh-CN/develop/` and `docs/en/develop/` are developer-facing. They contain implementation status, architecture and protocol details, design decisions, unfinished work, and future plans.
 
 ## Development commands
+
+Install the WebAssembly target used to build the rules plugins (once per toolchain):
+
+```bash
+rustup target add wasm32-unknown-unknown
+```
 
 Install frontend dependencies:
 
@@ -175,6 +192,12 @@ Validate the Rust side:
 
 ```bash
 cargo check --manifest-path src-tauri/Cargo.toml
+```
+
+Run the Rust tests (kernel, plugin protocol, and NATO rules through the WebAssembly plugin):
+
+```bash
+cargo test
 ```
 
 Build the integrated desktop executable without packaging an installer:

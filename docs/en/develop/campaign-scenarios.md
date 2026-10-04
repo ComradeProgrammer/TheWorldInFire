@@ -13,7 +13,7 @@ The backend registers the following six options. `list_scenarios()` and `new_gam
 
 ## Data and implemented behavior
 
-`crates/ooaw-core/data/natoCampaigns.json` contains structured data embedded at build time. Attack, defense, movement, strength steps, type, nationality, and affiliation come from the order of battle in section 44 of the living Play Booklet updated 1 January 2026. Opening positions and arrivals come from the six corresponding standard VASSAL 2.4.1 setups, excluding Alternate NATO variants. West German 9/3Pz starts at 2716 per the living erratum in 37.3/40.3.
+`plugins/nato-official/data/natoCampaigns.json` contains structured data embedded at build time. Attack, defense, movement, strength steps, type, nationality, and affiliation come from the order of battle in section 44 of the living Play Booklet updated 1 January 2026. Opening positions and arrivals come from the six corresponding standard VASSAL 2.4.1 setups, excluding Alternate NATO variants. West German 9/3Pz starts at 2716 per the living erratum in 37.3/40.3.
 
 `tools/import_nato_campaigns.py` regenerates the data from local `internet/` references using Python and pypdf. It reads inputs without modifying them; runtime, builds, and tests do not depend on `internet/`. Soviet 6G and 90GT exchange Fronts in 1988 per 44.2. British upgrades, Canadian reinforcements, and the U.S. 81st Brigade's year changes use the actual year-specific data. The 1988 Soviet 83rd Air Assault Brigade from the scenario text and module is included as well.
 

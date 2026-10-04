@@ -4,9 +4,12 @@ import {
   ODDS_COLUMNS,
   type BattleOdds,
   type BattleReport,
+  type ColumnShift,
   type CombatObjective,
   type CombatState,
   type GameCommand,
+  type KnownShiftReason,
+  type KnownStrengthModifier,
   type StrengthModifier,
   type UnitState,
   type UnitStrength,
@@ -18,7 +21,7 @@ import { COLORS } from "../map/render/style";
 import { sideName } from "./unitFormat";
 import { UnitCounterIcon } from "./UnitCounterIcon";
 
-const MODIFIER_LABELS: Record<StrengthModifier, string> = {
+const MODIFIER_LABELS: Record<KnownStrengthModifier, string> = {
   disrupted: "Disrupted ½",
   outOfCombatSupply: "Out of supply ½",
   armorIntoCityOrMountain: "Armor into city/mountain ½",
@@ -28,13 +31,23 @@ const MODIFIER_LABELS: Record<StrengthModifier, string> = {
   provisionalDefense: "HQ provisional",
 };
 
-const SHIFT_LABELS = {
+const SHIFT_LABELS: Record<KnownShiftReason, string> = {
   terrain: "Terrain",
   flankAttack: "Flank attack",
   concentricAttack: "Concentric attack",
   surprise: "Surprise",
   offensiveSupport: "Offensive Support",
-} as const;
+};
+
+/** Label for a printed modifier, or the raw name of one added by another rules plugin. */
+function modifierLabel(modifier: StrengthModifier): string {
+  return (MODIFIER_LABELS as Record<string, string>)[modifier] ?? modifier;
+}
+
+/** Label for a printed shift reason, or the raw name of one added by another rules plugin. */
+function shiftLabel(reason: ColumnShift["reason"]): string {
+  return (SHIFT_LABELS as Record<string, string>)[reason] ?? reason;
+}
 
 const SIDE_COLORS = { nato: "#6fa3e0", pact: "#e06a5c" } as const;
 
@@ -253,7 +266,7 @@ function ForceRow({ unitId, name, sideId, anchor, active, detail, value, checkbo
 }
 
 function strengthDetail(entry: UnitStrength | undefined, location: string | null): string {
-  const parts = entry?.modifiers.map((modifier) => MODIFIER_LABELS[modifier]) ?? [];
+  const parts = entry?.modifiers.map(modifierLabel) ?? [];
   if (location) parts.unshift(location);
   return parts.join(" · ");
 }
@@ -270,7 +283,7 @@ function OddsSummary({ odds }: { odds: BattleOdds }) {
       </div>
       {odds.shifts.length > 0 && (
         <p className="odds-shifts">
-          {odds.shifts.map((shift) => `${SHIFT_LABELS[shift.reason]} ${signed(shift.shift)}`).join(" · ")}
+          {odds.shifts.map((shift) => `${shiftLabel(shift.reason)} ${signed(shift.shift)}`).join(" · ")}
           {odds.shifts.reduce((sum, shift) => sum + shift.shift, 0) !== odds.netShift && " (capped)"}
         </p>
       )}

@@ -344,8 +344,9 @@ fn invalid_setups_are_rejected() {
         json!({ "start": { "gameTurn": 9, "sideId": "nato", "phaseId": "combat" } }),
     ));
     assert_eq!(unreachable["code"], "invalidSetup");
+    // The setup format belongs to the rules plugin, which rejects unknown fields.
     let typo = engine.send(new_game(json!({ "unit": [] })));
-    assert_eq!(typo["code"], "invalidRequest");
+    assert_eq!(typo["code"], "invalidSetup");
     // No game was started by the rejected requests.
     let snapshot = engine.send(json!({ "type": "getSnapshot" }));
     assert_eq!(snapshot["code"], "gameNotStarted");

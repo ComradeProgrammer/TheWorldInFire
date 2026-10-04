@@ -1,15 +1,13 @@
-//! Line-oriented JSON adapter for driving the OOAW rules engine as a process.
+//! Line-oriented JSON adapter for driving the OOAW game kernel as a process.
 //!
 //! Each line on stdin is one request and produces exactly one response on
 //! stdout. Diagnostics belong on stderr so stdout remains machine-readable.
 
 use std::io::{self, BufRead, Write};
 
-use ooaw_core::{
-    find_scenario, GameCommand, GameEngine, GameEvent, GameId, GameSetup, GameSnapshot,
-    MapDefinition, ScenarioSummary,
-};
+use ooaw_core::{GameEngine, GameId, GameSnapshot, MapDefinition, ScenarioSummary};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Requests accepted by the newline-delimited JSON process protocol.
 #[derive(Debug, Deserialize)]
@@ -25,16 +23,16 @@ enum EngineRequest {
         scenario_id: String,
         /// Client-selected game identifier, also used to seed deterministic dice.
         game_id: String,
-        /// Optional custom starting situation laid out over the scenario.
+        /// Optional custom starting situation, in the scenario plugin's setup format.
         #[serde(default)]
-        setup: Option<GameSetup>,
+        setup: Option<Value>,
     },
     GetSnapshot,
     SubmitCommand {
         /// Revision the client last observed; must match the active game before execution.
         expected_revision: u64,
-        /// Rules-engine command to validate and execute for the active game.
-        command: GameCommand,
+        /// Command object, with a `type` tag, to validate and execute for the active game.
+        command: Value,
     },
 }
 
@@ -54,7 +52,7 @@ enum EngineResponse {
         /// Authoritative game state at the time this response is produced.
         snapshot: GameSnapshot,
         /// Static scenario map supplied when the client starts a game.
-        map: MapDefinition,
+        map: Box<MapDefinition>,
     },
     Snapshot {
         /// Authoritative game state at the time this response is produced.
@@ -64,7 +62,7 @@ enum EngineResponse {
         /// Authoritative revision after the accepted command.
         revision: u64,
         /// Ordered game events produced by the accepted command.
-        events: Vec<GameEvent>,
+        events: Vec<Value>,
         /// Authoritative game state at the time this response is produced.
         snapshot: GameSnapshot,
     },
@@ -97,21 +95,17 @@ impl EngineSession {
     /// Dispatches a protocol request and checks command revisions against the active game.
     fn handle(&mut self, request: EngineRequest) -> EngineResponse {
         match request {
-            EngineRequest::ListScenarios => EngineResponse::Scenarios {
-                scenarios: ooaw_core::list_scenarios(),
+            EngineRequest::ListScenarios => match ooaw_core::list_scenarios() {
+                Ok(scenarios) => EngineResponse::Scenarios { scenarios },
+                Err(error) => EngineResponse::error(&error.code, error.message),
             },
             EngineRequest::NewGame {
                 scenario_id,
                 game_id,
                 setup,
             } => {
-                let Some(scenario) = find_scenario(&scenario_id) else {
-                    return EngineResponse::error(
-                        "scenarioNotFound",
-                        format!("Unknown scenario: {scenario_id}"),
-                    );
-                };
-                let game = match &setup {
+                let scenario = scenario_id.as_str();
+                let game = match setup {
                     Some(setup) => GameEngine::with_setup(GameId(game_id), scenario, setup),
                     None => GameEngine::new(GameId(game_id), scenario),
                 };
@@ -119,7 +113,7 @@ impl EngineSession {
                     Ok(game) => {
                         let response = EngineResponse::GameStarted {
                             snapshot: game.snapshot(),
-                            map: game.map().clone(),
+                            map: Box::new(game.map().clone()),
                         };
                         self.game = Some(game);
                         response
@@ -140,7 +134,7 @@ impl EngineSession {
                 let Some(game) = &mut self.game else {
                     return EngineResponse::error("gameNotStarted", "No game has been started");
                 };
-                let actual_revision = game.snapshot().revision;
+                let actual_revision = game.revision();
                 if expected_revision != actual_revision {
                     return EngineResponse::error(
                         "revisionMismatch",

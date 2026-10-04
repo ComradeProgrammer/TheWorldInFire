@@ -1,6 +1,6 @@
 # 游戏引擎端到端测试
 
-游戏引擎提供名为 `ooaw-engine` 的逐行 JSON 进程适配器。自动化客户端、回放工具和黑盒测试可以通过它使用引擎，而不需要链接 Rust 引擎内部代码。
+内核提供名为 `ooaw-engine` 的逐行 JSON 进程适配器（`crates/ooaw-core/src/bin/ooaw-engine.rs`）。它使用内置的官方规则插件运行游戏；自动化客户端、回放工具和黑盒测试可以通过它使用引擎，而不需要链接 Rust 引擎内部代码。
 
 标准输入的每一行表示一个请求，进程会在标准输出写回且只写回一行 JSON 响应。进程会保留一个游戏会话，直到后续的 `newGame` 请求替换它或进程退出。诊断信息写入标准错误，保证标准输出始终是稳定的协议数据流。
 
@@ -17,7 +17,7 @@
 
 ## 从自定义局面开始
 
-`newGame` 可以带一个可选的 `setup`（`crates/ooaw-core/src/setup.rs` 中的 `GameSetup`），让测试从任意局面开始。引擎先创建剧本，然后不断结束阶段直到到达 `start`（途中所有阶段照常结算，包括增援和补给），再铺设 setup 的其余内容。所有字段都是可选的：
+`newGame` 可以带一个可选的 `setup`，让测试从任意局面开始。内核先创建剧本，然后不断结束阶段直到到达 `start`（途中所有阶段照常结算，包括增援和补给），再把 setup 交给拥有该剧本的插件铺设其余内容。NATO 规则的格式是 `plugins/nato-official/src/setup.rs` 中的 `GameSetup`。所有字段都是可选的：
 
 | 字段 | 作用 |
 | --- | --- |
@@ -29,14 +29,14 @@
 | `airPoints` | 替换所列各方的空中点数：`[{ sideId, tactical, operational, bonusTactical }]`。 |
 | `attackTargets`、`reserveUnitIds` | 设置当前战斗计划的攻击目标和预备队/OMG 单位；需要已有战斗计划，因此 `start` 必须在该方战斗计划阶段或之后。 |
 
-局面直接替换状态而不重新检查规则，所以测试可以构造正常游戏要很多回合才能形成的局面。开始步骤本身的自动结算已经执行：若要让引擎为铺设的局面检查补给，应从上一方的预备队阶段开始，再提交 `endPhase`。未知的单位、格子或阵营，或无法到达的 `start`，会以 `invalidSetup` 拒绝；未知字段会以 `invalidRequest` 拒绝。被拒绝的请求不会开始游戏。
+局面直接替换状态而不重新检查规则，所以测试可以构造正常游戏要很多回合才能形成的局面。开始步骤本身的自动结算已经执行：若要让引擎为铺设的局面检查补给，应从上一方的预备队阶段开始，再提交 `endPhase`。未知的单位、格子、阵营或字段，或无法到达的 `start`，都会以 `invalidSetup` 拒绝。被拒绝的请求不会开始游戏。
 
 黑盒测试用它让三个苏军师包围一个西德旅，并检查北约下一个战前步骤会使其缺乏补给，同时检查各种拒绝情况。
 
 运行方式：
 
 ```sh
-cargo test --manifest-path crates/ooaw-core/Cargo.toml --test engine_black_box
+cargo test -p ooaw-core --test engine_black_box
 ```
 
 会话示例：
