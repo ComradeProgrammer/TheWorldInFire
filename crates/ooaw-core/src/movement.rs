@@ -12,8 +12,8 @@ use crate::engine::GameEngine;
 use crate::error::RuleError;
 use crate::model::{
     has_incompatible_movement, movement_spent, Airspace, HexId, HexsideFeature, MapHex,
-    MovementMode, MovementModeOptions, MovementOption, SideId, SupplyStatus, Terrain, TrainStatus,
-    UnitId, UnitLocation, UnitState,
+    MovementMode, MovementModeOptions, MovementOption, PlannedMovement, SideId, SupplyStatus,
+    Terrain, TrainStatus, UnitId, UnitLocation, UnitState,
 };
 use crate::reserve::MovementPhase;
 
@@ -261,6 +261,32 @@ impl GroundSearch {
 }
 
 /// Finds cheapest reachable hexes and predecessors using the supplied neighbor and legal-edge functions.
+/// Result of a lift search: the hexes a flight or voyage can reach, with routes.
+struct LiftSearch {
+    /// Predecessor of each reached hex; `None` for a starting hex.
+    previous: HashMap<String, Option<String>>,
+    /// Whether the order starts on the map (its own hex is then left out of routes).
+    from_map: bool,
+}
+
+impl LiftSearch {
+    /// The route to `destination`, excluding a starting hex on the map.
+    fn path(&self, destination: &str) -> Option<Vec<HexId>> {
+        self.previous.get(destination)?;
+        let mut reversed = vec![HexId(destination.to_owned())];
+        let mut current = destination;
+        while let Some(Some(parent)) = self.previous.get(current) {
+            if self.previous.get(parent.as_str()) == Some(&None) && self.from_map {
+                break;
+            }
+            reversed.push(HexId(parent.clone()));
+            current = parent;
+        }
+        reversed.reverse();
+        Some(reversed)
+    }
+}
+
 fn dijkstra(
     origin: &str,
     edge: &dyn Fn(&str, &str, u16) -> Option<u16>,
@@ -319,6 +345,8 @@ impl GameEngine {
             MovementMode::March,
             MovementMode::Rail,
             MovementMode::AirTransport,
+            MovementMode::Paradrop,
+            MovementMode::SeaTransport,
         ]
         .into_iter()
         .map(|mode| match self.movement_options(unit_id, mode) {
@@ -413,19 +441,21 @@ impl GameEngine {
                     });
                 }
             }
-            MovementMode::AirTransport => {
+            MovementMode::AirTransport | MovementMode::Paradrop | MovementMode::SeaTransport => {
+                let search = self.lift_search(&context, unit, mode);
                 for hex in self.scenario.map.hexes.iter() {
-                    if matches!(&unit.location, UnitLocation::Hex { hex_id } if *hex_id == hex.id) {
+                    if matches!(&unit.location, UnitLocation::Hex { hex_id } if *hex_id == hex.id)
+                        || self
+                            .check_destination(&context, unit, &hex.id, mode)
+                            .is_err()
+                    {
                         continue;
                     }
-                    if self
-                        .check_destination(&context, unit, &hex.id, mode)
-                        .is_ok()
-                    {
+                    if let Some(path) = search.path(&hex.id.0) {
                         options.push(MovementOption {
                             hex_id: hex.id.clone(),
                             cost: 0,
-                            path: vec![hex.id.clone()],
+                            path,
                         });
                     }
                 }
@@ -490,7 +520,23 @@ impl GameEngine {
                 }
                 Ok((search.path_to(&destination.0), cost))
             }
-            MovementMode::AirTransport => Ok((vec![destination.clone()], 0)),
+            MovementMode::AirTransport | MovementMode::Paradrop | MovementMode::SeaTransport => {
+                let path = self
+                    .lift_search(&context, unit, mode)
+                    .path(&destination.0)
+                    .ok_or_else(|| {
+                        RuleError::new(
+                            "noLegalRoute",
+                            match mode {
+                                MovementMode::SeaTransport => {
+                                    "No sea route outside enemy Airspace reaches that port"
+                                }
+                                _ => "No flight path outside enemy Airspace reaches that city",
+                            },
+                        )
+                    })?;
+                Ok((path, 0))
+            }
         }
     }
 
@@ -626,64 +672,8 @@ impl GameEngine {
                     ));
                 }
             }
-            MovementMode::AirTransport => {
-                if !unit.is_air_transportable() {
-                    return Err(RuleError::new(
-                        "unitNotAirTransportable",
-                        "Only Airborne and Airmobile units may use air transport",
-                    ));
-                }
-                if unit.train_status.is_some() {
-                    return Err(RuleError::new(
-                        "unitUnderTrainMarker",
-                        "A unit under a train marker may not use air transport",
-                    ));
-                }
-                if unit.supply.movement == Some(SupplyStatus::OutOfSupply) {
-                    return Err(RuleError::new(
-                        "unitOutOfSupply",
-                        "An out-of-movement-supply unit may not use air transport",
-                    ));
-                }
-                if movements.iter().any(|m| m.unit_id == *unit.id()) {
-                    return Err(RuleError::new(
-                        "unitAlreadyMoved",
-                        "A unit moved by air transport may not use another movement system",
-                    ));
-                }
-                if let Some(origin) = origin {
-                    if context.hexes[origin].city.is_none() {
-                        return Err(RuleError::new(
-                            "invalidAirTransportOrigin",
-                            "Air transport must start in a city or the Strategic Reserve",
-                        ));
-                    }
-                    // 16.1.1 (2): must start in friendly or contested Airspace.
-                    if context.airspace.of(origin) == Airspace::Enemy {
-                        return Err(RuleError::new(
-                            "enemyAirspace",
-                            "Air transport may not start in enemy Airspace",
-                        ));
-                    }
-                    // 16.1.1 (5a): may not start in an EZOC; friendly units do not negate it.
-                    if origin_zoc {
-                        return Err(RuleError::new(
-                            "enemyZoneOfControl",
-                            "Air transport may not start in an enemy zone of control",
-                        ));
-                    }
-                }
-                // 3.8, 16.0: each Airlift Command carries one step per turn.
-                let capacity = self
-                    .scenario
-                    .battle_planning_rules
-                    .airlift_commands(&unit.definition.side_id);
-                if self.active_plan()?.airlift_steps_used + unit.step_count() > capacity {
-                    return Err(RuleError::new(
-                        "airliftCapacityExceeded",
-                        format!("Airlifting this unit needs more than the side's {capacity} Airlift Commands"),
-                    ));
-                }
+            MovementMode::AirTransport | MovementMode::Paradrop | MovementMode::SeaTransport => {
+                self.lift_prerequisites(context, unit, mode, origin, movements)?;
             }
         }
         Ok(())
@@ -715,40 +705,69 @@ impl GameEngine {
                 "An enemy Free City can be entered only by advancing after a battle",
             ));
         }
-        // 16.1.2: the flight may not enter enemy Airspace, so neither may its destination.
-        if mode == MovementMode::AirTransport
-            && context.airspace.of(&destination.0) == Airspace::Enemy
-        {
-            return Err(RuleError::new(
-                "enemyAirspace",
-                "Air transport may not enter enemy Airspace",
-            ));
-        }
-        // 30.1.1: Air movement may never end in an enemy-controlled City.
-        if mode == MovementMode::AirTransport
-            && context
-                .enemy_conquered_cities
-                .contains(destination.0.as_str())
-        {
-            return Err(RuleError::new(
-                "enemyControlledCity",
-                "Air transport may not end in an enemy-controlled city",
-            ));
-        }
-        if mode == MovementMode::AirTransport {
-            if hex.terrain == Terrain::Mountain {
-                return Err(RuleError::new(
-                    "invalidAirTransportDestination",
-                    "Air transport may not end in mountain terrain",
-                ));
+        match mode {
+            MovementMode::AirTransport | MovementMode::SeaTransport => {
+                let sea = mode == MovementMode::SeaTransport;
+                // House rule: air transport flies city to city, sea transport sails
+                // port to port; either way to a city the side controls.
+                if hex.city.is_none() || (sea && hex.port.is_none()) {
+                    return Err(RuleError::new(
+                        "invalidLiftDestination",
+                        if sea {
+                            "Sea transport must end in a port"
+                        } else {
+                            "Air transport must end in a city"
+                        },
+                    ));
+                }
+                if self.city_control.get(destination) != Some(&unit.definition.side_id) {
+                    return Err(RuleError::new(
+                        "enemyControlledCity",
+                        "Transport must end in a city the side controls",
+                    ));
+                }
+                // 16.1.2, 16.2.2: the route may not enter enemy Airspace.
+                if context.airspace.of(&destination.0) == Airspace::Enemy {
+                    return Err(RuleError::new(
+                        "enemyAirspace",
+                        "Transport may not end in enemy Airspace",
+                    ));
+                }
+                // 16.1.1 (5c): not in Mountain terrain.
+                if !sea && hex.terrain == Terrain::Mountain {
+                    return Err(RuleError::new(
+                        "invalidLiftDestination",
+                        "Air transport may not end in mountain terrain",
+                    ));
+                }
+                // 16.1.1 (5a), 16.2.1 (5a): not in an EZOC; friendly units do not negate it.
+                if context.in_enemy_zoc(&destination.0) {
+                    return Err(RuleError::new(
+                        "enemyZoneOfControl",
+                        "Transport may not end in an enemy zone of control",
+                    ));
+                }
             }
-            // 8.1.3: transport movement may not end in an EZOC.
-            if context.in_enemy_zoc(&destination.0) {
-                return Err(RuleError::new(
-                    "enemyZoneOfControl",
-                    "Basic air transport may not end in an enemy zone of control",
-                ));
+            MovementMode::Paradrop => {
+                // 16.1.3 (2): Clear or Marsh only; enemy Airspace and EZOCs are allowed.
+                if !matches!(hex.terrain, Terrain::Clear | Terrain::Marsh) {
+                    return Err(RuleError::new(
+                        "invalidLiftDestination",
+                        "A Paradrop must land in Clear or Marsh terrain",
+                    ));
+                }
+                // 30.1.1: air movement never ends in an enemy-controlled city.
+                if context
+                    .enemy_conquered_cities
+                    .contains(destination.0.as_str())
+                {
+                    return Err(RuleError::new(
+                        "enemyControlledCity",
+                        "A Paradrop may not land in an enemy-controlled city",
+                    ));
+                }
             }
+            _ => {}
         }
         self.validate_destination_stacking(unit, destination)
     }
@@ -980,6 +999,210 @@ impl GameEngine {
     }
 
     /// Rejects enemy occupants, excess maneuver steps, or a second friendly HQ at the destination.
+    /// 16.1.1, 16.2.1, and the house rules for lift orders: who may fly, drop,
+    /// or sail, where the order may start, and the side's Lift Command capacity.
+    fn lift_prerequisites(
+        &self,
+        context: &MovementContext,
+        unit: &UnitState,
+        mode: MovementMode,
+        origin: Option<&str>,
+        movements: &[PlannedMovement],
+    ) -> Result<(), RuleError> {
+        let (name, eligible, reason) = match mode {
+            MovementMode::AirTransport => (
+                "Air transport",
+                unit.is_air_transportable(),
+                "Only Airborne and Airmobile units may use air transport",
+            ),
+            // 16.1.3 (1): only units with the Airborne symbol may Paradrop.
+            MovementMode::Paradrop => (
+                "A Paradrop",
+                unit.has_trait("airborne"),
+                "Only Airborne units may Paradrop",
+            ),
+            _ => ("Sea transport", true, ""),
+        };
+        if !eligible {
+            return Err(RuleError::new("unitNotAirTransportable", reason));
+        }
+        if unit.train_status.is_some() {
+            return Err(RuleError::new(
+                "unitUnderTrainMarker",
+                format!(
+                    "A unit under a train marker may not use {}",
+                    name.to_lowercase()
+                ),
+            ));
+        }
+        if unit.supply.movement == Some(SupplyStatus::OutOfSupply)
+            || unit.supply.headquarters == Some(SupplyStatus::OutOfSupply)
+        {
+            return Err(RuleError::new(
+                "unitOutOfSupply",
+                format!("An out-of-supply unit may not use {}", name.to_lowercase()),
+            ));
+        }
+        if movements.iter().any(|m| m.unit_id == *unit.id()) {
+            return Err(RuleError::new(
+                "unitAlreadyMoved",
+                "A unit that has moved may not use another movement system",
+            ));
+        }
+        if let Some(origin) = origin {
+            let hex = context.hexes[origin];
+            let sea = mode == MovementMode::SeaTransport;
+            if hex.city.is_none() || (sea && hex.port.is_none()) {
+                return Err(RuleError::new(
+                    "invalidLiftOrigin",
+                    if sea {
+                        "Sea transport must start in a port or the Strategic Reserve"
+                    } else {
+                        "Air movement must start in a city or the Strategic Reserve"
+                    },
+                ));
+            }
+            // 16.1.1 (2), 16.2.1 (2): friendly or contested Airspace.
+            if context.airspace.of(origin) == Airspace::Enemy {
+                return Err(RuleError::new(
+                    "enemyAirspace",
+                    format!("{name} may not start in enemy Airspace"),
+                ));
+            }
+            // 16.1.1 (5a), 16.2.1 (5a): never from an EZOC; friendly units do not negate it.
+            if context.in_enemy_zoc(origin) {
+                return Err(RuleError::new(
+                    "enemyZoneOfControl",
+                    format!("{name} may not start in an enemy zone of control"),
+                ));
+            }
+            // 16.1.1 (5c).
+            if !sea && hex.terrain == Terrain::Mountain {
+                return Err(RuleError::new(
+                    "invalidLiftOrigin",
+                    "Air movement may not start in mountain terrain",
+                ));
+            }
+        }
+        // 3.8, 16.0: each Lift Command carries one step per turn.
+        let rules = &self.scenario.battle_planning_rules;
+        let side_id = &unit.definition.side_id;
+        let plan = self.active_plan()?;
+        let (capacity, used, kind, code) = if mode == MovementMode::SeaTransport {
+            (
+                rules.sealift_commands(side_id),
+                plan.sealift_steps_used,
+                "Sealift",
+                "sealiftCapacityExceeded",
+            )
+        } else {
+            (
+                rules.airlift_commands(side_id),
+                plan.airlift_steps_used,
+                "Airlift",
+                "airliftCapacityExceeded",
+            )
+        };
+        if used + unit.step_count() > capacity {
+            return Err(RuleError::new(
+                code,
+                format!("Moving this unit needs more than the side's {capacity} {kind} Commands"),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Where a lift order can reach, with a route to each hex.
+    ///
+    /// Air transport flies over any hex outside enemy Airspace, crossing EZOCs
+    /// freely (house rule). Sea transport follows All-Sea, Coastal, and
+    /// major-river hexes outside enemy Airspace, a river hex only clear of
+    /// EZOCs (16.2.1.1). A Paradrop's flight is not restricted. Units leaving
+    /// the Strategic Reserve start from the side's sector entry hexes (air) or
+    /// its map-edge sea hexes (sea).
+    fn lift_search(
+        &self,
+        context: &MovementContext,
+        unit: &UnitState,
+        mode: MovementMode,
+    ) -> LiftSearch {
+        let side_id = &unit.definition.side_id;
+        let open_sky = |id: &str| context.airspace.of(id) != Airspace::Enemy;
+        let river = |id: &str| {
+            context.neighbors(id).into_iter().any(|next| {
+                context
+                    .side_features(id, next)
+                    .contains(&HexsideFeature::MajorRiver)
+            })
+        };
+        let at_sea = |id: &str| {
+            let hex = context.hexes[id];
+            hex.terrain == Terrain::Sea
+                || hex.coastal == Some(true)
+                || hex.port.is_some()
+                || (river(id) && !context.in_enemy_zoc(id))
+        };
+        let passable = |id: &str| match mode {
+            MovementMode::Paradrop => true,
+            MovementMode::SeaTransport => open_sky(id) && at_sea(id),
+            _ => open_sky(id),
+        };
+        let starts: Vec<String> = match &unit.location {
+            UnitLocation::Hex { hex_id } => vec![hex_id.0.clone()],
+            UnitLocation::StrategicReserve if mode == MovementMode::SeaTransport => {
+                let west = self
+                    .scenario
+                    .map
+                    .reinforcement_sectors
+                    .iter()
+                    .filter(|sector| sector.side_id == *side_id)
+                    .any(|sector| sector.hex_id.0.ends_with("34"));
+                context
+                    .hexes
+                    .values()
+                    .filter(|hex| {
+                        let outward = if west {
+                            hex.col + 1
+                        } else {
+                            hex.col.saturating_sub(1)
+                        };
+                        let edge = !context
+                            .hexes
+                            .contains_key(format!("{:02}{:02}", hex.row, outward).as_str());
+                        edge && hex.terrain == Terrain::Sea && passable(&hex.id.0)
+                    })
+                    .map(|hex| hex.id.0.clone())
+                    .collect()
+            }
+            UnitLocation::StrategicReserve => self
+                .scenario
+                .map
+                .reinforcement_sectors
+                .iter()
+                .filter(|sector| sector.side_id == *side_id && passable(&sector.hex_id.0))
+                .map(|sector| sector.hex_id.0.clone())
+                .collect(),
+        };
+        let from_map = matches!(unit.location, UnitLocation::Hex { .. });
+        let mut previous: HashMap<String, Option<String>> = HashMap::new();
+        let mut queue = std::collections::VecDeque::new();
+        for start in starts {
+            previous.insert(start.clone(), None);
+            queue.push_back(start);
+        }
+        while let Some(current) = queue.pop_front() {
+            for next in context.neighbors(&current) {
+                // Flights and voyages ignore hexside barriers.
+                if previous.contains_key(next) || !passable(next) {
+                    continue;
+                }
+                previous.insert(next.to_owned(), Some(current.clone()));
+                queue.push_back(next.to_owned());
+            }
+        }
+        LiftSearch { previous, from_map }
+    }
+
     pub(crate) fn validate_destination_stacking(
         &self,
         moving: &UnitState,

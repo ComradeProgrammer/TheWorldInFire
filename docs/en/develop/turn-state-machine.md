@@ -20,6 +20,7 @@ Completed:
 - automatic Joint Reinforcement resolution and `reinforcementsArrived` events;
 - a minimal opening deployment represented as turn-one reinforcements;
 - the seven-turn BALTAP 1983 framework, 44 units, opening setup, and reinforcement schedule;
+- six year variants of the three campaign scenarios, year-specific units and war-turn arrivals (scope in [Campaign scenarios](campaign-scenarios.md));
 - structured unit and strength data from which the frontend can draw counters;
 - an authoritative map model and NATO map data owned by each `ScenarioDefinition`;
 - one-time map delivery when `new_game` creates a game, with ordinary snapshots retaining only a stable `mapId`;
@@ -43,7 +44,7 @@ Not implemented yet:
 - interception, air-transport losses, and the complete Lift Command order of battle;
 - Nuclear, Chemical, and Artillery Strikes, NATO Deep Interdiction, NATO Defensive Air Strikes, and the parts of ground combat listed under "Combat Phase" below;
 - Reserve Helicopter movement (28.2.2), which needs helicopter movement;
-- deployments and victory conditions for the remaining official scenarios;
+- complete campaign deployment, pre-war and peace/mobilization sequences, and official scenario victory conditions (six war-turn entries are available; see [Campaign scenarios](campaign-scenarios.md));
 - BALTAP special rules and victory conditions;
 
 ## Confirmed design direction
@@ -183,6 +184,17 @@ Section 28.1 still says a reserve unit may not be *adjacent* to an enemy unit; t
 
 Deliberate differences from rule 10: no countries (so a unit inside enemy territory can still draw on a Free City within 10 hexes), no city or port supply, no Superior HQ assignments, no map-edge sources, and Combat Supply is not re-checked after each battle.
 
+### Reinforcement arrival and lift movement (house rules)
+
+Reinforcement Boxes are replaced by one entry hex per Reinforcement Sector: the land map-edge hex nearest each printed box (`MapDefinition::reinforcement_sectors`, set in code: NATO 1 = 3534, 2 = 4734; WP 3 = 4301, 4 = 3301, 5 = 2501).
+
+- **Arrival** (`GameEngine::arrival_location` in `phase.rs`): from turn two, a unit due in a map hex takes the nearest hex with stacking room within three hexes; a unit due in an enemy-held hex (enemy units or an enemy-controlled city), or with no room nearby, enters the Strategic Reserve. Turn-one units are the setup and are placed as written. A unit defined Entrained arrives Entrained while rail capacity allows (13.6), otherwise Entraining.
+- **Air Transport** (`airTransport`): Airborne or Airmobile units fly from a city or the Strategic Reserve to a city their side controls. The route (`lift_search`) passes any hex outside enemy Airspace, EZOCs included; the destination is not in enemy Airspace, an EZOC, or Mountain terrain. Take-off follows 16.1.1: Movement Supply, no train marker, not Disrupted, not moved, origin not in enemy Airspace, an EZOC (unnegated), or Mountain. Units in the Strategic Reserve start from their side's sector entry hexes.
+- **Paradrop** (`paradrop`, 16.1.3): Airborne-trait units only; any Clear or Marsh hex, including enemy Airspace and EZOCs, never an enemy unit (Assaults are not implemented) or an enemy-controlled city; no route restriction.
+- **Sea Transport** (`seaTransport`): any unit from a port or the Strategic Reserve to a port its side controls, along All-Sea, Coastal, port, and Major River hexes outside enemy Airspace, a river hex not in an EZOC (approximating 16.2.1.1); the destination is not in enemy Airspace or an EZOC. Units in the Strategic Reserve start from All-Sea hexes on their side's map edge.
+- **Capacity**: Air Transport and Paradrop share the Airlift Commands (`airliftStepsUsed`); Sea Transport uses the scenario's Sealift Commands (`sealiftStepsUsed`; BALTAP WP 3 / NATO 2, campaigns 3 / 3). Rejections use `airliftCapacityExceeded` and `sealiftCapacityExceeded`.
+- Units may no longer entrain in the Strategic Reserve. Interception (17.0), Air/Sea Ferry as separate systems, Amphibious Operations, and Helicopter movement are not implemented.
+
 ## Core module layout
 
 The game state machine is split by responsibility while the crate root provides a stable public API:
@@ -225,7 +237,7 @@ src/
 
 Counters do not depend on image assets. The core supplies game information through the unit definition and structured `attack`, `defense`, and `movement` fields for each strength step, and the frontend draws counters in its own visual style.
 
-The frontend calls `new_game` and `submit_game_command` through `src/gameApi.ts`. No units are present on the map at initial creation. After the player ends the Joint Status Phase, the core automatically resolves Joint Reinforcement and Pre-Battle. The frontend redraws its unit layer and battle-plan overlay from the returned snapshot and focuses the camera on arriving units. Counters are drawn from PixiJS rectangles, lines, ellipses, and text; no counter images from the reference game are loaded.
+The frontend calls `new_game` and `submit_game_command` through `src/gameApi.ts`. Joint Status is automatic (it has no player decisions yet), so `GameEngine::new` resolves the scenario's leading automatic phases (Joint Status, Joint Reinforcement with the opening deployment, and the WP Pre-Battle) before returning. Play opens on WP Battle Planning at revision 0 with the opening forces on the map; the events of that automatic opening are not returned. After each command the frontend redraws its unit layer and battle-plan overlay from the returned snapshot and focuses the camera on arriving reinforcements. Counters are drawn from PixiJS rectangles, lines, ellipses, and text; no counter images from the reference game are loaded.
 
 Models and scenario queries are available through `ooaw_core::model::{...}`. The crate root continues to re-export the public items, so existing `ooaw_core::{...}` imports remain compatible.
 
@@ -241,7 +253,7 @@ new_game("nato-1983-standard")
 
 ```json
 {
-  "snapshot": { "protocolVersion": 16, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
+  "snapshot": { "protocolVersion": 17, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
   "map": {
     "id": "nato-central-europe",
     "version": 1,
@@ -250,7 +262,7 @@ new_game("nato-1983-standard")
     "hexsides": []
   },
   "turnSequence": [
-    { "id": "joint.jointStatus", "phaseId": "jointStatus", "actor": { "type": "all" }, "execution": "interactive" },
+    { "id": "joint.jointStatus", "phaseId": "jointStatus", "actor": { "type": "all" }, "execution": "automatic" },
     { "id": "warsawPact.battlePlanning", "phaseId": "battlePlanning", "actor": { "type": "side", "sideId": "warsawPact" }, "execution": "interactive" }
   ]
 }
@@ -274,7 +286,7 @@ Current snapshot example:
 
 ```json
 {
-  "protocolVersion": 16,
+  "protocolVersion": 17,
   "gameId": "generated-uuid",
   "revision": 0,
   "scenario": {
@@ -290,15 +302,15 @@ Current snapshot example:
   "status": "inProgress",
   "turn": {
     "gameTurn": 1,
-    "stepIndex": 0,
+    "stepIndex": 3,
     "currentStep": {
-      "id": "joint.jointStatus",
-      "phaseId": "jointStatus",
-      "actor": { "type": "all" },
+      "id": "warsawPact.battlePlanning",
+      "phaseId": "battlePlanning",
+      "actor": { "type": "side", "sideId": "warsawPact" },
       "execution": "interactive"
     }
   },
-  "units": [],
+  "units": [ /* the opening forces */ ],
   "pendingDecision": null
 }
 ```
@@ -364,7 +376,7 @@ battle_preview({ "request": { "hexId": "2415", "unitIds": ["..."], "supportingHq
 { "type": "advanceAfterCombat", "unitIds": ["soviet.2gta.21motorRifleDivision"] }
 ```
 
-Protocol 12 adds the snapshot's `combat` (battles, attacked units and hexes, Engaged units, pending advance) and the events `battleResolved`, `unitRetreated`, `advanceOffered`, and `unitsAdvanced`. Protocol 13 adds Offensive Support: `supportHqIds` on combat objectives, `supportingHqId` on battle reports, `combat.supportingHqIds`, and the `unitWithdrawn` event. Protocol 14 replaces the single `resupplyTargetUnitId` with `resupplyTargetUnitIds` and adds `selected` to the resupply command and event. Protocol 15 adds reserves: `battlePlan.reserveUnitIds`, the snapshot's `reserve`, the `setReserve` command, and the `reserveStatusChanged` and `reserveMarkersRemoved` events. Protocol 16 adds the `unitSupplyChanged { unitId, supply }` event and the map city flag `enclave`.
+Protocol 12 adds the snapshot's `combat` (battles, attacked units and hexes, Engaged units, pending advance) and the events `battleResolved`, `unitRetreated`, `advanceOffered`, and `unitsAdvanced`. Protocol 13 adds Offensive Support: `supportHqIds` on combat objectives, `supportingHqId` on battle reports, `combat.supportingHqIds`, and the `unitWithdrawn` event. Protocol 14 replaces the single `resupplyTargetUnitId` with `resupplyTargetUnitIds` and adds `selected` to the resupply command and event. Protocol 15 adds reserves: `battlePlan.reserveUnitIds`, the snapshot's `reserve`, the `setReserve` command, and the `reserveStatusChanged` and `reserveMarkersRemoved` events. Protocol 16 adds the `unitSupplyChanged { unitId, supply }` event and the map city flag `enclave`. Protocol 17 adds the movement modes `paradrop` and `seaTransport`, `battlePlan.sealiftStepsUsed`, and the map's `reinforcementSectors` (`{ number, sideId, hexId }`).
 
 Reserve query and command:
 
@@ -430,7 +442,7 @@ During Battle Planning the unit detail view adds a "Mark as Reserve" (NATO) or "
 
 Display options (camera zoom, fit, and map-layer toggles) live in a modal Settings dialog opened from the top-right Settings button. The bottom bar is collapsible and split into two read-only panes: Battle Plan, rendered live from `snapshot.battlePlan`, and Combat Log, which stays empty until combat resolution exists.
 
-After the client ends turn one's `jointStatus`, the state machine enters and automatically completes `jointReinforcement`. The returned event stream includes:
+Each later Joint Reinforcement Phase is resolved inside the `endPhase` that ends NATO's turn (turn one's happens inside `new_game`). The returned event stream includes:
 
 ```json
 {

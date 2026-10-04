@@ -20,6 +20,7 @@
 - 自动联合增援结算与 `reinforcementsArrived` 事件；
 - 通过第一回合增援完成的最小开局部署；
 - BALTAP 1983 的七回合框架、44 个单位、开局部署和逐回合增援表；
+- 三个战役剧本的六个年份选项、年份部队数据和战争回合增援（范围见 [战役剧本](campaign-scenarios.md)）；
 - 前端重绘算子所需的结构化单位和战力数据；
 - 作为 `ScenarioDefinition` 一部分的权威地图模型与 NATO 地图数据；
 - `new_game` 创建游戏时一次性下发地图，普通快照只保留稳定 `mapId`；
@@ -43,7 +44,7 @@
 - 拦截、空运损失与升降机司令部完整编制；
 - 核打击、化学打击、炮兵打击、北约纵深遮断、北约防御性空中打击，以及下文“战斗阶段”所列的地面战斗未实现部分；
 - 预备队直升机移动（28.2.2），需要先实现直升机移动；
-- 其余正式剧本的部署与胜利条件；
+- 完整战役部署、战前与和平/动员流程，以及正式剧本胜利条件（已接入六个战争阶段版本，见 [战役剧本](campaign-scenarios.md)）；
 - BALTAP 的特殊规则和胜利条件；
 
 ## 已确认的设计方向
@@ -183,6 +184,17 @@ jointStatus
 
 与规则 10 的有意差异：没有国家概念（因此深入敌方领土的单位仍可依靠 10 格以内的自由城市）、没有城市补给和港口补给、没有上级 HQ 隶属、没有地图边缘补给源，也不在每场战斗后重新检查战斗补给。
 
+### 增援到达与空海运输（自定规则）
+
+增援框改为每个增援区段一个入场格：距离印刷增援框最近的地图边缘陆地格（`MapDefinition::reinforcement_sectors`，在代码中设定：北约 1 = 3534、2 = 4734；华约 3 = 4301、4 = 3301、5 = 2501）。
+
+- **到达**（`phase.rs` 中的 `GameEngine::arrival_location`）：从第二回合起，应到达地图格的单位进入三格以内最近的、有堆叠空位的格子；若指定格为敌方占据（有敌方单位或是敌方控制的城市），或附近没有空位，则进入战略预备队。第一回合单位属于开局部署，严格按设定放置。定义为已装车的单位在铁路运力允许时以已装车状态到达（13.6），否则为装车中。
+- **空运**（`airTransport`）：空降或空中机动单位从城市或战略预备队飞往本方控制的城市。航线（`lift_search`）可经过任何非敌方空域的格子，包括敌控格；目的地不能在敌方空域、敌控格或山地。起飞条件依 16.1.1：有移动补给、不在铁路标记下、未混乱、本阶段未移动，出发格不在敌方空域、敌控格（不可抵消）或山地。战略预备队中的单位从本方区段入场格起飞。
+- **伞降**（`paradrop`，16.1.3）：仅限带空降特性的单位；可降落任何开阔或沼泽格，包括敌方空域和敌控格，但不能降落在敌方单位上（强攻尚未实现）或敌方控制的城市；航线不受限制。
+- **海运**（`seaTransport`）：任何单位从港口或战略预备队驶往本方控制的港口，航线经过非敌方空域的全海格、沿海格、港口格和大河格，且河流格不能位于敌控格内（近似 16.2.1.1）；目的地不能在敌方空域或敌控格内。战略预备队中的单位从本方地图边缘的全海格出航。
+- **运力**：空运和伞降共用空运司令部（`airliftStepsUsed`）；海运使用剧本的海运司令部（`sealiftStepsUsed`；BALTAP 华约 3 / 北约 2，战役剧本 3 / 3）。超出时分别返回 `airliftCapacityExceeded` 和 `sealiftCapacityExceeded`。
+- 单位不能再在战略预备队中装车。拦截（17.0）、作为独立系统的空中/海上渡运、两栖作战和直升机移动尚未实现。
+
 ## 内核模块结构
 
 游戏状态机按职责拆分，同时由 crate 根统一导出公共类型：
@@ -225,7 +237,7 @@ src/
 
 算子不依赖图片资源。内核通过单位定义和每个战力面的 `attack`、`defense`、`movement` 等结构化字段提供游戏信息，前端按自己的视觉风格绘制算子。
 
-前端通过 `src/gameApi.ts` 调用 `new_game` 和 `submit_game_command`。开局时地图上没有单位；玩家在联合状态阶段选择结束阶段后，内核自动完成联合增援和战前结算。前端使用返回快照重绘单位层和战斗计划叠加层，并将镜头聚焦到新到达的单位。算子由 PixiJS 的矩形、线条、椭圆和文字现场绘制，不加载原作算子图片。
+前端通过 `src/gameApi.ts` 调用 `new_game` 和 `submit_game_command`。联合状态阶段是自动阶段（目前没有玩家决策），因此 `GameEngine::new` 在返回前会结算剧本开头的自动阶段（联合状态、带开局部署的联合增援，以及华约战前阶段）。游戏在 revision 0 时就处于华约战斗计划阶段，开局部队已在地图上；这段自动开局产生的事件不会返回。每条命令之后，前端使用返回快照重绘单位层和战斗计划叠加层，并将镜头聚焦到新到达的增援。算子由 PixiJS 的矩形、线条、椭圆和文字现场绘制，不加载原作算子图片。
 
 模型类型和场景查询可以通过 `ooaw_core::model::{...}` 导入。crate 根继续重新导出公共项，因此现有的 `ooaw_core::{...}` 调用保持兼容。
 
@@ -241,7 +253,7 @@ new_game("nato-1983-standard")
 
 ```json
 {
-  "snapshot": { "protocolVersion": 16, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
+  "snapshot": { "protocolVersion": 17, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
   "map": {
     "id": "nato-central-europe",
     "version": 1,
@@ -250,7 +262,7 @@ new_game("nato-1983-standard")
     "hexsides": []
   },
   "turnSequence": [
-    { "id": "joint.jointStatus", "phaseId": "jointStatus", "actor": { "type": "all" }, "execution": "interactive" },
+    { "id": "joint.jointStatus", "phaseId": "jointStatus", "actor": { "type": "all" }, "execution": "automatic" },
     { "id": "warsawPact.battlePlanning", "phaseId": "battlePlanning", "actor": { "type": "side", "sideId": "warsawPact" }, "execution": "interactive" }
   ]
 }
@@ -274,7 +286,7 @@ new_game("nato-baltap-1983")
 
 ```json
 {
-  "protocolVersion": 16,
+  "protocolVersion": 17,
   "gameId": "generated-uuid",
   "revision": 0,
   "scenario": {
@@ -290,15 +302,15 @@ new_game("nato-baltap-1983")
   "status": "inProgress",
   "turn": {
     "gameTurn": 1,
-    "stepIndex": 0,
+    "stepIndex": 3,
     "currentStep": {
-      "id": "joint.jointStatus",
-      "phaseId": "jointStatus",
-      "actor": { "type": "all" },
+      "id": "warsawPact.battlePlanning",
+      "phaseId": "battlePlanning",
+      "actor": { "type": "side", "sideId": "warsawPact" },
       "execution": "interactive"
     }
   },
-  "units": [],
+  "units": [ /* the opening forces */ ],
   "pendingDecision": null
 }
 ```
@@ -364,7 +376,7 @@ battle_preview({ "request": { "hexId": "2415", "unitIds": ["..."], "supportingHq
 { "type": "advanceAfterCombat", "unitIds": ["soviet.2gta.21motorRifleDivision"] }
 ```
 
-协议 12 在快照中新增 `combat`（战斗、已进攻的单位与格子、已交战单位、待决定的推进），并新增事件 `battleResolved`、`unitRetreated`、`advanceOffered` 和 `unitsAdvanced`。协议 13 加入进攻支援：战斗目标的 `supportHqIds`、战斗报告的 `supportingHqId`、`combat.supportingHqIds`，以及 `unitWithdrawn` 事件。协议 14 将单个 `resupplyTargetUnitId` 替换为 `resupplyTargetUnitIds`，并为再补给命令和事件增加 `selected` 字段。协议 15 加入预备队：`battlePlan.reserveUnitIds`、快照的 `reserve`、`setReserve` 命令，以及 `reserveStatusChanged` 和 `reserveMarkersRemoved` 事件。协议 16 新增 `unitSupplyChanged { unitId, supply }` 事件和地图城市标志 `enclave`。
+协议 12 在快照中新增 `combat`（战斗、已进攻的单位与格子、已交战单位、待决定的推进），并新增事件 `battleResolved`、`unitRetreated`、`advanceOffered` 和 `unitsAdvanced`。协议 13 加入进攻支援：战斗目标的 `supportHqIds`、战斗报告的 `supportingHqId`、`combat.supportingHqIds`，以及 `unitWithdrawn` 事件。协议 14 将单个 `resupplyTargetUnitId` 替换为 `resupplyTargetUnitIds`，并为再补给命令和事件增加 `selected` 字段。协议 15 加入预备队：`battlePlan.reserveUnitIds`、快照的 `reserve`、`setReserve` 命令，以及 `reserveStatusChanged` 和 `reserveMarkersRemoved` 事件。协议 16 新增 `unitSupplyChanged { unitId, supply }` 事件和地图城市标志 `enclave`。协议 17 新增移动方式 `paradrop` 和 `seaTransport`、`battlePlan.sealiftStepsUsed`，以及地图的 `reinforcementSectors`（`{ number, sideId, hexId }`）。
 
 预备队查询与命令：
 
@@ -430,7 +442,7 @@ reserve_options()  →  { "revision": 4, "units": [{ "unitId": "...", "unavailab
 
 显示选项（镜头缩放、适配地图和地图图层开关）位于右上角“设置”按钮打开的模态设置窗口中。底栏可折叠，并分为两个只读区域：左侧“战斗计划”实时渲染 `snapshot.battlePlan`，右侧“战斗日志”在战斗结算实现之前保持为空。
 
-结束第一回合的 `jointStatus` 后，状态机会进入并自动完成 `jointReinforcement`。返回结果中的事件流包含：
+之后每个联合增援阶段都在结束北约回合的那条 `endPhase` 中结算（第一回合的联合增援在 `new_game` 中完成）。返回结果中的事件流包含：
 
 ```json
 {

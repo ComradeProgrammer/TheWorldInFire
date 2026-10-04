@@ -11,11 +11,13 @@
 - [战斗](rules/combat.md)
 - [联合增援](rules/reinforcements.md)
 - [BALTAP 1983](rules/baltap.md)
+- [战役剧本](rules/campaigns.md)
 
 `rules/` 是给玩家阅读的规则书，只记录当前游戏中已经生效的规则。这里不出现代码结构、接口、事件、revision、开发进度或未来计划。
 
 ## 开发记录
 
 - [回合状态机开发记录](develop/turn-state-machine.md)
+- [战役剧本数据与实现范围](develop/campaign-scenarios.md)
 
 `develop/` 面向开发者，记录实现状态、设计决定、IPC、未完成工作和后续计划。

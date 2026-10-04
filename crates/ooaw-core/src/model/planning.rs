@@ -91,6 +91,9 @@ pub struct BattlePlan {
     pub detrained_unit_ids: Vec<UnitId>,
     /// Airlift capacity already consumed by this plan.
     pub airlift_steps_used: u16,
+    /// Sealift capacity already consumed by this plan.
+    #[serde(default)]
+    pub sealift_steps_used: u16,
     /// Maneuver units marked with a Reserve (NATO) or OMG (WP) Marker (12.6).
     #[serde(default)]
     pub reserve_unit_ids: Vec<UnitId>,
@@ -130,6 +133,7 @@ impl BattlePlan {
             entraining_unit_ids: Vec::new(),
             detrained_unit_ids: Vec::new(),
             airlift_steps_used: 0,
+            sealift_steps_used: 0,
             reserve_unit_ids: Vec::new(),
         }
     }

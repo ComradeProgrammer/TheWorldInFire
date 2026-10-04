@@ -25,8 +25,8 @@ command.
 
 The integration test in `crates/ooaw-core/tests/engine_black_box.rs` launches
 the compiled executable and communicates only with JSON. It verifies session
-errors, rule rejection, automatic phase processing, reinforcement events,
-state mutation, and optimistic-concurrency rejection without importing any
+errors, the automatic opening resolved at game creation, rule rejection,
+events and revisions, state mutation, and optimistic-concurrency rejection without importing any
 `ooaw_core` type. A second test plays a BALTAP Warsaw Pact turn: it marks a
 division OMG, checks that only that unit may move in the Reserve Phase and only
 by Tactical movement, ends the phase (marker removal and Post-Battle), and

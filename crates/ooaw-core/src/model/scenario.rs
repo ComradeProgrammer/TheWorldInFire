@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::map::nato_map;
 use super::scenario_baltap::baltap_scenario;
+use super::scenario_campaign::{campaign_scenario, CAMPAIGN_IDS};
 use super::{
     BattlePlanningRules, FormationId, HexId, MapDefinition, NationId, PhaseActor, PhaseDefinition,
     PhaseExecution, PhaseId, SideDefinition, SideId, StepId, UnitDefinition, UnitId, UnitLocation,
@@ -144,7 +145,8 @@ fn simplified_side_turn(side_id: &str) -> Vec<PhaseDefinition> {
 /// Builds the joint opening phases followed by Warsaw Pact and NATO player turns.
 pub(crate) fn standard_turn_sequence() -> Vec<PhaseDefinition> {
     let mut turn_sequence = vec![
-        joint_step("jointStatus", PhaseExecution::Interactive),
+        // Joint Status has no player decisions yet, so play passes straight through it.
+        joint_step("jointStatus", PhaseExecution::Automatic),
         joint_step("jointReinforcement", PhaseExecution::Automatic),
     ];
     turn_sequence.extend(simplified_side_turn("warsawPact"));
@@ -280,7 +282,7 @@ pub fn find_scenario(id: &str) -> Option<ScenarioDefinition> {
                 ),
             ],
         }),
-        _ => None,
+        _ => campaign_scenario(id),
     }
 }
 
@@ -294,6 +296,7 @@ pub fn find_scenario(id: &str) -> Option<ScenarioDefinition> {
 pub fn list_scenarios() -> Vec<ScenarioSummary> {
     ["nato-baltap-1983", "nato-1983-standard"]
         .into_iter()
+        .chain(CAMPAIGN_IDS)
         .filter_map(find_scenario)
         .map(|scenario| ScenarioSummary::from(&scenario))
         .collect()

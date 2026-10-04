@@ -5,6 +5,7 @@ mod planning;
 mod rules;
 mod scenario;
 mod scenario_baltap;
+mod scenario_campaign;
 mod side;
 mod strike;
 mod unit;
@@ -16,8 +17,8 @@ pub use combat::{
 };
 pub use map::{
     Causeway, CityKind, CityOutline, CommandLine, CommandZone, HexsideFeature, LabelKind, LineKind,
-    MapCity, MapDefinition, MapGrid, MapHex, MapHexside, MapLabel, MapLine, MapSymbol, Terrain,
-    WaterArea,
+    MapCity, MapDefinition, MapGrid, MapHex, MapHexside, MapLabel, MapLine, MapSymbol,
+    ReinforcementSector, Terrain, WaterArea,
 };
 pub use phase::{PhaseActor, PhaseDefinition, PhaseExecution, PhaseId, StepId};
 pub(crate) use planning::{has_incompatible_movement, movement_spent};

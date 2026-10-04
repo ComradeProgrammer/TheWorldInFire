@@ -418,13 +418,11 @@ function App({ game }: { game: NewGameResponse }) {
           && !(combatPhase && (!combat?.ready || (combatOptions?.mandatoryRemaining.length ?? 0) > 0))
         }
         phaseActionLabel={
-          snapshot?.turn.gameTurn === 1 && snapshot.turn.currentStep?.phaseId === "jointStatus"
-            ? "Resolve Opening Deployment"
-            : strikesPending
-              ? "Resolve Air Strikes"
-              : combatPhase && (combatOptions?.mandatoryRemaining.length ?? 0) > 0
-                ? `${combatOptions?.mandatoryRemaining.length} Marked Attack${combatOptions?.mandatoryRemaining.length === 1 ? "" : "s"} Left`
-                : "End Phase"
+          strikesPending
+            ? "Resolve Air Strikes"
+            : combatPhase && (combatOptions?.mandatoryRemaining.length ?? 0) > 0
+              ? `${combatOptions?.mandatoryRemaining.length} Marked Attack${combatOptions?.mandatoryRemaining.length === 1 ? "" : "s"} Left`
+              : "End Phase"
         }
         phaseActionBusy={commandBusy}
         onOpenSettings={() => setSettingsOpen(true)}

@@ -1,5 +1,5 @@
 import { Application, Container, CullerPlugin, extensions, Graphics } from "pixi.js";
-import type { AirInterdictionZone, AirMission, BattlePlan, MovementOption, UnitState } from "../../gameApi";
+import type { AirInterdictionZone, AirMission, BattlePlan, MovementMode, MovementOption, UnitState } from "../../gameApi";
 import type { HexGrid } from "../hexGrid";
 import { hexId, neighborCoords } from "../hexGrid";
 import type { HexData, MapData } from "../mapTypes";
@@ -15,7 +15,7 @@ import {
   buildWaterLayer,
 } from "./featureLayers";
 import { COLORS } from "./style";
-import { buildCityLayer, buildHexNumberLayer, buildLabelLayers, buildSymbolLayer } from "./symbolLayers";
+import { buildCityLayer, buildHexNumberLayer, buildLabelLayers, buildSectorLayer, buildSymbolLayer } from "./symbolLayers";
 import { buildTerrainLayer } from "./terrainLayer";
 import { counterAt, populateUnitLayer, type CounterHit } from "./unitLayer";
 
@@ -51,6 +51,13 @@ export interface MovementPreview {
 }
 
 const MOVE_ARROW_COLOR = 0xff3b30;
+
+/** Planned-route colours for movements that are not ground or rail. */
+const ROUTE_COLORS: Partial<Record<MovementMode, number>> = {
+  airTransport: 0x79cfff,
+  paradrop: 0xb58cff,
+  seaTransport: 0x3ad6c2,
+};
 
 /** Offensive Strike Phase state drawn on the map. All of it comes from the core. */
 export interface StrikeOverlay {
@@ -189,6 +196,7 @@ export class MapRenderer {
       labels.minor,
       labels.major,
       this.hexNumbers,
+      buildSectorLayer(map, grid),
       this.planningLayer,
       this.strikeZones,
       this.unitLayer,
@@ -446,7 +454,7 @@ export class MapRenderer {
       if (points.length >= 4) {
         g.moveTo(points[0], points[1]);
         for (let i = 2; i < points.length; i += 2) g.lineTo(points[i], points[i + 1]);
-        g.stroke({ color: movement.mode === "airTransport" ? 0x79cfff : 0xf0bf58, width: 7, alpha: 0.78 });
+        g.stroke({ color: ROUTE_COLORS[movement.mode] ?? 0xf0bf58, width: 7, alpha: 0.78 });
       }
     }
     for (const id of plan.attackTargets) {

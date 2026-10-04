@@ -248,7 +248,7 @@ export interface AirStrikeOptionsResponse {
   targets: StrikeTargetHex[];
 }
 
-export type MovementMode = "tactical" | "march" | "rail" | "airTransport";
+export type MovementMode = "tactical" | "march" | "rail" | "airTransport" | "paradrop" | "seaTransport";
 
 export interface PlannedMovement {
   unitId: string;

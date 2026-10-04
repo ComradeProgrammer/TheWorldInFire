@@ -15,6 +15,10 @@ pub struct BattlePlanningRules {
     pub warsaw_pact_airlift_commands: u16,
     /// NATO Airlift Commands; each carries one step per game turn (3.8).
     pub nato_airlift_commands: u16,
+    /// Warsaw Pact Sealift Commands; each carries one step per game turn (3.8).
+    pub warsaw_pact_sealift_commands: u16,
+    /// NATO Sealift Commands; each carries one step per game turn (3.8).
+    pub nato_sealift_commands: u16,
     /// Resupply operations available to each side in one player turn.
     pub resupply_operations_per_turn: u16,
     /// Maximum maneuver-unit steps in one hex at the end of movement.
@@ -44,6 +48,9 @@ impl BattlePlanningRules {
             nato_rail_capacity: 10,
             warsaw_pact_airlift_commands: 1,
             nato_airlift_commands: 1,
+            // 37.2, 38.2, 40.2: three Sealift Commands per side in every campaign.
+            warsaw_pact_sealift_commands: 3,
+            nato_sealift_commands: 3,
             resupply_operations_per_turn: 1,
             maneuver_stacking_limit: 4,
             // Rule 12.1 example: crossing a Major River costs one extra point.
@@ -85,6 +92,15 @@ impl BattlePlanningRules {
             self.warsaw_pact_airlift_commands
         } else {
             self.nato_airlift_commands
+        }
+    }
+
+    /// Returns the configured Sealift Command capacity for one side, in steps per game turn.
+    pub fn sealift_commands(&self, side_id: &SideId) -> u16 {
+        if side_id.0 == "warsawPact" {
+            self.warsaw_pact_sealift_commands
+        } else {
+            self.nato_sealift_commands
         }
     }
 
@@ -143,8 +159,12 @@ pub enum MovementMode {
     March,
     /// Movement by rail after the unit has finished entraining.
     Rail,
-    /// Movement by an Airlift Command.
+    /// Movement by an Airlift Command from a city to a friendly-controlled city.
     AirTransport,
+    /// An Airborne unit dropped by an Airlift Command onto Clear or Marsh terrain.
+    Paradrop,
+    /// Movement by a Sealift Command from a port to a friendly-controlled port.
+    SeaTransport,
 }
 
 /// Persistent status of a unit using rail transport.

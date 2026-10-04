@@ -169,8 +169,14 @@ impl GameEngine {
             path: path.clone(),
             city_control_changes,
         };
-        if mode == MovementMode::AirTransport {
-            self.active_plan_mut()?.airlift_steps_used += unit.step_count();
+        match mode {
+            MovementMode::AirTransport | MovementMode::Paradrop => {
+                self.active_plan_mut()?.airlift_steps_used += unit.step_count();
+            }
+            MovementMode::SeaTransport => {
+                self.active_plan_mut()?.sealift_steps_used += unit.step_count();
+            }
+            _ => {}
         }
         self.phase_movements_mut(phase)?.push(movement);
 
@@ -193,6 +199,14 @@ impl GameEngine {
     pub(super) fn entrain_unit(&mut self, unit_id: UnitId) -> Result<Vec<GameEvent>, RuleError> {
         let side_id = self.battle_planning_side()?;
         let unit = self.owned_unit(&unit_id, &side_id)?.clone();
+        // House rule: units leave the Strategic Reserve by air or sea transport,
+        // or arrive by rail at their sector's entry hex, never by entraining there.
+        if unit.location == UnitLocation::StrategicReserve {
+            return Err(RuleError::new(
+                "unitOffMap",
+                "Units in the Strategic Reserve leave it by air or sea transport, not by rail",
+            ));
+        }
         if unit.train_status.is_some() {
             return Err(RuleError::new(
                 "unitAlreadyUnderTrainMarker",
@@ -370,9 +384,16 @@ impl GameEngine {
             .expect("validated unit exists")
             .location = movement.from.clone();
         self.phase_movements_mut(phase)?.remove(movement_index);
-        if movement.mode == MovementMode::AirTransport {
-            let plan = self.active_plan_mut()?;
-            plan.airlift_steps_used = plan.airlift_steps_used.saturating_sub(unit.step_count());
+        match movement.mode {
+            MovementMode::AirTransport | MovementMode::Paradrop => {
+                let plan = self.active_plan_mut()?;
+                plan.airlift_steps_used = plan.airlift_steps_used.saturating_sub(unit.step_count());
+            }
+            MovementMode::SeaTransport => {
+                let plan = self.active_plan_mut()?;
+                plan.sealift_steps_used = plan.sealift_steps_used.saturating_sub(unit.step_count());
+            }
+            _ => {}
         }
         let mut city_events = Vec::new();
         self.restore_city_control(&movement.city_control_changes, &mut city_events);
@@ -517,7 +538,11 @@ impl GameEngine {
     }
 
     /// Checks whether adding this unit's steps to entrained units would exceed its side's capacity.
-    fn validate_rail_capacity(&self, side_id: &SideId, unit: &UnitState) -> Result<(), RuleError> {
+    pub(crate) fn validate_rail_capacity(
+        &self,
+        side_id: &SideId,
+        unit: &UnitState,
+    ) -> Result<(), RuleError> {
         let capacity = if side_id.0 == "warsawPact" {
             self.scenario
                 .battle_planning_rules

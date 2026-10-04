@@ -8,11 +8,11 @@
 use crate::engine::GameEngine;
 use crate::error::RuleError;
 use crate::event::GameEvent;
-use crate::movement::MovementContext;
 use crate::model::{
     movement_spent, MovementMode, PhaseActor, PlannedMovement, ReserveOption, ReserveState, SideId,
     SupplyStatus, UnitId, UnitLocation, UnitState,
 };
+use crate::movement::MovementContext;
 
 /// The phase a movement order belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,14 +132,11 @@ impl GameEngine {
         // (1): rail and air transport are earlier Movement Segments.
         if movements.iter().any(|movement| {
             movement.unit_id == *unit.id()
-                && matches!(
-                    movement.mode,
-                    MovementMode::Rail | MovementMode::AirTransport
-                )
+                && !matches!(movement.mode, MovementMode::Tactical | MovementMode::March)
         }) {
             return Err(RuleError::new(
                 "movedByTransport",
-                "A unit that moved by rail or air transport cannot be placed in reserve",
+                "A unit that moved by rail, air, or sea cannot be placed in reserve",
             ));
         }
         // (2): at most half the Movement Allowance of the system used, rounded

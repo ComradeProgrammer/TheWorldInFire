@@ -77,6 +77,8 @@ fn commands_drive_the_engine_through_its_json_process_boundary() {
     assert_eq!(before_start["type"], "error");
     assert_eq!(before_start["code"], "gameNotStarted");
 
+    // The automatic opening (Joint Status, Joint Reinforcement, Pre-Battle) is
+    // resolved at creation: play opens on the WP Battle Planning Phase.
     let started = engine.send(json!({
         "type": "newGame",
         "scenarioId": "nato-1983-standard",
@@ -86,11 +88,16 @@ fn commands_drive_the_engine_through_its_json_process_boundary() {
     assert_eq!(started["snapshot"]["revision"], 0);
     assert_eq!(
         started["snapshot"]["turn"]["currentStep"]["phaseId"],
-        "jointStatus"
+        "battlePlanning"
     );
-    assert_eq!(started["snapshot"]["units"], json!([]));
+    assert_eq!(
+        started["snapshot"]["turn"]["currentStep"]["actor"]["sideId"],
+        "warsawPact"
+    );
+    assert_eq!(started["snapshot"]["units"].as_array().unwrap().len(), 2);
     assert_eq!(started["map"]["id"], "nato-central-europe");
 
+    // A rule violation is rejected without changing the revision.
     let rejected = engine.send(json!({
         "type": "submitCommand",
         "expectedRevision": 0,
@@ -101,39 +108,11 @@ fn commands_drive_the_engine_through_its_json_process_boundary() {
         }
     }));
     assert_eq!(rejected["type"], "error");
-    assert_eq!(rejected["code"], "wrongPhase");
-
-    let opening = engine.send(json!({
-        "type": "submitCommand",
-        "expectedRevision": 0,
-        "command": { "type": "endPhase" }
-    }));
-    assert_eq!(opening["type"], "commandAccepted");
-    assert_eq!(opening["revision"], 1);
-    assert_eq!(opening["snapshot"]["revision"], 1);
-    assert_eq!(opening["snapshot"]["units"].as_array().unwrap().len(), 2);
-    assert_eq!(
-        opening["snapshot"]["turn"]["currentStep"]["phaseId"],
-        "battlePlanning"
-    );
-    assert_eq!(
-        event_types(&opening),
-        vec![
-            "phaseEnded",
-            "phaseStarted",
-            "airPointsReset",
-            "reinforcementsArrived",
-            "phaseEnded",
-            "phaseStarted",
-            "preBattleSupplyChecked",
-            "phaseEnded",
-            "phaseStarted",
-        ]
-    );
+    assert_eq!(rejected["code"], "invalidAttackTarget");
 
     let planned = engine.send(json!({
         "type": "submitCommand",
-        "expectedRevision": 1,
+        "expectedRevision": 0,
         "command": {
             "type": "setResupplyTarget",
             "unitId": "soviet.6thGuardsMotorRifleDivision",
@@ -141,7 +120,7 @@ fn commands_drive_the_engine_through_its_json_process_boundary() {
         }
     }));
     assert_eq!(planned["type"], "commandAccepted");
-    assert_eq!(planned["revision"], 2);
+    assert_eq!(planned["revision"], 1);
     assert_eq!(event_types(&planned), vec!["resupplyTargetSet"]);
     assert_eq!(
         planned["snapshot"]["battlePlan"]["resupplyTargetUnitIds"],
@@ -150,11 +129,28 @@ fn commands_drive_the_engine_through_its_json_process_boundary() {
 
     let stale = engine.send(json!({
         "type": "submitCommand",
-        "expectedRevision": 1,
+        "expectedRevision": 0,
         "command": { "type": "endPhase" }
     }));
     assert_eq!(stale["type"], "error");
     assert_eq!(stale["code"], "revisionMismatch");
+
+    // Ending planning applies the resupply and opens the Offensive Strike Phase.
+    let strike = engine.send(json!({
+        "type": "submitCommand",
+        "expectedRevision": 1,
+        "command": { "type": "endPhase" }
+    }));
+    assert_eq!(strike["type"], "commandAccepted");
+    assert_eq!(strike["revision"], 2);
+    assert_eq!(
+        strike["snapshot"]["turn"]["currentStep"]["phaseId"],
+        "offensiveStrike"
+    );
+    assert_eq!(
+        event_types(&strike),
+        vec!["unitsResupplied", "phaseEnded", "phaseStarted"]
+    );
 
     let snapshot = engine.send(json!({ "type": "getSnapshot" }));
     assert_eq!(snapshot["type"], "snapshot");
@@ -199,9 +195,8 @@ fn a_reserve_unit_moves_in_the_reserve_phase_and_supply_is_checked() {
     assert_eq!(started["type"], "gameStarted");
     let mut revision = 0;
 
-    // Opening deployment, then the WP marks one division OMG.
-    let opening = accepted(&mut engine, &mut revision, json!({ "type": "endPhase" }));
-    assert_eq!(phase(&opening), "battlePlanning");
+    // The game opens on WP Battle Planning; the WP marks one division OMG.
+    assert_eq!(phase(&started), "battlePlanning");
     let marked = accepted(
         &mut engine,
         &mut revision,

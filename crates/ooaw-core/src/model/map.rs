@@ -35,6 +35,22 @@ pub struct MapDefinition {
     pub labels: Vec<MapLabel>,
     /// Rules-relevant features on specific hexsides.
     pub hexsides: Vec<MapHexside>,
+    /// Map-edge hexes where each Reinforcement Sector's units enter (33.1).
+    #[serde(default)]
+    pub reinforcement_sectors: Vec<ReinforcementSector>,
+}
+
+/// A Reinforcement Sector, reduced to the map-edge hex nearest its printed
+/// Reinforcement Box: units arriving through the sector appear there.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReinforcementSector {
+    /// Printed sector number, 1 to 5.
+    pub number: u8,
+    /// Side the sector is friendly to.
+    pub side_id: SideId,
+    /// Entry hex.
+    pub hex_id: HexId,
 }
 
 /// Geometry of the printed pointy-top hex grid.
@@ -368,8 +384,25 @@ fn default_nato_map_id() -> String {
 pub(crate) fn nato_map() -> MapDefinition {
     static MAP: OnceLock<MapDefinition> = OnceLock::new();
     MAP.get_or_init(|| {
-        serde_json::from_str(include_str!("../../data/natoMap.json"))
-            .expect("embedded NATO map data must be valid")
+        let mut map: MapDefinition = serde_json::from_str(include_str!("../../data/natoMap.json"))
+            .expect("embedded NATO map data must be valid");
+        // 2.2.2, 33.1: the land map-edge hex nearest each printed Reinforcement
+        // Box. Sectors 1-2 run along the western edge (NATO), 3-5 the eastern (WP).
+        map.reinforcement_sectors = [
+            (1, "nato", "3534"),
+            (2, "nato", "4734"),
+            (3, "warsawPact", "4301"),
+            (4, "warsawPact", "3301"),
+            (5, "warsawPact", "2501"),
+        ]
+        .into_iter()
+        .map(|(number, side, hex)| ReinforcementSector {
+            number,
+            side_id: SideId(side.to_owned()),
+            hex_id: HexId(hex.to_owned()),
+        })
+        .collect();
+        map
     })
     .clone()
 }

@@ -130,3 +130,32 @@ export function buildHexNumberLayer(map: MapData, grid: HexGrid): Container {
   }
   return layer;
 }
+
+/**
+ * Reinforcement Sector entry hexes (house rule replacing the printed boxes):
+ * an "R1".."R5" badge in the side's colour at the bottom of each entry hex.
+ */
+export function buildSectorLayer(map: MapData, grid: HexGrid): Container {
+  const layer = new Container({ label: "reinforcement-sectors" });
+  const g = new Graphics();
+  const labels = new Container();
+  const byId = new Map(map.hexes.map((hex) => [hex.id, hex]));
+  for (const sector of map.reinforcementSectors ?? []) {
+    const hex = byId.get(sector.hexId);
+    if (!hex) continue;
+    const { x, y } = grid.center(hex.row, hex.col);
+    const top = y + grid.radiusY * 0.42;
+    const color = sector.sideId === "nato" ? 0x6fa3e0 : 0xe06a5c;
+    g.roundRect(x - 22, top, 44, 22, 4).fill({ color: COLORS.ink, alpha: 0.85 }).stroke({ color, width: 2.5 });
+    const label = new Text({
+      text: `R${sector.number}`,
+      style: { fontFamily: FONT_FAMILY, fontWeight: "bold", fontSize: 16, fill: color },
+      resolution: 3,
+    });
+    label.anchor.set(0.5);
+    label.position.set(x, top + 11);
+    labels.addChild(label);
+  }
+  layer.addChild(g, labels);
+  return layer;
+}

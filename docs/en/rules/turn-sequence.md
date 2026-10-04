@@ -1,17 +1,17 @@
 # Turn Sequence
 
-The scenario determines the game length. The rules prototype lasts no more than fourteen complete turns, while BALTAP 1983 lasts seven complete turns.
+The scenario determines the game length. BALTAP 1983 lasts seven complete turns. The rules prototype and the 1983/1988 versions of Strategic Surprise, Extended Buildup, and War of Nerves last fourteen complete turns.
 
 Each game turn consists, in order, of a Joint Player Turn, a Warsaw Pact Player Turn, and a NATO Player Turn.
 
 ## Joint Player Turn
 
-Both players complete these phases in order:
+The Joint Player Turn consists of these phases, in order:
 
 1. Joint Status Phase
 2. Joint Reinforcement Phase
 
-The Joint Reinforcement Phase resolves automatically and requires no player input. Each side receives its Air Points for the turn, and scheduled reinforcements arrive.
+Both phases resolve automatically and require no player input. In the Joint Reinforcement Phase each side receives its Air Points for the turn, and scheduled reinforcements arrive. On the first turn this deploys the opening forces, so a new game begins with the Warsaw Pact's Battle Planning Phase.
 
 The Warsaw Pact begins its player turn after the Joint Player Turn ends.
 

@@ -11,6 +11,8 @@ const MODE_LABELS: Record<MovementMode, string> = {
   march: "March",
   rail: "Rail",
   airTransport: "Airlift",
+  paradrop: "Paradrop",
+  seaTransport: "Sealift",
 };
 
 const RESULT_LABELS = { noEffect: "no effect", disrupted: "Disrupted", stepLoss: "step loss" } as const;

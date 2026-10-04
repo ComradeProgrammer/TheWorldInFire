@@ -142,4 +142,6 @@ export interface MapData {
   causeways: CausewayData[];
   labels: LabelData[];
   hexsides: HexsideData[];
+  /** Map-edge hexes where each Reinforcement Sector's units enter. */
+  reinforcementSectors?: { number: number; sideId: string; hexId: string }[];
 }

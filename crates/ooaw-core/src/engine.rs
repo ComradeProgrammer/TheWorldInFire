@@ -177,7 +177,7 @@ impl GameEngine {
             })
             .collect();
         let dice = Dice::from_seed_text(&game_id.0);
-        Ok(Self {
+        let mut game = Self {
             game_id,
             scenario,
             revision: 0,
@@ -195,7 +195,14 @@ impl GameEngine {
             combat: None,
             reserve: None,
             dice,
-        })
+        };
+        // Resolve the scenario's leading automatic phases (such as Joint Status,
+        // Joint Reinforcement, and Pre-Battle) so play opens on the first step
+        // that needs a player. Their events precede any client and are dropped.
+        let mut events = Vec::new();
+        game.on_phase_started(&mut events);
+        game.advance_automatic_steps(&mut events);
+        Ok(game)
     }
 
     /// Returns an owned, serializable snapshot of the current game state.
@@ -210,7 +217,7 @@ impl GameEngine {
     /// A [`GameSnapshot`] that can be retained independently of the engine.
     pub fn snapshot(&self) -> GameSnapshot {
         GameSnapshot {
-            protocol_version: 16,
+            protocol_version: 17,
             game_id: self.game_id.clone(),
             revision: self.revision,
             scenario: ScenarioSummary::from(&self.scenario),
@@ -372,9 +379,13 @@ impl GameEngine {
         }
 
         self.move_to_next_step(&mut events);
+        self.advance_automatic_steps(&mut events);
+        Ok(events)
+    }
 
-        // Automatic phases perform their work in `on_phase_started`; clients
-        // never stop on them, so keep advancing until input is required again.
+    /// Automatic phases perform their work in `on_phase_started`; clients never
+    /// stop on them, so keep advancing until input is required again.
+    fn advance_automatic_steps(&mut self, events: &mut Vec<GameEvent>) {
         while self.status == GameStatus::InProgress
             && self
                 .current_step()
@@ -385,9 +396,8 @@ impl GameEngine {
                 game_turn: self.game_turn,
                 step,
             });
-            self.move_to_next_step(&mut events);
+            self.move_to_next_step(events);
         }
-        Ok(events)
     }
 
     /// Starts the next phase, rolls into a new turn, or completes the game after its final turn.

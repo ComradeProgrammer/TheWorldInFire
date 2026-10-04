@@ -15,9 +15,9 @@ fn new_game() -> GameEngine {
     .unwrap()
 }
 
-/// Verifies a new game starts at turn one, revision zero, and the scenario's first phase.
+/// Verifies a new game opens at turn one, revision zero, on the first step that needs a player.
 #[test]
-fn new_game_starts_at_first_scenario_defined_step() {
+fn new_game_starts_at_the_first_step_that_needs_a_player() {
     let game = new_game();
     assert_eq!(game.map().id, "nato-central-europe");
     assert_eq!(game.map().version, 1);
@@ -33,12 +33,18 @@ fn new_game_starts_at_first_scenario_defined_step() {
     let step = snapshot.turn.current_step.unwrap();
 
     assert_eq!(snapshot.revision, 0);
-    assert_eq!(snapshot.protocol_version, 16);
+    assert_eq!(snapshot.protocol_version, 17);
     assert_eq!(snapshot.turn.game_turn, 1);
-    assert_eq!(step.phase_id.0, "jointStatus");
-    assert_eq!(step.actor, PhaseActor::All);
+    // Joint Status, Joint Reinforcement, and Pre-Battle are automatic.
+    assert_eq!(step.phase_id.0, "battlePlanning");
+    assert_eq!(
+        step.actor,
+        PhaseActor::Side {
+            side_id: SideId("warsawPact".to_owned())
+        }
+    );
     assert_eq!(snapshot.scenario.map_id, "nato-central-europe");
-    assert!(snapshot.units.is_empty());
+    assert_eq!(snapshot.units.len(), 2);
 }
 
 /// Verifies snapshots identify the scenario map without duplicating its static data.
@@ -46,7 +52,7 @@ fn new_game_starts_at_first_scenario_defined_step() {
 fn snapshot_identifies_the_scenario_map_without_repeating_its_data() {
     let json = serde_json::to_value(new_game().snapshot()).unwrap();
 
-    assert_eq!(json["protocolVersion"], 16);
+    assert_eq!(json["protocolVersion"], 17);
     assert_eq!(json["scenario"]["mapId"], "nato-central-europe");
     assert!(json.get("map").is_none());
 }
@@ -95,70 +101,38 @@ fn scenario_validation_rejects_a_hexside_outside_its_map() {
     assert!(error.message.contains("unknown hex"));
 }
 
-/// Verifies opening units arrive during joint reinforcement with phase and supply events in order.
+/// Verifies the opening deployment is resolved before the first player decision.
 #[test]
-fn opening_units_arrive_through_the_first_joint_reinforcement_phase() {
-    let mut game = new_game();
+fn opening_units_are_deployed_when_the_game_is_created() {
+    let game = new_game();
+    let snapshot = game.snapshot();
 
-    let outcome = game.execute(GameCommand::EndPhase).unwrap();
-
-    assert_eq!(outcome.snapshot.units.len(), 2);
+    assert_eq!(snapshot.revision, 0);
+    assert_eq!(snapshot.units.len(), 2);
     assert_eq!(
-        outcome.snapshot.turn.current_step.unwrap().phase_id.0,
+        snapshot.turn.current_step.unwrap().phase_id.0,
         "battlePlanning"
     );
-    assert!(matches!(
-        &outcome.events[..],
-        [
-            GameEvent::PhaseEnded { step: ended, .. },
-            GameEvent::PhaseStarted { step: reinforcement, .. },
-            GameEvent::AirPointsReset { .. },
-            GameEvent::ReinforcementsArrived { .. },
-            GameEvent::PhaseEnded {
-                step: reinforcement_ended,
-                ..
-            },
-            GameEvent::PhaseStarted { step: pre_battle, .. },
-            GameEvent::PreBattleSupplyChecked { side_id, units, .. },
-            GameEvent::PhaseEnded {
-                step: pre_battle_ended,
-                ..
-            },
-            GameEvent::PhaseStarted { step: next, .. }
-        ] if ended.phase_id.0 == "jointStatus"
-            && reinforcement.phase_id.0 == "jointReinforcement"
-            && reinforcement_ended.phase_id.0 == "jointReinforcement"
-            && pre_battle.phase_id.0 == "preBattle"
-            && pre_battle_ended.phase_id.0 == "preBattle"
-            && side_id.0 == "warsawPact"
-            && units.len() == 1
-            && next.phase_id.0 == "battlePlanning"
-    ));
-
-    let arrivals = outcome.events.iter().find_map(|event| match event {
-        GameEvent::ReinforcementsArrived { game_turn, units } => Some((game_turn, units)),
-        _ => None,
-    });
-    let (game_turn, units) = arrivals.expect("opening reinforcement event");
-
-    assert_eq!(*game_turn, 1);
-    assert_eq!(units.len(), 2);
-    assert!(units.iter().any(|unit| {
-        unit.id().0 == "soviet.6thGuardsMotorRifleDivision"
-            && unit.current_step().unwrap().attack == 8
-            && unit.definition.steps.len() == 2
-    }));
-    assert!(units.iter().any(|unit| {
-        unit.id().0 == "westGermany.1stBrigade.1stPanzerDivision"
-            && unit.current_step().unwrap().movement == 6
-    }));
+    let division = snapshot
+        .units
+        .iter()
+        .find(|unit| unit.id().0 == "soviet.6thGuardsMotorRifleDivision")
+        .expect("opening WP division");
+    assert_eq!(division.current_step().unwrap().attack, 8);
+    assert_eq!(division.definition.steps.len(), 2);
+    assert_eq!(
+        division.location,
+        UnitLocation::Hex {
+            hex_id: HexId("2806".to_owned())
+        }
+    );
 }
 
 /// Verifies post-battle cleanup and the next side's pre-battle supply run automatically.
 #[test]
 fn automatic_post_battle_is_processed_without_user_input() {
     let mut game = new_game();
-    for _ in 0..4 {
+    for _ in 0..3 {
         game.execute(GameCommand::EndPhase).unwrap();
     }
     assert_eq!(
@@ -239,7 +213,7 @@ fn joint_phases_precede_both_side_turns() {
 #[test]
 fn final_turn_completes_after_last_interactive_phase_and_cleanup() {
     let mut game = new_game();
-    let interactive_steps_per_turn = 9;
+    let interactive_steps_per_turn = 8;
     for _ in 0..(14 * interactive_steps_per_turn) {
         game.execute(GameCommand::EndPhase).unwrap();
     }
@@ -257,10 +231,9 @@ fn reinforcements_are_added_only_on_their_scheduled_turn() {
     let unit_id = scenario.reinforcements[0].unit.id().clone();
     let mut game = GameEngine::new(GameId("scheduled-game".to_owned()), scenario).unwrap();
 
-    game.execute(GameCommand::EndPhase).unwrap();
     assert!(game.snapshot().units.is_empty());
 
-    for _ in 0..8 {
+    for _ in 0..7 {
         game.execute(GameCommand::EndPhase).unwrap();
     }
 
@@ -306,6 +279,10 @@ fn reinforcement_event_serializes_as_a_camel_case_ipc_message() {
 #[test]
 fn pre_battle_supply_event_serializes_checked_unit_state() {
     let mut game = new_game();
+    // Strike, Combat, and Reserve; the last ends the WP turn and runs NATO's Pre-Battle.
+    for _ in 0..3 {
+        game.execute(GameCommand::EndPhase).unwrap();
+    }
     let outcome = game.execute(GameCommand::EndPhase).unwrap();
     let event = outcome
         .events
@@ -316,10 +293,10 @@ fn pre_battle_supply_event_serializes_checked_unit_state() {
     let json = serde_json::to_value(event).unwrap();
 
     assert_eq!(json["type"], "preBattleSupplyChecked");
-    assert_eq!(json["sideId"], "warsawPact");
+    assert_eq!(json["sideId"], "nato");
     assert_eq!(
         json["units"][0]["unitId"],
-        "soviet.6thGuardsMotorRifleDivision"
+        "westGermany.1stBrigade.1stPanzerDivision"
     );
     assert_eq!(json["units"][0]["supply"]["movement"], "supplied");
 }
@@ -359,11 +336,11 @@ fn baltap_opening_setup_and_later_reinforcements_use_the_same_phase() {
     let scenario = find_scenario("nato-baltap-1983").unwrap();
     let mut game = GameEngine::new(GameId("baltap-game".to_owned()), scenario).unwrap();
 
-    let opening = game.execute(GameCommand::EndPhase).unwrap();
-    assert_eq!(opening.snapshot.units.len(), 27);
+    // The opening deployment is resolved when the game is created.
+    let opening = game.snapshot();
+    assert_eq!(opening.units.len(), 27);
     assert_eq!(
         opening
-            .snapshot
             .units
             .iter()
             .filter(|unit| matches!(unit.location, UnitLocation::Hex { .. }))
@@ -372,7 +349,6 @@ fn baltap_opening_setup_and_later_reinforcements_use_the_same_phase() {
     );
     assert_eq!(
         opening
-            .snapshot
             .units
             .iter()
             .filter(|unit| matches!(unit.location, UnitLocation::StrategicReserve))
@@ -380,7 +356,7 @@ fn baltap_opening_setup_and_later_reinforcements_use_the_same_phase() {
         10
     );
 
-    for _ in 0..8 {
+    for _ in 0..7 {
         game.execute(GameCommand::EndPhase).unwrap();
     }
     let turn_two = game.execute(GameCommand::EndPhase).unwrap();
@@ -401,7 +377,7 @@ fn baltap_ends_after_seven_turns() {
     let scenario = find_scenario("nato-baltap-1983").unwrap();
     let mut game = GameEngine::new(GameId("baltap-completion".to_owned()), scenario).unwrap();
 
-    for _ in 0..(7 * 9) {
+    for _ in 0..(7 * 8) {
         game.execute(GameCommand::EndPhase).unwrap();
     }
 
@@ -445,7 +421,6 @@ fn baltap_pre_battle_records_applicable_supply_types() {
 #[test]
 fn battle_plan_actions_can_be_submitted_in_any_order() {
     let mut game = new_game();
-    game.execute(GameCommand::EndPhase).unwrap();
     let unit_id = UnitId("soviet.6thGuardsMotorRifleDivision".to_owned());
 
     game.execute(GameCommand::SetAttackTarget {
@@ -484,7 +459,6 @@ fn battle_plan_actions_can_be_submitted_in_any_order() {
 #[test]
 fn resupply_is_applied_to_the_selected_stack_when_planning_ends() {
     let mut game = new_game();
-    game.execute(GameCommand::EndPhase).unwrap();
     let unit_id = UnitId("soviet.6thGuardsMotorRifleDivision".to_owned());
     let unit = game.units.get_mut(&unit_id).unwrap();
     unit.supply.movement = Some(SupplyStatus::OutOfSupply);
@@ -579,7 +553,6 @@ fn resupply_targets_cannot_exceed_the_scenario_limit() {
 #[test]
 fn entraining_takes_one_player_turn_before_rail_movement_is_available() {
     let mut game = new_game();
-    game.execute(GameCommand::EndPhase).unwrap();
     let unit_id = UnitId("soviet.6thGuardsMotorRifleDivision".to_owned());
 
     let outcome = game
@@ -608,7 +581,7 @@ fn entraining_takes_one_player_turn_before_rail_movement_is_available() {
         "unitNotEntrained"
     );
 
-    for _ in 0..9 {
+    for _ in 0..8 {
         game.execute(GameCommand::EndPhase).unwrap();
     }
     let unit = game
@@ -624,13 +597,12 @@ fn entraining_takes_one_player_turn_before_rail_movement_is_available() {
 #[test]
 fn a_detrain_order_can_be_undone_during_the_same_plan() {
     let mut game = new_game();
-    game.execute(GameCommand::EndPhase).unwrap();
     let unit_id = UnitId("soviet.6thGuardsMotorRifleDivision".to_owned());
     game.execute(GameCommand::EntrainUnit {
         unit_id: unit_id.clone(),
     })
     .unwrap();
-    for _ in 0..9 {
+    for _ in 0..8 {
         game.execute(GameCommand::EndPhase).unwrap();
     }
     let train_status = |game: &GameEngine| {
@@ -688,13 +660,13 @@ fn a_detrain_order_can_be_undone_during_the_same_plan() {
 fn airborne_reserve_unit_can_use_scenario_limited_air_transport() {
     let scenario = find_scenario("nato-baltap-1983").unwrap();
     let mut game = GameEngine::new(GameId("airlift-game".to_owned()), scenario).unwrap();
-    game.execute(GameCommand::EndPhase).unwrap();
     let unit_id = UnitId("soviet.7guardsAirborneDivision.119regiment".to_owned());
 
     let outcome = game
         .execute(GameCommand::MoveUnit {
             unit_id: unit_id.clone(),
-            destination: HexId("2010".to_owned()),
+            // House rule: air transport flies city to city (Rostock).
+            destination: HexId("2111".to_owned()),
             mode: MovementMode::AirTransport,
         })
         .unwrap();
@@ -707,7 +679,7 @@ fn airborne_reserve_unit_can_use_scenario_limited_air_transport() {
             .find(|unit| unit.id() == &unit_id)
             .unwrap()
             .location,
-        UnitLocation::Hex { ref hex_id } if hex_id.0 == "2010"
+        UnitLocation::Hex { ref hex_id } if hex_id.0 == "2111"
     ));
     assert_eq!(outcome.snapshot.battle_plan.unwrap().airlift_steps_used, 1);
 }
@@ -716,6 +688,7 @@ fn airborne_reserve_unit_can_use_scenario_limited_air_transport() {
 #[test]
 fn planning_commands_are_rejected_outside_battle_planning() {
     let mut game = new_game();
+    game.execute(GameCommand::EndPhase).unwrap();
     let error = game
         .execute(GameCommand::SetAttackTarget {
             hex_id: HexId("3216".to_owned()),
@@ -723,14 +696,13 @@ fn planning_commands_are_rejected_outside_battle_planning() {
         })
         .unwrap_err();
     assert_eq!(error.code, "wrongPhase");
-    assert_eq!(game.snapshot().revision, 0);
+    assert_eq!(game.snapshot().revision, 1);
 }
 
 /// Verifies a deselected resupply unit is removed from the plan and emits a cancellation event.
 #[test]
 fn resupply_selection_can_be_cancelled() {
     let mut game = new_game();
-    game.execute(GameCommand::EndPhase).unwrap();
     let unit_id = UnitId("soviet.6thGuardsMotorRifleDivision".to_owned());
     game.execute(GameCommand::SetResupplyTarget {
         unit_id: unit_id.clone(),
@@ -767,7 +739,6 @@ fn resupply_selection_can_be_cancelled() {
 #[test]
 fn a_units_last_movement_can_be_undone() {
     let mut game = new_game();
-    game.execute(GameCommand::EndPhase).unwrap();
     let unit_id = UnitId("soviet.6thGuardsMotorRifleDivision".to_owned());
     game.execute(GameCommand::MoveUnit {
         unit_id: unit_id.clone(),
@@ -1147,7 +1118,6 @@ fn only_entrained_units_count_against_rail_capacity() {
         find_scenario("nato-baltap-1983").unwrap(),
     )
     .unwrap();
-    game.execute(GameCommand::EndPhase).unwrap();
     let stack: Vec<UnitId> = game
         .snapshot()
         .units
@@ -1177,7 +1147,7 @@ fn only_entrained_units_count_against_rail_capacity() {
     }
     assert!(steps(&game, TrainStatus::Entraining) > 8);
 
-    for _ in 0..9 {
+    for _ in 0..8 {
         game.execute(GameCommand::EndPhase).unwrap();
     }
     let entrained = steps(&game, TrainStatus::Entrained);
@@ -1209,7 +1179,6 @@ fn baltap_warsaw_pact_has_three_airlift_commands() {
         find_scenario("nato-baltap-1983").unwrap(),
     )
     .unwrap();
-    game.execute(GameCommand::EndPhase).unwrap();
     let airborne: Vec<UnitId> = game
         .units
         .values()
@@ -1222,7 +1191,8 @@ fn baltap_warsaw_pact_has_three_airlift_commands() {
         .map(|unit| unit.id().clone())
         .collect();
     assert!(airborne.len() >= 4);
-    for (unit_id, destination) in airborne.iter().zip(["2010", "2009", "2008"]) {
+    // Rostock, Szczecin, and Ost Berlin: one step each fills the three commands.
+    for (unit_id, destination) in airborne.iter().zip(["2111", "2504", "3006"]) {
         game.execute(GameCommand::MoveUnit {
             unit_id: unit_id.clone(),
             destination: HexId(destination.to_owned()),
@@ -1233,7 +1203,7 @@ fn baltap_warsaw_pact_has_three_airlift_commands() {
     assert_eq!(
         game.execute(GameCommand::MoveUnit {
             unit_id: airborne[3].clone(),
-            destination: HexId("1910".to_owned()),
+            destination: HexId("3108".to_owned()),
             mode: MovementMode::AirTransport,
         })
         .unwrap_err()
@@ -2375,15 +2345,219 @@ fn a_setup_can_start_in_the_reserve_phase_with_its_own_markers() {
     let disrupted = &game.units[&UnitId(PZG_17.to_owned())];
     assert_eq!(disrupted.disruption, Some(Disruption::Disrupted));
 
-    // Battle-plan entries need a battle plan to exist at the start step.
+    // A new game opens in Battle Planning, so its plan takes attack targets.
     let setup: crate::GameSetup =
         serde_json::from_value(serde_json::json!({ "attackTargets": ["2415"] })).unwrap();
-    let error = GameEngine::with_setup(
+    let game = GameEngine::with_setup(
         GameId("setup".to_owned()),
         find_scenario("nato-baltap-1983").unwrap(),
         &setup,
     )
-    .err()
     .unwrap();
-    assert_eq!(error.code, "invalidSetup");
+    assert_eq!(
+        game.snapshot().battle_plan.unwrap().attack_targets,
+        vec![HexId("2415".to_owned())]
+    );
+}
+
+// ------------------------------------------------------------------ lift movement
+
+const AIRBORNE: &str = "soviet.7guardsAirborneDivision.119regiment";
+const AIRMOBILE: &str = "unitedStates.9infantryDivision.1brigade";
+const MARINE: &str = "poland.balticCorps.7marineBrigade";
+
+fn lift(unit: &str, hex: &str, mode: MovementMode) -> GameCommand {
+    GameCommand::MoveUnit {
+        unit_id: UnitId(unit.to_owned()),
+        destination: HexId(hex.to_owned()),
+        mode,
+    }
+}
+
+fn mode_error(game: &GameEngine, unit: &str, mode: MovementMode) -> Option<String> {
+    game.movement_modes(&UnitId(unit.to_owned()))
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.mode == mode)
+        .unwrap()
+        .unavailable
+        .map(|error| error.code)
+}
+
+#[test]
+fn air_transport_flies_city_to_city_and_may_cross_enemy_zones_of_control() {
+    // Rostock to Schwerin, past a West German brigade at 2311.
+    let mut game = baltap_planning("warsawPact", &[(AIRBORNE, "2111"), (GERMAN, "2311")]);
+    let options = game
+        .movement_options(&UnitId(AIRBORNE.to_owned()), MovementMode::AirTransport)
+        .unwrap();
+    let side = SideId("warsawPact".to_owned());
+    assert!(options
+        .iter()
+        .all(|option| game.city_control.get(&option.hex_id) == Some(&side)));
+    let schwerin = options
+        .iter()
+        .find(|option| option.hex_id.0 == "2412")
+        .expect("Schwerin is reachable");
+    assert!(schwerin
+        .path
+        .iter()
+        .any(|hex| game.hex_in_enemy_zoc(&side, hex)));
+
+    // Not to open country, nor to an enemy city.
+    assert_eq!(
+        game.execute(lift(AIRBORNE, "2413", MovementMode::AirTransport))
+            .unwrap_err()
+            .code,
+        "invalidLiftDestination"
+    );
+    assert_eq!(
+        game.execute(lift(AIRBORNE, "2417", MovementMode::AirTransport))
+            .unwrap_err()
+            .code,
+        "enemyFreeCity"
+    );
+    game.execute(lift(AIRBORNE, "2412", MovementMode::AirTransport))
+        .unwrap();
+    assert_eq!(game.snapshot().battle_plan.unwrap().airlift_steps_used, 1);
+
+    // Take-off conditions are unchanged: never from an EZOC.
+    let game = baltap_planning("warsawPact", &[(AIRBORNE, "2111"), (GERMAN, "2110")]);
+    assert_eq!(
+        mode_error(&game, AIRBORNE, MovementMode::AirTransport).as_deref(),
+        Some("enemyZoneOfControl")
+    );
+}
+
+#[test]
+fn airborne_units_may_paradrop_onto_clear_terrain_beside_the_enemy() {
+    let mut game = baltap_planning("warsawPact", &[(AIRBORNE, "2111"), (GERMAN, "2415")]);
+    let options = game
+        .movement_options(&UnitId(AIRBORNE.to_owned()), MovementMode::Paradrop)
+        .unwrap();
+    let reaches = |hex: &str| options.iter().any(|option| option.hex_id.0 == hex);
+    assert!(reaches("2414"), "Clear hex in the brigade's ZOC");
+    assert!(
+        !reaches("2415"),
+        "no landing on the enemy (Assaults are not implemented)"
+    );
+    assert!(!reaches("2412"), "Forest is not a drop zone");
+    game.execute(lift(AIRBORNE, "2414", MovementMode::Paradrop))
+        .unwrap();
+    assert_eq!(game.snapshot().battle_plan.unwrap().airlift_steps_used, 1);
+
+    // Airmobile units fly but do not jump. (The brigade arrives later; a
+    // setup places it in Kiel on turn one.)
+    let setup: crate::GameSetup = serde_json::from_value(serde_json::json!({
+        "start": { "gameTurn": 1, "sideId": "nato", "phaseId": "battlePlanning" },
+        "units": [{ "id": AIRMOBILE, "hex": "2116" }]
+    }))
+    .unwrap();
+    let game = GameEngine::with_setup(
+        GameId("airmobile".to_owned()),
+        find_scenario("nato-baltap-1983").unwrap(),
+        &setup,
+    )
+    .unwrap();
+    assert_eq!(
+        mode_error(&game, AIRMOBILE, MovementMode::Paradrop).as_deref(),
+        Some("unitNotAirTransportable")
+    );
+    assert_eq!(
+        mode_error(&game, AIRMOBILE, MovementMode::AirTransport),
+        None
+    );
+}
+
+#[test]
+fn sea_transport_sails_port_to_port_from_the_strategic_reserve() {
+    let mut game = baltap_planning("warsawPact", &[(MARINE, "2111")]);
+    game.units
+        .get_mut(&UnitId(MARINE.to_owned()))
+        .unwrap()
+        .location = UnitLocation::StrategicReserve;
+    let options = game
+        .movement_options(&UnitId(MARINE.to_owned()), MovementMode::SeaTransport)
+        .unwrap();
+    assert!(options.iter().any(|option| option.hex_id.0 == "2111"));
+    assert!(options.iter().all(|option| {
+        let hex = game
+            .map()
+            .hexes
+            .iter()
+            .find(|hex| hex.id == option.hex_id)
+            .unwrap();
+        hex.port.is_some()
+    }));
+    assert_eq!(
+        game.execute(lift(MARINE, "2412", MovementMode::SeaTransport))
+            .unwrap_err()
+            .code,
+        "invalidLiftDestination"
+    );
+    game.execute(lift(MARINE, "2111", MovementMode::SeaTransport))
+        .unwrap();
+    let plan = game.snapshot().battle_plan.unwrap();
+    assert_eq!(plan.sealift_steps_used, 1);
+    assert_eq!(plan.airlift_steps_used, 0);
+}
+
+#[test]
+fn reinforcements_arrive_at_their_hex_spill_over_or_fall_back_to_reserve() {
+    let mut scenario = find_scenario("nato-1983-standard").unwrap();
+    let division = scenario.reinforcements[0].clone(); // two steps
+    scenario
+        .reinforcements
+        .retain(|arrival| arrival.unit.definition.side_id.0 == "nato");
+    let copy = |id: &str, hex: &str, train: Option<TrainStatus>| {
+        let mut arrival = division.clone();
+        arrival.game_turn = 2;
+        arrival.unit.definition.id = UnitId(id.to_owned());
+        arrival.unit.location = UnitLocation::Hex {
+            hex_id: HexId(hex.to_owned()),
+        };
+        arrival.unit.train_status = train;
+        arrival
+    };
+    scenario.reinforcements.extend([
+        copy("test.a", "2806", None),
+        copy("test.b", "2806", None),
+        copy("test.c", "2806", None),
+        // The West German brigade holds 3216.
+        copy("test.d", "3216", None),
+        copy("test.rail", "2706", Some(TrainStatus::Entrained)),
+    ]);
+    let mut game = GameEngine::new(GameId("arrivals".to_owned()), scenario).unwrap();
+    for _ in 0..8 {
+        game.execute(GameCommand::EndPhase).unwrap();
+    }
+    let location = |id: &str| game.units[&UnitId(id.to_owned())].location.clone();
+    let at = |hex: &str| UnitLocation::Hex {
+        hex_id: HexId(hex.to_owned()),
+    };
+    assert_eq!(location("test.a"), at("2806"));
+    assert_eq!(location("test.b"), at("2806"));
+    // Four steps fill 2806; the third division takes a neighbouring hex.
+    let UnitLocation::Hex { hex_id } = location("test.c") else {
+        panic!("spilled division should be on the map");
+    };
+    assert_ne!(hex_id.0, "2806");
+    assert_eq!(location("test.d"), UnitLocation::StrategicReserve);
+    assert_eq!(location("test.rail"), at("2706"));
+    assert_eq!(
+        game.units[&UnitId("test.rail".to_owned())].train_status,
+        Some(TrainStatus::Entrained)
+    );
+}
+
+#[test]
+fn new_movement_modes_serialize_in_camel_case() {
+    assert_eq!(
+        serde_json::to_value(MovementMode::SeaTransport).unwrap(),
+        "seaTransport"
+    );
+    assert_eq!(
+        serde_json::to_value(MovementMode::Paradrop).unwrap(),
+        "paradrop"
+    );
 }

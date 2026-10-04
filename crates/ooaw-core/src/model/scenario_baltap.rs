@@ -56,6 +56,9 @@ pub(crate) fn baltap_scenario() -> ScenarioDefinition {
         battle_planning_rules: BattlePlanningRules {
             warsaw_pact_airlift_commands: 3,
             nato_airlift_commands: 1,
+            // 36.2.1.2, 36.2.2.2: Sealift Commands, WP 3 and NATO 2.
+            warsaw_pact_sealift_commands: 3,
+            nato_sealift_commands: 2,
             // 36.4.1.4: one Tactical Air Point per turn each, plus a second on one
             // turn of each player's choice. 36.4.1.6: Surprise on Game Turn 1.
             air_power: AirPowerRules {

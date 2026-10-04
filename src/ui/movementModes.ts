@@ -5,6 +5,8 @@ export const MOVEMENT_MODES: { mode: MovementMode; label: string }[] = [
   { mode: "march", label: "March" },
   { mode: "rail", label: "Rail" },
   { mode: "airTransport", label: "Air transport" },
+  { mode: "paradrop", label: "Paradrop" },
+  { mode: "seaTransport", label: "Sea transport" },
 ];
 
 /**

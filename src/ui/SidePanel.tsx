@@ -120,7 +120,7 @@ function MovementGroup({ unit, movements, busy, movement, onCommand }: {
           <p className="movement-summary">
             {movements.length > 1 ? `${movements.length} legs · ` : ""}
             {readableId(lastMovement.mode)} to {lastMovement.to}
-            {lastMovement.mode !== "airTransport" && (
+            {(lastMovement.mode === "tactical" || lastMovement.mode === "march" || lastMovement.mode === "rail") && (
               <span>
                 {movements.reduce((sum, entry) => sum + entry.cost, 0)} {lastMovement.mode === "rail" ? "rail hexes" : "MP"} used
               </span>
