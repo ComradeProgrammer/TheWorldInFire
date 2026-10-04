@@ -266,19 +266,13 @@
 .title-sub {
   margin: 14px 0 0;
   font-family: var(--menu-condensed);
-  font-size: clamp(20px, 2.6vw, 32px);
+  font-size: clamp(18px, 2.2vw, 28px);
   font-weight: 700;
-  letter-spacing: 0.28em;
+  line-height: 1.35;
+  letter-spacing: 0.16em;
+  white-space: nowrap;
   text-transform: uppercase;
   color: #ff8a7f;
-}
-
-.title-tagline {
-  max-width: 440px;
-  margin: 18px 0 0;
-  color: var(--muted);
-  font-size: 15px;
-  line-height: 1.6;
 }
 
 .title-menu {

@@ -45,10 +45,11 @@ export function TitleScreen({ onAction }: { onAction(action: TitleAction): void 
       <main className="title-layout">
         <section className="title-block">
           <span className="title-kicker">Central Front · 1983</span>
-          <h1 className="title-name">NATO</h1>
-          <p className="title-sub">The Cold War Goes Hot</p>
-          <p className="title-tagline">
-            The Warsaw Pact is massing on the inner German border. Hold the line, or break it.
+          <h1 className="title-name">OOAW</h1>
+          <p className="title-sub">
+            Opensource
+            <br />
+            Operations Across Warfare
           </p>
         </section>
         <nav className="title-menu" aria-label="Main menu">
