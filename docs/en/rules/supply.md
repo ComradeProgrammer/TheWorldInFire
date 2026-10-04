@@ -4,7 +4,7 @@ This game uses a simplified supply rule. Only the two alliances matter: units of
 
 ## When supply is checked
 
-Supply is checked for the acting side in its automatic Pre-Battle Phase, at the start of its player turn. The result sets both Movement Supply and Combat Supply and lasts until that side's next Pre-Battle Phase. Units in the Strategic Reserve are always supplied, and reinforcements arrive supplied.
+Supply is checked for the acting side in its automatic Pre-Battle Phase, near the start of each game turn (the Warsaw Pact first, then NATO). The result sets both Movement Supply and Combat Supply and lasts until that side's next Pre-Battle Phase. Units in the Strategic Reserve are always supplied, and reinforcements arrive supplied.
 
 An out-of-supply unit carries a red **OOS** tab on its counter.
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  activeBattlePlan,
   fetchAirStrikeOptions,
   fetchCombatOptions,
   fetchAttackTargetOptions,
@@ -62,7 +63,7 @@ function phaseName(id: string): string {
 
 /** Units carrying a Reserve/OMG Marker, for the counter tab. */
 function reserveMarkers(snapshot: GameSnapshot): ReadonlySet<string> {
-  return new Set(snapshot.battlePlan?.reserveUnitIds ?? []);
+  return new Set(snapshot.battlePlans.flatMap((plan) => plan.reserveUnitIds));
 }
 
 function errorMessage(error: unknown): string {
@@ -147,7 +148,7 @@ function App({ game }: { game: NewGameResponse }) {
       if (combatOverlayRef.current) renderer.setCombatOverlay(combatOverlayRef.current);
       if (!snapshot) return;
       renderer.setUnits(snapshot.units, reserveMarkers(snapshot));
-      renderer.setBattlePlan(snapshot.battlePlan);
+      renderer.setBattlePlan(activeBattlePlan(snapshot));
     },
     [snapshot],
   );
@@ -185,7 +186,7 @@ function App({ game }: { game: NewGameResponse }) {
   const movementMode: MovementMode =
     modeChoice ??
     (movementStatus.state === "ready" && planningUnit
-      ? defaultMovementMode(planningUnit.id, snapshot?.reserve?.movements ?? snapshot?.battlePlan?.movements ?? [], movementStatus.modes)
+      ? defaultMovementMode(planningUnit.id, snapshot?.reserve?.movements ?? (snapshot && activeBattlePlan(snapshot)?.movements) ?? [], movementStatus.modes)
       : "tactical");
 
   useEffect(() => {
@@ -327,7 +328,7 @@ function App({ game }: { game: NewGameResponse }) {
       targets: strikeOptions?.targets.map((target) => ({ hexId: target.hexId, tacticalAllowed: target.tacticalAllowed })) ?? [],
       missions: snapshot?.strikePlan?.missions ?? [],
       zones: snapshot?.airInterdictionZones ?? [],
-      breakthroughs: snapshot?.breakthroughMarkers ?? [],
+      breakthroughs: snapshot?.breakthroughMarkers.map((marker) => marker.hexId) ?? [],
     };
     strikeOverlayRef.current = overlay;
     rendererRef.current?.setStrikeOverlay(overlay);
@@ -336,7 +337,7 @@ function App({ game }: { game: NewGameResponse }) {
   useEffect(() => {
     if (snapshot) {
       rendererRef.current?.setUnits(snapshot.units, reserveMarkers(snapshot));
-      rendererRef.current?.setBattlePlan(snapshot.battlePlan);
+      rendererRef.current?.setBattlePlan(activeBattlePlan(snapshot));
     }
   }, [snapshot]);
 
@@ -350,7 +351,7 @@ function App({ game }: { game: NewGameResponse }) {
       const roster = [...response.snapshot.units, ...snapshot.units];
       setCombatLog((log) => [...log, ...describeCombatEvents(response.events, roster, (log.length > 0 ? log[log.length - 1].id : 0) + 1)]);
       rendererRef.current?.setUnits(response.snapshot.units, reserveMarkers(response.snapshot));
-      rendererRef.current?.setBattlePlan(response.snapshot.battlePlan);
+      rendererRef.current?.setBattlePlan(activeBattlePlan(response.snapshot));
       setCommandNotice(null);
       const arrivals = response.events.flatMap((event) =>
         event.type === "reinforcementsArrived" ? event.units : [],
@@ -444,7 +445,7 @@ function App({ game }: { game: NewGameResponse }) {
           map={map}
           units={snapshot.units}
           currentStep={snapshot.turn.currentStep}
-          battlePlan={snapshot.battlePlan}
+          battlePlan={activeBattlePlan(snapshot)}
           selected={selected}
           selectedUnitId={selectedUnitId}
           commandBusy={commandBusy}
@@ -482,7 +483,7 @@ function App({ game }: { game: NewGameResponse }) {
       )}
       {commandNotice && <div className="command-toast" role="alert"><strong>Command rejected</strong><span>{commandNotice}</span><button type="button" onClick={() => setCommandNotice(null)}>×</button></div>}
       <BottomBar
-        plan={snapshot?.battlePlan ?? null}
+        plan={snapshot ? activeBattlePlan(snapshot) : null}
         strikePlan={snapshot?.strikePlan ?? null}
         battles={snapshot?.combat?.battles ?? []}
         reserve={snapshot?.reserve ?? null}

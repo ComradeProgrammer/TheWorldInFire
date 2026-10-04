@@ -123,7 +123,7 @@ fn commands_drive_the_engine_through_its_json_process_boundary() {
     assert_eq!(planned["revision"], 1);
     assert_eq!(event_types(&planned), vec!["resupplyTargetSet"]);
     assert_eq!(
-        planned["snapshot"]["battlePlan"]["resupplyTargetUnitIds"],
+        plan(&planned, "warsawPact")["resupplyTargetUnitIds"],
         json!(["soviet.6thGuardsMotorRifleDivision"])
     );
 
@@ -135,20 +135,17 @@ fn commands_drive_the_engine_through_its_json_process_boundary() {
     assert_eq!(stale["type"], "error");
     assert_eq!(stale["code"], "revisionMismatch");
 
-    // Ending planning applies the resupply and opens the Offensive Strike Phase.
-    let strike = engine.send(json!({
+    // Ending WP planning applies the resupply; NATO plans next.
+    let nato_planning = engine.send(json!({
         "type": "submitCommand",
         "expectedRevision": 1,
         "command": { "type": "endPhase" }
     }));
-    assert_eq!(strike["type"], "commandAccepted");
-    assert_eq!(strike["revision"], 2);
+    assert_eq!(nato_planning["type"], "commandAccepted");
+    assert_eq!(nato_planning["revision"], 2);
+    assert_eq!(step(&nato_planning), "nato.battlePlanning");
     assert_eq!(
-        strike["snapshot"]["turn"]["currentStep"]["phaseId"],
-        "offensiveStrike"
-    );
-    assert_eq!(
-        event_types(&strike),
+        event_types(&nato_planning),
         vec!["unitsResupplied", "phaseEnded", "phaseStarted"]
     );
 
@@ -156,7 +153,7 @@ fn commands_drive_the_engine_through_its_json_process_boundary() {
     assert_eq!(snapshot["type"], "snapshot");
     assert_eq!(snapshot["snapshot"]["revision"], 2);
     assert_eq!(
-        snapshot["snapshot"]["battlePlan"]["resupplyTargetUnitIds"],
+        plan(&snapshot, "warsawPact")["resupplyTargetUnitIds"],
         json!(["soviet.6thGuardsMotorRifleDivision"])
     );
 }
@@ -173,6 +170,23 @@ fn accepted(engine: &mut EngineProcess, revision: &mut u64, command: Value) -> V
     response
 }
 
+/// A side's battle plan in a response's snapshot.
+fn plan<'a>(response: &'a Value, side: &str) -> &'a Value {
+    response["snapshot"]["battlePlans"]
+        .as_array()
+        .expect("snapshot battle plans")
+        .iter()
+        .find(|plan| plan["sideId"] == side)
+        .unwrap_or_else(|| panic!("no {side} battle plan"))
+}
+
+/// Step id (`side.phase`) of the current step in a response's snapshot.
+fn step(response: &Value) -> &str {
+    response["snapshot"]["turn"]["currentStep"]["id"]
+        .as_str()
+        .expect("current step")
+}
+
 /// Phase id of the current step in a response's snapshot.
 fn phase(response: &Value) -> &str {
     response["snapshot"]["turn"]["currentStep"]["phaseId"]
@@ -180,8 +194,8 @@ fn phase(response: &Value) -> &str {
         .expect("current phase")
 }
 
-/// Plays a BALTAP Warsaw Pact turn through Reserve/OMG marking, the Reserve
-/// Phase, Post-Battle, and NATO's supply check using only the JSON protocol.
+/// Plays a BALTAP turn through Reserve/OMG marking, both Reserve Phases,
+/// Post-Battle, and the next turn's supply checks using only the JSON protocol.
 #[test]
 fn a_reserve_unit_moves_in_the_reserve_phase_and_supply_is_checked() {
     const OMG: &str = "eastGermany.2gta.8motorRifleDivision";
@@ -203,16 +217,15 @@ fn a_reserve_unit_moves_in_the_reserve_phase_and_supply_is_checked() {
         json!({ "type": "setReserve", "unitId": OMG, "selected": true }),
     );
     assert_eq!(event_types(&marked), vec!["reserveStatusChanged"]);
-    assert_eq!(
-        marked["snapshot"]["battlePlan"]["reserveUnitIds"],
-        json!([OMG])
-    );
+    assert_eq!(plan(&marked, "warsawPact")["reserveUnitIds"], json!([OMG]));
 
-    // Strike and Combat pass; the Reserve Phase opens with the marked unit.
-    accepted(&mut engine, &mut revision, json!({ "type": "endPhase" }));
-    accepted(&mut engine, &mut revision, json!({ "type": "endPhase" }));
+    // Both sides' Planning, Strike, and Combat pass; the WP Reserve Phase
+    // opens with the marked unit.
+    for _ in 0..5 {
+        accepted(&mut engine, &mut revision, json!({ "type": "endPhase" }));
+    }
     let reserve = accepted(&mut engine, &mut revision, json!({ "type": "endPhase" }));
-    assert_eq!(phase(&reserve), "reserve");
+    assert_eq!(step(&reserve), "warsawPact.reserve");
     assert_eq!(reserve["snapshot"]["reserve"]["unitIds"], json!([OMG]));
 
     // Unmarked units stay put; marked ones move by Tactical movement only.
@@ -236,21 +249,26 @@ fn a_reserve_unit_moves_in_the_reserve_phase_and_supply_is_checked() {
     assert_eq!(event_types(&moved)[0], "unitMoved");
     assert_eq!(moved["snapshot"]["reserve"]["movements"][0]["to"], "2111");
 
-    // Ending the Reserve Phase removes the marker, runs Post-Battle, and
-    // checks NATO's supply in its Pre-Battle step.
+    // Ending the WP Reserve Phase removes the marker; NATO's Reserve Phase follows.
+    let ended = accepted(&mut engine, &mut revision, json!({ "type": "endPhase" }));
+    assert!(event_types(&ended).contains(&"reserveMarkersRemoved"));
+    assert_eq!(step(&ended), "nato.reserve");
+    assert_eq!(ended["snapshot"]["reserve"]["sideId"], "nato");
+    assert_eq!(plan(&ended, "warsawPact")["reserveUnitIds"], json!([]));
+
+    // Ending NATO's Reserve Phase runs both Post-Battle Phases and the next
+    // turn's Pre-Battle supply checks.
     let ended = accepted(&mut engine, &mut revision, json!({ "type": "endPhase" }));
     let events = event_types(&ended);
-    assert!(events.contains(&"reserveMarkersRemoved"));
     assert!(events.contains(&"preBattleSupplyChecked"));
     assert_eq!(ended["snapshot"]["reserve"], Value::Null);
-    assert_eq!(ended["snapshot"]["battlePlan"]["sideId"], "nato");
+    assert_eq!(step(&ended), "warsawPact.battlePlanning");
     let nato_check = ended["events"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|event| event["type"] == "preBattleSupplyChecked")
+        .find(|event| event["type"] == "preBattleSupplyChecked" && event["sideId"] == "nato")
         .unwrap();
-    assert_eq!(nato_check["sideId"], "nato");
     // Nobody is cut off in the opening position.
     assert!(!events.contains(&"unitSupplyChanged"));
     assert!(nato_check["units"]
@@ -293,7 +311,7 @@ fn a_setup_can_start_from_any_situation() {
         "nato-baltap-1983",
         "black-box-encircled",
         json!({
-            "start": { "gameTurn": 1, "sideId": "warsawPact", "phaseId": "reserve" },
+            "start": { "gameTurn": 1, "sideId": "nato", "phaseId": "reserve" },
             "units": [
                 { "id": BRIGADE, "hex": "2617" },
                 { "id": "soviet.2gta.21motorRifleDivision", "hex": "2516" },
@@ -306,17 +324,19 @@ fn a_setup_can_start_from_any_situation() {
     assert_eq!(started["snapshot"]["units"].as_array().unwrap().len(), 4);
     assert_eq!(unit(&started, BRIGADE)["supply"]["movement"], "supplied");
 
+    // Ending NATO's Reserve Phase runs the next turn's Pre-Battle Phases.
     let mut revision = 0;
-    let nato_turn = accepted(&mut engine, &mut revision, json!({ "type": "endPhase" }));
-    assert_eq!(phase(&nato_turn), "battlePlanning");
-    let cut_off = nato_turn["events"]
+    let next_turn = accepted(&mut engine, &mut revision, json!({ "type": "endPhase" }));
+    assert_eq!(step(&next_turn), "warsawPact.battlePlanning");
+    let cut_off = next_turn["events"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|event| event["type"] == "unitSupplyChanged")
-        .expect("supply change event");
-    assert_eq!(cut_off["unitId"], BRIGADE);
+        .find(|event| event["type"] == "unitSupplyChanged" && event["unitId"] == BRIGADE)
+        .expect("brigade supply change event");
     assert_eq!(cut_off["supply"]["combat"], "outOfSupply");
+    let nato_turn = accepted(&mut engine, &mut revision, json!({ "type": "endPhase" }));
+    assert_eq!(step(&nato_turn), "nato.battlePlanning");
     assert_eq!(
         unit(&nato_turn, BRIGADE)["supply"]["movement"],
         "outOfSupply"

@@ -441,21 +441,21 @@ impl Rules {
                 status: Some(TrainStatus::Entrained),
             });
         }
-        self.battle_plan = Some(BattlePlan::new(self.game_turn, side_id));
+        self.battle_plans.retain(|plan| plan.side_id != side_id);
+        self.battle_plans
+            .push(BattlePlan::new(self.game_turn, side_id));
     }
 
     /// Removes Disrupted markers and supplies friendly combat units in the selected target stacks.
     pub(super) fn finish_battle_plan(&mut self, events: &mut Vec<GameEvent>) {
-        let Some(plan) = &self.battle_plan else {
+        let Some(side_id) = self.acting_side() else {
             return;
         };
         // Recovery (7.2 C) follows movement: the side's Disrupted markers come off.
-        let side_id = plan.side_id.clone();
         self.remove_disruption(&side_id, events);
-        let Some(plan) = &self.battle_plan else {
+        let Some(plan) = self.plan_for(&side_id) else {
             return;
         };
-        let side_id = plan.side_id.clone();
         let target_ids = plan.resupply_target_unit_ids.clone();
         let mut resupplied_hex_ids = Vec::new();
         for target_id in target_ids {
@@ -504,17 +504,18 @@ impl Rules {
         }
     }
 
-    /// Borrows the active battle plan or reports that no plan exists.
+    /// Borrows the acting side's battle plan or reports that it has none.
     pub(crate) fn active_plan(&self) -> Result<&BattlePlan, RuleError> {
-        self.battle_plan
-            .as_ref()
+        self.acting_side()
+            .and_then(|side_id| self.plan_for(&side_id))
             .ok_or_else(|| RuleError::new("battlePlanUnavailable", "No active battle plan exists"))
     }
 
-    /// Mutably borrows the active battle plan or reports that no plan exists.
+    /// Mutably borrows the acting side's battle plan or reports that it has none.
     pub(crate) fn active_plan_mut(&mut self) -> Result<&mut BattlePlan, RuleError> {
-        self.battle_plan
-            .as_mut()
+        let side_id = self.acting_side();
+        side_id
+            .and_then(|side_id| self.plan_for_mut(&side_id))
             .ok_or_else(|| RuleError::new("battlePlanUnavailable", "No active battle plan exists"))
     }
 

@@ -100,9 +100,14 @@ impl Rules {
         for (side_id, hex_ids) in by_side {
             events.push(GameEvent::AirInterdictionZonesRemoved { side_id, hex_ids });
         }
-        if !self.breakthrough_markers.is_empty() {
+        let (own, others): (Vec<_>, Vec<_>) = std::mem::take(&mut self.breakthrough_markers)
+            .into_iter()
+            .partition(|marker| marker.side_id == side_id);
+        self.breakthrough_markers = others;
+        if !own.is_empty() {
             events.push(GameEvent::BreakthroughMarkersRemoved {
-                hex_ids: std::mem::take(&mut self.breakthrough_markers),
+                side_id,
+                hex_ids: own.into_iter().map(|marker| marker.hex_id).collect(),
             });
         }
     }
@@ -496,14 +501,8 @@ impl Rules {
         }
 
         // 23.3.2: clearing a hex with Offensive Strikes leaves a Breakthrough Marker.
-        if enemy_present_before
-            && self.enemy_units_in(side_id, hex_id) == 0
-            && !self.breakthrough_markers.contains(hex_id)
-        {
-            self.breakthrough_markers.push(hex_id.clone());
-            events.push(GameEvent::BreakthroughMarkerPlaced {
-                hex_id: hex_id.clone(),
-            });
+        if enemy_present_before && self.enemy_units_in(side_id, hex_id) == 0 {
+            self.place_breakthrough(side_id, hex_id, events);
         }
 
         Ok(StrikeResolution {

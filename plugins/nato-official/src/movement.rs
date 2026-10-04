@@ -77,9 +77,13 @@ impl<'a> MovementContext<'a> {
             enemy_interdiction: HashSet::new(),
             breakthrough_zone: HashSet::new(),
         };
-        for marker in &state.breakthrough_markers {
-            context.breakthrough_zone.insert(marker.0.clone());
-            for neighbor in context.neighbors(&marker.0) {
+        for marker in state
+            .breakthrough_markers
+            .iter()
+            .filter(|marker| marker.side_id == *side_id)
+        {
+            context.breakthrough_zone.insert(marker.hex_id.0.clone());
+            for neighbor in context.neighbors(&marker.hex_id.0) {
                 context.breakthrough_zone.insert(neighbor.to_owned());
             }
         }

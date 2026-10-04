@@ -37,12 +37,13 @@ export interface GameSnapshot {
     currentStep: PhaseSnapshot | null;
   };
   units: UnitState[];
-  battlePlan: BattlePlan | null;
+  /** Each side's battle plan for the current or most recent turn. */
+  battlePlans: BattlePlan[];
   cities: CityControlState[];
   airPoints: AirPoints[];
   strikePlan: StrikePlan | null;
   airInterdictionZones: AirInterdictionZone[];
-  breakthroughMarkers: string[];
+  breakthroughMarkers: BreakthroughMarker[];
   eliminatedUnitIds: string[];
   combat: CombatState | null;
   /** Marked units and their movement during the current Reserve Phase. */
@@ -313,6 +314,19 @@ export interface CityControlChange {
   previousController: string;
 }
 
+/** A Breakthrough Marker and the side whose attack or Strike placed it. */
+export interface BreakthroughMarker {
+  sideId: string;
+  hexId: string;
+}
+
+/** The acting side's battle plan for the current turn, if it has made one. */
+export function activeBattlePlan(snapshot: GameSnapshot): BattlePlan | null {
+  const actor = snapshot.turn.currentStep?.actor;
+  if (actor?.type !== "side") return null;
+  return snapshot.battlePlans.find((plan) => plan.sideId === actor.sideId && plan.gameTurn === snapshot.turn.gameTurn) ?? null;
+}
+
 export interface BattlePlan {
   gameTurn: number;
   sideId: string;
@@ -375,8 +389,8 @@ export type GameEvent =
   | { type: "unitDisruptionChanged"; unitId: string; disruption: Disruption | null }
   | { type: "unitStepLost"; unitId: string; strengthStepIndex: number }
   | { type: "unitEliminated"; unitId: string; hexId: string }
-  | { type: "breakthroughMarkerPlaced"; hexId: string }
-  | { type: "breakthroughMarkersRemoved"; hexIds: string[] }
+  | { type: "breakthroughMarkerPlaced"; sideId: string; hexId: string }
+  | { type: "breakthroughMarkersRemoved"; sideId: string; hexIds: string[] }
   | { type: "unitWithdrawn"; gameTurn: number; unitId: string }
   | { type: "battleResolved"; sideId: string; report: BattleReport }
   | { type: "unitRetreated"; unitId: string; from: string; path: string[] }

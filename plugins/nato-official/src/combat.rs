@@ -322,8 +322,7 @@ impl Rules {
         let combat = self.combat_state()?;
         let context = MovementContext::new(self, &side_id);
         let marked: Vec<HexId> = if side_id.0 == "warsawPact" {
-            self.battle_plan
-                .as_ref()
+            self.plan_for(&side_id)
                 .map(|plan| plan.attack_targets.clone())
                 .unwrap_or_default()
         } else {
@@ -587,7 +586,7 @@ impl Rules {
         if cleared && !city_holds && !survivors.is_empty() {
             self.offer_advance(battle_id, &hex_id, &survivors, enemy_free_city, &mut events);
         } else if cleared && !city_holds {
-            self.place_breakthrough(&hex_id, &mut events);
+            self.place_breakthrough(&side_id, &hex_id, &mut events);
         }
         Ok(events)
     }
@@ -720,17 +719,7 @@ impl Rules {
         }
         // 25.9.2 (2): no marker while an enemy Free City still holds the hex.
         if !self.is_enemy_free_city(&side_id, &pending.hex_id) {
-            self.place_breakthrough(&pending.hex_id, events);
-        }
-    }
-
-    /// Adds a Breakthrough Marker and emits its placement event unless it is already present.
-    fn place_breakthrough(&mut self, hex_id: &HexId, events: &mut Vec<GameEvent>) {
-        if !self.breakthrough_markers.contains(hex_id) {
-            self.breakthrough_markers.push(hex_id.clone());
-            events.push(GameEvent::BreakthroughMarkerPlaced {
-                hex_id: hex_id.clone(),
-            });
+            self.place_breakthrough(&side_id, &pending.hex_id, events);
         }
     }
 
@@ -1458,7 +1447,7 @@ impl Rules {
             .any(|unit| unit.definition.side_id != *side_id && in_hex(unit, hex_id));
         if occupied || self.is_enemy_free_city(side_id, hex_id) {
             Some(ObjectiveKind::Defended)
-        } else if self.breakthrough_markers.contains(hex_id) {
+        } else if self.has_breakthrough(side_id, hex_id) {
             Some(ObjectiveKind::BreakthroughOnly)
         } else {
             None

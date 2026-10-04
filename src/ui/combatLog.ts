@@ -48,7 +48,7 @@ export function describeCombatEvents(events: GameEvent[], units: UnitState[], fi
         });
         break;
       case "breakthroughMarkersRemoved":
-        lines.push({ tone: "info", text: `Breakthrough markers removed from ${event.hexIds.join(", ")}` });
+        lines.push({ tone: "info", text: `${sideLabel(event.sideId)} Breakthrough markers removed from ${event.hexIds.join(", ")}` });
         break;
       case "airInterdictionZonesRemoved":
         lines.push({ tone: "info", text: `${sideLabel(event.sideId)} Air Interdiction Zones lifted (${event.hexIds.join(", ")})` });
@@ -113,7 +113,7 @@ export function describeCombatEvents(events: GameEvent[], units: UnitState[], fi
         }
         break;
       case "breakthroughMarkerPlaced":
-        lines.push({ tone: "info", text: `Breakthrough in ${event.hexId}` });
+        lines.push({ tone: "info", text: `${sideLabel(event.sideId)} breakthrough in ${event.hexId}` });
         break;
       case "airInterdictionZonePlaced":
         lines.push({ tone: "info", text: `${sideLabel(event.sideId)} Air Interdiction Zone at ${event.hexId}` });

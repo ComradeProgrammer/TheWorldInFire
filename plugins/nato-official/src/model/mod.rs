@@ -9,9 +9,9 @@ mod strike;
 mod unit;
 
 pub use combat::{
-    BattleOdds, BattleReport, ColumnShift, ColumnShiftReason, CombatObjective, CombatOptions,
-    CombatResult, CombatState, CounterattackRoll, PendingAdvance, StrengthModifier, UnitStrength,
-    ODDS_COLUMNS,
+    BattleOdds, BattleReport, BreakthroughMarker, ColumnShift, ColumnShiftReason, CombatObjective,
+    CombatOptions, CombatResult, CombatState, CounterattackRoll, PendingAdvance, StrengthModifier,
+    UnitStrength, ODDS_COLUMNS,
 };
 pub use ooaw_plugin_api::{
     Causeway, CityControlState, CityKind, CityOutline, CommandLine, CommandZone, FormationId,

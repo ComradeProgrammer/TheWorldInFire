@@ -1,5 +1,13 @@
 # 回合状态机开发记录
 
+## 回合顺序
+
+`plugins/nato-official/src/model/scenario.rs` 中的 `standard_turn_sequence` 为每个场景生成阶段顺序：两个联合阶段之后，每个双方阶段都先由华约、再由北约进行（`warsawPact.preBattle`、`nato.preBattle`、`warsawPact.battlePlanning`、`nato.battlePlanning`，依此类推，经过进攻打击、战斗、预备队和战后阶段）。内核只是按这个列表推进；规则负责让交替进行成立：
+
+- **每方各自的战斗计划。**规则状态在 `battlePlans` 中为每方保存一份计划。一方的战斗计划阶段会替换该方自己的计划，该计划随后用于该方自己的打击、战斗（华约标记的目标）和预备队阶段，即使另一方在其间进行了自己的阶段。`Rules::active_plan` 返回行动方的计划。
+- **归属一方的突破标记。**`breakthroughMarkers` 的每一项是 `{ sideId, hexId }`。只有拥有方可以对该格进行仅推进的进攻或使用其突破区，也只有拥有方的预备队阶段会移除它。`breakthroughMarkerPlaced` 和 `breakthroughMarkersRemoved` 事件带有 `sideId`。
+- **保持不变的时机。**空中遮断区仍在敌方预备队阶段结束时移除，现在位于同一回合内，因此只影响敌方的预备队移动。混乱标记仍在所属方战斗计划结束时移除，因此被敌方造成混乱的单位会在该回合己方的战斗阶段中保持混乱。补给仍在各方的战前步骤中检查，现在两者都位于回合开始处。
+
 ## 当前实现范围
 
 已经完成：
@@ -73,7 +81,7 @@ Pre-battle
 
 `preBattle` 用下文的简化规则检查行动方每个单位的补给，并把结果记录在 `preBattleSupplyChecked` 中。增援到达时即以完全补给状态进入游戏，战略预备队中的单位始终有补给。
 
-`battlePlanning` 现在是行动方的统一命令阶段。选择再补给对象、添加或移除攻击目标、移动其他单位、命令装车、下车或空运之间没有人为规定的提交顺序；每条命令只校验其实际规则前置条件。移动会立即更新权威位置并保存内核选择的路线，攻击目标和再补给目标保存在 `battlePlan` 中。结束阶段时，对每个再补给目标所在格的己方战斗单位统一恢复适用补给状态，计划则保留给后续打击与战斗阶段使用。
+`battlePlanning` 现在是行动方的统一命令阶段。选择再补给对象、添加或移除攻击目标、移动其他单位、命令装车、下车或空运之间没有人为规定的提交顺序；每条命令只校验其实际规则前置条件。移动会立即更新权威位置并保存内核选择的路线，攻击目标和再补给目标保存在 `battlePlans` 中该方的计划里。结束阶段时，对每个再补给目标所在格的己方战斗单位统一恢复适用补给状态，计划则保留给后续打击与战斗阶段使用。
 
 地面移动支持战术移动和行军移动；玩家规则见 `docs/zh-CN/rules/movement.md`，实现说明见下文“移动规则”。铁路装车要占用当前整个计划阶段，下一次该方战斗计划开始时才转为 `entrained`；已装车单位每回合最多移动 20 格。基础空运只允许带 `airTransportable` 特性的空降/空中机动单位，从城市或战略预备队移至非海洋、非山地、非敌方控制区的合法格。海运暂不实现。
 
@@ -130,7 +138,7 @@ jointStatus
 - **任务**（`strikePlan.missions`）通过 `planAirStrike` 或 `planAirInterdiction` 下达，并由 `resolveAirStrikes` 一并结算，或在 `endPhase` 时自动结算（23.2.4）。`cancelAirMission` 将未结算任务的点数退回其来源。目标限制：每次打击两个战力面；HQ 只能被单独打击且只能用战役点数；同一单位不能被打击两次；每格最多两次打击；战术点数只能用于己方或争夺空域。
 - **打击表**采用 1 点一栏，并使用印刷的修正：大型/关键城市 −2；森林、崎岖地、山地或小城市 −1；铁路标记 +1（取代地形修正）；己方空域 +1；敌方空域 −1；奇袭回合的华约 +1。目标修正不同时取最低总和（23.3.1）。第一个指定的单位承受战力面损失。
 - **结果**：混乱（HQ 为压制；混乱的单位失去铁路标记）、战力面损失（翻面并混乱，或消灭），以及当格内最后一个敌方单位被消灭时放置突破标记。
-- **标记时机**（合并后的顺序）：混乱标记在所属方战斗计划结束时移除（原规则的恢复阶段在移动之后）；压制标记在所属方的战后步骤（解除压制）移除；突破标记和敌方空中遮断区在行动方结束预备阶段时移除（23.8.2、28.2.5）。
+- **标记时机**（合并后的顺序）：混乱标记在所属方战斗计划结束时移除（原规则的恢复阶段在移动之后）；压制标记在所属方的战后步骤（解除压制）移除；行动方自己的突破标记和敌方空中遮断区在行动方结束预备阶段时移除（23.8.2、28.2.5）。
 - **空域**：每方在其有补给的地图单位以及其控制的每个城市五格以内投射空域，西柏林除外（11.5，地图中的 `contestsAirspace: false`）。城市补给尚未追踪，因此所有己方控制的城市都计入。双方都未投射到的格子视为争夺空域。空域现在也约束行军和铁路（仅己方空域）、装车（仅己方空域）以及空运（不能从敌方空域出发或进入敌方空域）。
 - **空中遮断区**（23.8）：另一方战术移动进入遮断区额外 +1 移动点，并禁止其行军和铁路移动进入。
 - **混乱与移动**：混乱或被压制的单位只能进行最低移动，且不能装车。
@@ -163,7 +171,7 @@ jointStatus
 
 `src/reserve.rs` 实现预备队/OMG 状态（12.6，2026 年 1 月 1 日在线规则）和预备队阶段（28.2）。
 
-- **标记：**战斗计划阶段的 `setReserve { unitId, selected }` 把单位记录在 `battlePlan.reserveUnitIds` 中。单位须满足：位于地图上的机动单位、不是固定单位、没有混乱、没有缺乏移动补给或战斗补给、不在铁路标记下、本计划没有使用铁路或空运、消耗不超过一半移动力（战术 ≤ ⌊MA/2⌋，行军 ≤ MA，因此最低移动永远不符合），并且不在敌方控制区内。`reserveOptions` 为计划方的每个单位预览结果。
+- **标记：**战斗计划阶段的 `setReserve { unitId, selected }` 把单位记录在该方计划的 `reserveUnitIds` 中。单位须满足：位于地图上的机动单位、不是固定单位、没有混乱、没有缺乏移动补给或战斗补给、不在铁路标记下、本计划没有使用铁路或空运、消耗不超过一半移动力（战术 ≤ ⌊MA/2⌋，行军 ≤ MA，因此最低移动永远不符合），并且不在敌方控制区内。`reserveOptions` 为计划方的每个单位预览结果。
 - **重新检查：**被标记单位每次移动、撤销或装车后，内核都会重新检查。不再符合条件的单位会通过 `reserveStatusChanged { selected: false }` 失去标记，而不是拒绝该命令。
 - **战斗：**被标记单位不会出现在 `combatOptions` 中，因此不能投入进攻。
 - **预备队阶段：**进入该阶段时，内核用存活的被标记单位建立 `snapshot.reserve { sideId, unitIds, movements }`。`moveUnit` 与 `undoUnitMovement` 的用法与计划阶段相同，但记录在 `reserve.movements` 中。只有列出的单位可以移动（`notInReserve`），且只能战术移动（`reserveTacticalOnly`）；单格的最低移动仍可作为第一次移动。移动力为 ⌈印刷 MA / 2⌉。对硬目标单位，突破区（突破标记所在格及六个相邻格）内的敌方控制区格子不增加进入或离开的 +1 消耗（25.9.3、28.2.1）。
@@ -246,7 +254,7 @@ plugins/nato-official/src/    官方 NATO 规则插件
 
 算子不依赖图片资源。规则通过单位定义和每个战力面的 `attack`、`defense`、`movement` 等结构化字段提供游戏信息，前端按自己的视觉风格绘制算子。
 
-前端通过 `src/gameApi.ts` 调用 `new_game` 和 `submit_game_command`。联合状态阶段是自动阶段（目前没有玩家决策），因此 `GameEngine::new` 在返回前会结算剧本开头的自动阶段（联合状态、带开局部署的联合增援，以及华约战前阶段）。游戏在 revision 0 时就处于华约战斗计划阶段，开局部队已在地图上；这段自动开局产生的事件不会返回。每条命令之后，前端使用返回快照重绘单位层和战斗计划叠加层，并将镜头聚焦到新到达的增援。算子由 PixiJS 的矩形、线条、椭圆和文字现场绘制，不加载原作算子图片。
+前端通过 `src/gameApi.ts` 调用 `new_game` 和 `submit_game_command`。联合状态阶段是自动阶段（目前没有玩家决策），因此 `GameEngine::new` 在返回前会结算剧本开头的自动阶段（联合状态、带开局部署的联合增援，以及双方的战前阶段）。游戏在 revision 0 时就处于华约战斗计划阶段，开局部队已在地图上；这段自动开局产生的事件不会返回。每条命令之后，前端使用返回快照重绘单位层和战斗计划叠加层，并将镜头聚焦到新到达的增援。算子由 PixiJS 的矩形、线条、椭圆和文字现场绘制，不加载原作算子图片。
 
 NATO 规则的测试（`plugins/nato-official/tests/`）让每条命令和查询都经过内核与 WebAssembly 插件。测试辅助模块（`tests/common/mod.rs`）通过带类型的 NATO 模型读取内核状态，并直接修改状态来布置局面；`debug.checkSupply` 可按需执行补给检查，仅在游戏启用调试命令时被接受。
 
@@ -262,7 +270,7 @@ new_game("nato-1983-standard")
 
 ```json
 {
-  "snapshot": { "protocolVersion": 17, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
+  "snapshot": { "protocolVersion": 18, "scenario": { "mapId": "nato-central-europe" }, "battlePlans": [] },
   "map": {
     "id": "nato-central-europe",
     "version": 1,
@@ -295,7 +303,7 @@ new_game("nato-baltap-1983")
 
 ```json
 {
-  "protocolVersion": 17,
+  "protocolVersion": 18,
   "gameId": "generated-uuid",
   "revision": 0,
   "scenario": {
@@ -324,7 +332,7 @@ new_game("nato-baltap-1983")
 }
 ```
 
-`protocolVersion`、`gameId`、`revision`、`scenario`、`status`、`turn`、`units`、`cities` 和 `pendingDecision` 由内核定义。其余顶层字段（`battlePlan`、`airPoints`、`strikePlan`、`airInterdictionZones`、`breakthroughMarkers`、`eliminatedUnitIds`、`combat`、`reserve`）是 NATO 插件保存在内核中的规则状态；单位的 `supply`、`trainStatus` 和 `disruption` 是规则拥有的单位标记。JSON 结构与拆分插件之前相同。
+`protocolVersion`、`gameId`、`revision`、`scenario`、`status`、`turn`、`units`、`cities` 和 `pendingDecision` 由内核定义。其余顶层字段（`battlePlans`、`airPoints`、`strikePlan`、`airInterdictionZones`、`breakthroughMarkers`、`eliminatedUnitIds`、`combat`、`reserve`）是 NATO 插件保存在内核中的规则状态；单位的 `supply`、`trainStatus` 和 `disruption` 是规则拥有的单位标记。
 
 当前命令请求：
 
@@ -387,7 +395,7 @@ rules_query(battlePreview, { "hexId": "2415", "unitIds": ["..."], "supportingHqI
 { "type": "advanceAfterCombat", "unitIds": ["soviet.2gta.21motorRifleDivision"] }
 ```
 
-协议 12 在快照中新增 `combat`（战斗、已进攻的单位与格子、已交战单位、待决定的推进），并新增事件 `battleResolved`、`unitRetreated`、`advanceOffered` 和 `unitsAdvanced`。协议 13 加入进攻支援：战斗目标的 `supportHqIds`、战斗报告的 `supportingHqId`、`combat.supportingHqIds`，以及 `unitWithdrawn` 事件。协议 14 将单个 `resupplyTargetUnitId` 替换为 `resupplyTargetUnitIds`，并为再补给命令和事件增加 `selected` 字段。协议 15 加入预备队：`battlePlan.reserveUnitIds`、快照的 `reserve`、`setReserve` 命令，以及 `reserveStatusChanged` 和 `reserveMarkersRemoved` 事件。协议 16 新增 `unitSupplyChanged { unitId, supply }` 事件和地图城市标志 `enclave`。协议 17 新增移动方式 `paradrop` 和 `seaTransport`、`battlePlan.sealiftStepsUsed`，以及地图的 `reinforcementSectors`（`{ number, sideId, hexId }`）。
+协议 12 在快照中新增 `combat`（战斗、已进攻的单位与格子、已交战单位、待决定的推进），并新增事件 `battleResolved`、`unitRetreated`、`advanceOffered` 和 `unitsAdvanced`。协议 13 加入进攻支援：战斗目标的 `supportHqIds`、战斗报告的 `supportingHqId`、`combat.supportingHqIds`，以及 `unitWithdrawn` 事件。协议 14 将单个 `resupplyTargetUnitId` 替换为 `resupplyTargetUnitIds`，并为再补给命令和事件增加 `selected` 字段。协议 15 加入预备队：`battlePlan.reserveUnitIds`、快照的 `reserve`、`setReserve` 命令，以及 `reserveStatusChanged` 和 `reserveMarkersRemoved` 事件。协议 16 新增 `unitSupplyChanged { unitId, supply }` 事件和地图城市标志 `enclave`。协议 17 新增移动方式 `paradrop` 和 `seaTransport`、`battlePlan.sealiftStepsUsed`，以及地图的 `reinforcementSectors`（`{ number, sideId, hexId }`）。协议 18 改为双方按阶段交替：单一的 `battlePlan` 改为每方一份的 `battlePlans`，`breakthroughMarkers` 的每一项改为 `{ sideId, hexId }`，突破标记事件增加 `sideId`。`src/gameApi.ts` 中的 `activeBattlePlan` 选出行动方当前回合的计划。
 
 预备队查询与命令：
 
@@ -418,7 +426,7 @@ rules_query(reserveOptions)  →  { "revision": 4, "result": [{ "unitId": "...",
 
 应用启动后显示标题界面（`src/menu/TitleScreen.tsx`），包含“新游戏”“读取游戏”“设置”和“退出”，可以用方向键和回车操作，也可以用鼠标。“读取游戏”和“设置”目前是占位按钮。“退出”调用 Tauri 命令 `quit_app`。“新游戏”打开剧本界面（`src/menu/ScenarioSelect.tsx`），列出 `list_scenarios` 返回的所有剧本，因此新注册的剧本无需修改前端即可出现。`src/menu/scenarioCatalog.ts` 只负责展示：把已注册的剧本按系列分组（入门：BALTAP；战役：战略突袭、长期集结、神经战；开发：规则原型），提供 1983/1988 年份版本和简短说明。不在目录中的已注册剧本仍会出现在“Other”分组中。选中系列后显示说明、年份选择、回合数、地图、标识符和阵营；↑ ↓ 切换系列，← → 切换年份。“开始游戏”会用所选剧本调用 `new_game`。`src/Root.tsx` 负责切换界面，并用返回的启动数据挂载游戏界面（`App`），以游戏 ID 作为 key。
 
-右侧控制面板是主视图。未选中单位时，它显示“前往格子”、所选格的地形、指挥区、城市/港口数据、格边特征和格内单位；在战斗计划阶段，还会列出行动方的战略预备队，并提供一个切换按钮，把所选的敌占格加入攻击目标或从中移除。选择单位（从列表中选择，或在所在格已被选中时点击其算子）后，面板切换到单位详情视图，显示绘制的算子、身份、战力数值、补给、铁路状态、特性，以及计划方自有单位可用的计划行动。任何行动按钮在其命令进入计划后都会变成撤销按钮；该状态由前端从权威的 `battlePlan` 推导，而不是依赖本地记录。第一次左键点击某格（包括点在算子上）只会选中该格并显示格子视图；在已选中的格内点击算子才会打开该单位。左键点击其他位置会让面板回到格子视图。
+右侧控制面板是主视图。未选中单位时，它显示“前往格子”、所选格的地形、指挥区、城市/港口数据、格边特征和格内单位；在战斗计划阶段，还会列出行动方的战略预备队，并提供一个切换按钮，把所选的敌占格加入攻击目标或从中移除。选择单位（从列表中选择，或在所在格已被选中时点击其算子）后，面板切换到单位详情视图，显示绘制的算子、身份、战力数值、补给、铁路状态、特性，以及计划方自有单位可用的计划行动。任何行动按钮在其命令进入计划后都会变成撤销按钮；该状态由前端从 `battlePlans` 中行动方的权威计划推导，而不是依赖本地记录。第一次左键点击某格（包括点在算子上）只会选中该格并显示格子视图；在已选中的格内点击算子才会打开该单位。左键点击其他位置会让面板回到格子视图。
 
 移动在地图上下达。选中计划方自有单位时，面板显示移动方式选择器（战术、行军、铁路、空运）；单位移动后，其他方式会被禁用。前端针对所选单位调用一次 `movementModes`，并在每条命令被接受后重新调用，绝不按指针移动逐帧调用。移动方式按钮的启用状态和说明只取自该响应；攻击目标按钮只对 `attackTargetOptions` 中的格子启用；格子视图显示每个城市的控制方以及它是自由城市还是被征服城市。悬停在列出的目的地上时，会沿内核选择的路线绘制红色箭头；右键点击即提交 `moveUnit`。未列出的格子不显示箭头，也忽略右键点击。移动后所选单位保持选中，便于继续移动或撤销。
 
@@ -451,7 +459,7 @@ rules_query(reserveOptions)  →  { "revision": 4, "result": [{ "unitId": "...",
 
 战斗计划阶段中，单位详情视图增加“Mark as Reserve”（北约）或“Mark as OMG”（华约）切换按钮。按钮根据当前 revision 的 `reserveOptions` 启用，否则显示内核给出的原因。被标记单位的算子（地图与侧栏）显示金色 RES/OMG 标签，单位数据中有“Reserve”一行，单位列表中有标记，战斗计划面板中也有一行。预备队阶段中，格子视图列出待移动的单位；选中后显示与计划阶段相同的移动控件（内核只保留战术移动可用），可右键下达移动并撤销，移动会显示在战斗计划面板中。地图以黄色阴影显示突破区。缺乏补给的单位在算子上方显示红色 OOS 标签；单位数据对 HQ 显示 HQ 补给，对其他单位显示移动/战斗补给，缺乏补给时高亮；战斗日志会报告补给变化。战斗日志会报告预备队阶段结束时移除的标记、恢复（移除混乱）以及战后阶段解除压制。
 
-显示选项（镜头缩放、适配地图和地图图层开关）位于右上角“设置”按钮打开的模态设置窗口中。底栏可折叠，并分为两个只读区域：左侧“战斗计划”实时渲染 `snapshot.battlePlan`，右侧“战斗日志”在战斗结算实现之前保持为空。
+显示选项（镜头缩放、适配地图和地图图层开关）位于右上角“设置”按钮打开的模态设置窗口中。底栏可折叠，并分为两个只读区域：左侧“战斗计划”实时渲染 `snapshot.battlePlans` 中行动方的计划，右侧“战斗日志”在战斗结算实现之前保持为空。
 
 之后每个联合增援阶段都在结束北约回合的那条 `endPhase` 中结算（第一回合的联合增援在 `new_game` 中完成）。返回结果中的事件流包含：
 

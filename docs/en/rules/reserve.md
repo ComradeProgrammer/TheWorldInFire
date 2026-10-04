@@ -26,12 +26,12 @@ After the Combat Phase, the acting side moves its marked units:
 - Only **Tactical movement** is allowed, or Minimum movement (one hex, when the unit has not yet moved this phase). March, rail, and air transport are not.
 - A unit may move in several orders, and each move can be undone until the phase ends.
 - Units move in any direction the player chooses; all normal movement costs, zones of control, and the stacking limit apply.
-- **Breakthrough Zone:** a Breakthrough Marker's hex and its six adjacent hexes form a Breakthrough Zone (shaded yellow on the map). **Hard** units do not pay the extra Movement Point for entering or leaving an enemy zone of control in a hex of a Breakthrough Zone. This is how armour exploits a successful attack.
+- **Breakthrough Zone:** a friendly Breakthrough Marker's hex and its six adjacent hexes form a Breakthrough Zone (shaded yellow on the map). Each side's Breakthrough Markers come from its own attacks and Strikes and help only its own units. **Hard** units do not pay the extra Movement Point for entering or leaving an enemy zone of control in a hex of a Breakthrough Zone. This is how armour exploits a successful attack.
 
 Units without a marker cannot move in the Reserve Phase.
 
-At the end of the Reserve Phase, all of the acting side's Reserve/OMG markers and Breakthrough Markers are removed, together with the enemy's Air Interdiction Zones.
+At the end of the Reserve Phase, all of the acting side's Reserve/OMG markers and its own Breakthrough Markers are removed, together with the enemy's Air Interdiction Zones.
 
 ## Post-Battle Phase
 
-The Post-Battle Phase follows automatically. It removes the Suppressed markers from the acting side's HQs, and the player turn ends.
+The Post-Battle Phase follows automatically. It removes the Suppressed markers from the acting side's HQs.

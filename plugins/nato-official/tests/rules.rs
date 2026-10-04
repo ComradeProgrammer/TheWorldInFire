@@ -38,7 +38,7 @@ fn new_game_starts_at_the_first_step_that_needs_a_player() {
     let step = snapshot.turn.current_step.unwrap();
 
     assert_eq!(snapshot.revision, 0);
-    assert_eq!(snapshot.protocol_version, 17);
+    assert_eq!(snapshot.protocol_version, 18);
     assert_eq!(snapshot.turn.game_turn, 1);
     // Joint Status, Joint Reinforcement, and Pre-Battle are automatic.
     assert_eq!(step.phase_id.0, "battlePlanning");
@@ -57,7 +57,7 @@ fn new_game_starts_at_the_first_step_that_needs_a_player() {
 fn snapshot_identifies_the_scenario_map_without_repeating_its_data() {
     let json = new_game().snapshot_json();
 
-    assert_eq!(json["protocolVersion"], 17);
+    assert_eq!(json["protocolVersion"], 18);
     assert_eq!(json["scenario"]["mapId"], "nato-central-europe");
     assert!(json.get("map").is_none());
 }
@@ -133,37 +133,79 @@ fn opening_units_are_deployed_when_the_game_is_created() {
     );
 }
 
-/// Verifies post-battle cleanup and the next side's pre-battle supply run automatically.
+/// Verifies each phase is played by the Warsaw Pact and then by NATO before the next phase.
+#[test]
+fn sides_alternate_within_each_phase() {
+    let scenario = find_scenario("nato-1983-standard").unwrap();
+    let steps: Vec<&str> = scenario
+        .turn_sequence
+        .iter()
+        .map(|step| step.id.0.as_str())
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            "joint.jointStatus",
+            "joint.jointReinforcement",
+            "warsawPact.preBattle",
+            "nato.preBattle",
+            "warsawPact.battlePlanning",
+            "nato.battlePlanning",
+            "warsawPact.offensiveStrike",
+            "nato.offensiveStrike",
+            "warsawPact.combat",
+            "nato.combat",
+            "warsawPact.reserve",
+            "nato.reserve",
+            "warsawPact.postBattle",
+            "nato.postBattle",
+        ]
+    );
+}
+
+/// Verifies both sides' Post-Battle and the next turn's Pre-Battle phases run automatically.
 #[test]
 fn automatic_post_battle_is_processed_without_user_input() {
     let mut game = new_game();
-    for _ in 0..3 {
+    // WP and NATO Battle Planning, Strike, Combat, and Reserve, minus the last.
+    for _ in 0..7 {
         game.execute(GameCommand::EndPhase).unwrap();
     }
-    assert_eq!(
-        game.snapshot().turn.current_step.unwrap().phase_id.0,
-        "reserve"
-    );
+    let step = game.snapshot().turn.current_step.unwrap();
+    assert_eq!(step.id.0, "nato.reserve");
 
     let outcome = game.execute(GameCommand::EndPhase).unwrap();
     let snapshot = outcome.snapshot;
     let step = snapshot.turn.current_step.unwrap();
 
-    assert_eq!(step.phase_id.0, "battlePlanning");
+    assert_eq!(snapshot.turn.game_turn, 2);
+    assert_eq!(step.id.0, "warsawPact.battlePlanning");
+    let ended: Vec<&str> = outcome
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            GameEvent::PhaseEnded { step, .. } => Some(step.id.0.as_str()),
+            _ => None,
+        })
+        .collect();
     assert_eq!(
-        step.actor,
-        PhaseActor::Side {
-            side_id: SideId("nato".to_owned())
-        }
+        ended,
+        [
+            "nato.reserve",
+            "warsawPact.postBattle",
+            "nato.postBattle",
+            "joint.jointStatus",
+            "joint.jointReinforcement",
+            "warsawPact.preBattle",
+            "nato.preBattle",
+        ]
     );
-    assert!(outcome.events.iter().any(|event| matches!(
-        event,
-        GameEvent::PhaseEnded { step, .. } if step.phase_id.0 == "postBattle"
-    )));
-    assert!(outcome.events.iter().any(|event| matches!(
-        event,
-        GameEvent::PreBattleSupplyChecked { side_id, .. } if side_id.0 == "nato"
-    )));
+    for side in ["warsawPact", "nato"] {
+        assert!(outcome.events.iter().any(|event| matches!(
+            event,
+            GameEvent::PreBattleSupplyChecked { side_id, .. } if side_id.0 == side
+        )));
+    }
 }
 
 /// Verifies both sides' pre-battle steps are defined as automatic phases.
@@ -284,16 +326,19 @@ fn reinforcement_event_serializes_as_a_camel_case_ipc_message() {
 #[test]
 fn pre_battle_supply_event_serializes_checked_unit_state() {
     let mut game = new_game();
-    // Strike, Combat, and Reserve; the last ends the WP turn and runs NATO's Pre-Battle.
-    for _ in 0..3 {
+    // Seven interactive phases; ending the eighth (NATO Reserve) runs the next
+    // turn's Pre-Battle Phases.
+    for _ in 0..7 {
         game.execute(GameCommand::EndPhase).unwrap();
     }
     let outcome = game.execute(GameCommand::EndPhase).unwrap();
     let event = outcome
         .events
         .iter()
-        .find(|event| matches!(event, GameEvent::PreBattleSupplyChecked { .. }))
-        .expect("pre-battle supply event");
+        .find(|event| {
+            matches!(event, GameEvent::PreBattleSupplyChecked { side_id, .. } if side_id.0 == "nato")
+        })
+        .expect("NATO pre-battle supply event");
 
     let json = serde_json::to_value(event).unwrap();
 
@@ -696,6 +741,8 @@ fn airborne_reserve_unit_can_use_scenario_limited_air_transport() {
 #[test]
 fn planning_commands_are_rejected_outside_battle_planning() {
     let mut game = new_game();
+    // NATO Battle Planning, then the WP Offensive Strike Phase.
+    game.execute(GameCommand::EndPhase).unwrap();
     game.execute(GameCommand::EndPhase).unwrap();
     let error = game
         .execute(GameCommand::SetAttackTarget {
@@ -704,7 +751,7 @@ fn planning_commands_are_rejected_outside_battle_planning() {
         })
         .unwrap_err();
     assert_eq!(error.code, "wrongPhase");
-    assert_eq!(game.snapshot().revision, 1);
+    assert_eq!(game.snapshot().revision, 2);
 }
 
 /// Verifies a deselected resupply unit is removed from the plan and emits a cancellation event.
@@ -1268,6 +1315,14 @@ fn air_strike(hex: &str, units: &[&str], air_point: AirPointKind) -> GameCommand
 const PZG_16: &str = "westGermany.6panzergrenadierDivision.16panzergrenadierBrigade";
 const PZG_17: &str = "westGermany.6panzergrenadierDivision.17panzergrenadierBrigade";
 
+/// A side's Breakthrough Marker in a hex.
+fn marker(side: &str, hex: &str) -> ooaw_nato::BreakthroughMarker {
+    ooaw_nato::BreakthroughMarker {
+        side_id: SideId(side.to_owned()),
+        hex_id: HexId(hex.to_owned()),
+    }
+}
+
 /// Dice whose next roll is `roll`.
 fn dice_rolling(roll: u8) -> Dice {
     (0..)
@@ -1435,7 +1490,7 @@ fn a_step_loss_on_the_last_unit_in_a_hex_leaves_a_breakthrough_marker() {
     assert_eq!(outcome.snapshot.eliminated_unit_ids, vec![brigade]);
     assert_eq!(
         outcome.snapshot.breakthrough_markers,
-        vec![HexId("2216".to_owned())]
+        vec![marker("warsawPact", "2216")]
     );
     // Breakthrough Markers come off at the end of the WP Reserve Phase.
     advance_to(&mut game, "warsawPact", "reserve");
@@ -1533,9 +1588,9 @@ fn interdiction_is_placed_on_resolution_and_removed_after_the_enemy_reserve_phas
     game.execute(GameCommand::EndPhase).unwrap();
     assert_eq!(game.snapshot().air_interdiction_zones.len(), 1);
     // The zone survives the WP Reserve Phase and is removed after NATO's.
-    advance_to(&mut game, "nato", "battlePlanning");
+    advance_to(&mut game, "warsawPact", "reserve");
+    game.execute(GameCommand::EndPhase).unwrap();
     assert_eq!(game.snapshot().air_interdiction_zones.len(), 1);
-    advance_to(&mut game, "nato", "reserve");
     game.execute(GameCommand::EndPhase).unwrap();
     assert!(game.snapshot().air_interdiction_zones.is_empty());
 }
@@ -1682,7 +1737,7 @@ fn a_destroyed_defender_lets_the_attacker_advance_and_leaves_a_breakthrough() {
     assert!(outcome
         .snapshot
         .breakthrough_markers
-        .contains(&HexId("4010".to_owned())));
+        .contains(&marker("warsawPact", "4010")));
     game.execute(GameCommand::EndPhase).unwrap();
 }
 
@@ -1718,7 +1773,7 @@ fn attacker_losses_and_defender_retreats_are_applied() {
     assert!(outcome
         .snapshot
         .breakthrough_markers
-        .contains(&HexId("4010".to_owned())));
+        .contains(&marker("warsawPact", "4010")));
 }
 
 /// Verifies a Counterattack result rolls once for every eligible defending step.
@@ -2151,14 +2206,18 @@ fn hard_reserve_units_ignore_ezoc_costs_in_a_breakthrough_zone() {
     };
     // 4011 is in the German unit's ZOC: entering it costs +1.
     let normal = cost_to(&mut game, "4011").unwrap();
-    game.edit_rules(|rules| rules.breakthrough_markers.push(HexId("4011".to_owned())));
+    game.edit_rules(|rules| {
+        rules
+            .breakthrough_markers
+            .push(marker("warsawPact", "4011"))
+    });
     assert_eq!(cost_to(&mut game, "4011").unwrap() + 1, normal);
 }
 
 /// Verifies post-battle cleanup removes only the acting side's Suppressed markers.
 #[test]
 fn post_battle_removes_only_the_acting_sides_suppressed_markers() {
-    let mut game = baltap_at("warsawPact", "reserve");
+    let mut game = baltap_at("nato", "reserve");
     let units = game.units();
     let hq_of = |side: &str| {
         units
@@ -2172,22 +2231,26 @@ fn post_battle_removes_only_the_acting_sides_suppressed_markers() {
     for hq in [&wp_hq, &nato_hq] {
         game.edit_unit(hq, |unit| unit.disruption = Some(Disruption::Suppressed));
     }
+    // Ending NATO's Reserve Phase runs the WP, then the NATO Post-Battle Phase;
+    // each unsuppresses only its own side's HQs.
     let outcome = game.execute(GameCommand::EndPhase).unwrap();
-    assert!(outcome.events.contains(&GameEvent::UnitDisruptionChanged {
-        unit_id: wp_hq.clone(),
-        disruption: None,
-    }));
-    let disruption = |id: &UnitId| {
-        outcome
-            .snapshot
-            .units
-            .iter()
-            .find(|unit| unit.id() == id)
-            .unwrap()
-            .disruption
+    let position =
+        |wanted: &dyn Fn(&GameEvent) -> bool| outcome.events.iter().position(wanted).unwrap();
+    let recovered = |id: &UnitId| {
+        let id = id.clone();
+        move |event: &GameEvent| {
+            *event
+                == GameEvent::UnitDisruptionChanged {
+                    unit_id: id.clone(),
+                    disruption: None,
+                }
+        }
     };
-    assert_eq!(disruption(&wp_hq), None);
-    assert_eq!(disruption(&nato_hq), Some(Disruption::Suppressed));
+    let wp_post_battle_ended = position(
+        &|event| matches!(event, GameEvent::PhaseEnded { step, .. } if step.id.0 == "warsawPact.postBattle"),
+    );
+    assert!(position(&recovered(&wp_hq)) < wp_post_battle_ended);
+    assert!(position(&recovered(&nato_hq)) > wp_post_battle_ended);
 }
 
 /// Verifies Reserve/OMG selection commands deserialize from camelCase IPC messages.
@@ -2322,10 +2385,24 @@ fn west_berlin_supplies_only_units_in_or_next_to_it() {
 fn pre_battle_checks_the_acting_sides_supply() {
     let mut game = baltap_planning("nato", &[(PZG_17, "2402")]);
     assert!(supplied(&game, PZG_17));
-    advance_to(&mut game, "warsawPact", "battlePlanning");
-    // The WP Pre-Battle Phase does not check NATO units.
-    assert!(supplied(&game, PZG_17));
-    advance_to(&mut game, "nato", "battlePlanning");
+    let mut events = Vec::new();
+    while game.snapshot().turn.current_step.unwrap().id.0 != "warsawPact.battlePlanning" {
+        events.extend(game.execute(GameCommand::EndPhase).unwrap().events);
+    }
+    let checked = |side: &str| -> Vec<UnitId> {
+        events
+            .iter()
+            .find_map(|event| match event {
+                GameEvent::PreBattleSupplyChecked { side_id, units, .. } if side_id.0 == side => {
+                    Some(units.iter().map(|check| check.unit_id.clone()).collect())
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
+    // The WP Pre-Battle Phase does not check NATO units; NATO's then does.
+    assert!(!checked("warsawPact").contains(&UnitId(PZG_17.to_owned())));
+    assert!(checked("nato").contains(&UnitId(PZG_17.to_owned())));
     assert!(!supplied(&game, PZG_17));
 }
 
@@ -2340,7 +2417,7 @@ fn a_setup_can_start_in_the_reserve_phase_with_its_own_markers() {
             { "id": PZG_17, "hex": "3320", "step": 0, "disruption": "disrupted" }
         ],
         "reserveUnitIds": [GERMAN],
-        "breakthroughMarkers": ["3319"]
+        "breakthroughMarkers": [{ "sideId": "nato", "hexId": "3319" }]
     }))
     .unwrap();
     let game = TestGame::with_setup(
@@ -2356,10 +2433,7 @@ fn a_setup_can_start_in_the_reserve_phase_with_its_own_markers() {
         snapshot.reserve.unwrap().unit_ids,
         vec![UnitId(GERMAN.to_owned())]
     );
-    assert_eq!(
-        snapshot.breakthrough_markers,
-        vec![HexId("3319".to_owned())]
-    );
+    assert_eq!(snapshot.breakthrough_markers, vec![marker("nato", "3319")]);
     let disrupted = game.unit(&UnitId(PZG_17.to_owned()));
     assert_eq!(disrupted.disruption, Some(Disruption::Disrupted));
 

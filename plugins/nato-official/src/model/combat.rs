@@ -159,6 +159,18 @@ pub struct BattleReport {
     pub supporting_hq_id: Option<UnitId>,
 }
 
+/// A Breakthrough Marker (25.9) and the side whose attack or Strike placed it.
+///
+/// Only that side's attacks, Reserve movement, and Reserve Phase cleanup use it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BreakthroughMarker {
+    /// Side that placed the marker.
+    pub side_id: SideId,
+    /// Marked hex.
+    pub hex_id: HexId,
+}
+
 /// A cleared Objective hex the Attacker may advance into (25.8.1).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

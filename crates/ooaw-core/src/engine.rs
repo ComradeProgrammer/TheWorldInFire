@@ -17,7 +17,7 @@ use crate::runtime::{dispatch, new_store, official_plugin, HostData, PluginModul
 use crate::state::{check_unit, KernelState};
 
 /// Version of the serialized snapshot contract.
-pub const PROTOCOL_VERSION: u16 = 17;
+pub const PROTOCOL_VERSION: u16 = 18;
 
 /// Complete client-facing representation of the authoritative game state.
 ///

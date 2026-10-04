@@ -17,9 +17,9 @@ use ooaw_core::api::{
 use ooaw_core::{Dice, GameEngine, GameId, MapDefinition};
 use ooaw_nato::{
     find_scenario, AirInterdictionZone, AirPoints, AirStrikeOptions, Airspace, BattleOdds,
-    BattlePlan, CombatOptions, CombatState, GameCommand, GameEvent, GameSetup, HexId, MovementMode,
-    MovementModeOptions, MovementOption, ReserveOption, ReserveState, RuleError, RulesState,
-    ScenarioDefinition, SideId, StrikePlan, UnitId, UnitState,
+    BattlePlan, BreakthroughMarker, CombatOptions, CombatState, GameCommand, GameEvent, GameSetup,
+    HexId, MovementMode, MovementModeOptions, MovementOption, PhaseActor, ReserveOption,
+    ReserveState, RuleError, RulesState, ScenarioDefinition, SideId, StrikePlan, UnitId, UnitState,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -38,11 +38,14 @@ pub struct GameSnapshot {
     pub units: Vec<UnitState>,
     pub cities: Vec<CityControlState>,
     pub pending_decision: Option<PendingDecision>,
+    pub battle_plans: Vec<BattlePlan>,
+    /// The acting side's plan for the current turn, derived from `battle_plans`.
+    #[serde(skip)]
     pub battle_plan: Option<BattlePlan>,
     pub air_points: Vec<AirPoints>,
     pub strike_plan: Option<StrikePlan>,
     pub air_interdiction_zones: Vec<AirInterdictionZone>,
-    pub breakthrough_markers: Vec<HexId>,
+    pub breakthrough_markers: Vec<BreakthroughMarker>,
     pub eliminated_unit_ids: Vec<UnitId>,
     pub combat: Option<CombatState>,
     pub reserve: Option<ReserveState>,
@@ -54,6 +57,27 @@ pub struct CommandOutcome {
     pub revision: u64,
     pub events: Vec<GameEvent>,
     pub snapshot: GameSnapshot,
+}
+
+/// Decodes a kernel snapshot and derives the acting side's battle plan.
+fn decode_snapshot(value: Value) -> GameSnapshot {
+    let mut snapshot: GameSnapshot = decode(value);
+    let acting = snapshot
+        .turn
+        .current_step
+        .as_ref()
+        .and_then(|step| match &step.actor {
+            PhaseActor::Side { side_id } => Some(side_id.clone()),
+            PhaseActor::All => None,
+        });
+    snapshot.battle_plan = snapshot
+        .battle_plans
+        .iter()
+        .find(|plan| {
+            Some(&plan.side_id) == acting.as_ref() && plan.game_turn == snapshot.turn.game_turn
+        })
+        .cloned();
+    snapshot
 }
 
 fn decode<T: DeserializeOwned>(value: Value) -> T {
@@ -107,7 +131,7 @@ impl TestGame {
         Ok(CommandOutcome {
             revision: outcome.revision,
             events: outcome.events.into_iter().map(decode).collect(),
-            snapshot: decode(encode(&outcome.snapshot)),
+            snapshot: decode_snapshot(encode(&outcome.snapshot)),
         })
     }
 
@@ -117,7 +141,7 @@ impl TestGame {
     }
 
     pub fn snapshot(&self) -> GameSnapshot {
-        decode(encode(&self.engine.snapshot()))
+        decode_snapshot(encode(&self.engine.snapshot()))
     }
 
     pub fn map(&self) -> &MapDefinition {

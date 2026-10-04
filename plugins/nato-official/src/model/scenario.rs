@@ -118,27 +118,30 @@ fn joint_step(phase_id: &str, execution: PhaseExecution) -> PhaseDefinition {
     }
 }
 
-/// Builds one side's ordered phases from pre-battle supply through post-battle cleanup.
-fn simplified_side_turn(side_id: &str) -> Vec<PhaseDefinition> {
-    vec![
-        step(side_id, "preBattle", PhaseExecution::Automatic),
-        step(side_id, "battlePlanning", PhaseExecution::Interactive),
-        step(side_id, "offensiveStrike", PhaseExecution::Interactive),
-        step(side_id, "combat", PhaseExecution::Interactive),
-        step(side_id, "reserve", PhaseExecution::Interactive),
-        step(side_id, "postBattle", PhaseExecution::Automatic),
-    ]
-}
+/// Phases each side plays every game turn, in order.
+const SIDE_PHASES: [(&str, PhaseExecution); 6] = [
+    ("preBattle", PhaseExecution::Automatic),
+    ("battlePlanning", PhaseExecution::Interactive),
+    ("offensiveStrike", PhaseExecution::Interactive),
+    ("combat", PhaseExecution::Interactive),
+    ("reserve", PhaseExecution::Interactive),
+    ("postBattle", PhaseExecution::Automatic),
+];
 
-/// Builds the joint opening phases followed by Warsaw Pact and NATO player turns.
+/// Builds the joint opening phases followed by alternating side phases: the
+/// Warsaw Pact plays each phase, then NATO plays the same phase, before the
+/// turn moves on to the next phase.
 pub(crate) fn standard_turn_sequence() -> Vec<PhaseDefinition> {
     let mut turn_sequence = vec![
         // Joint Status has no player decisions yet, so play passes straight through it.
         joint_step("jointStatus", PhaseExecution::Automatic),
         joint_step("jointReinforcement", PhaseExecution::Automatic),
     ];
-    turn_sequence.extend(simplified_side_turn("warsawPact"));
-    turn_sequence.extend(simplified_side_turn("nato"));
+    for (phase_id, execution) in SIDE_PHASES {
+        for side_id in ["warsawPact", "nato"] {
+            turn_sequence.push(step(side_id, phase_id, execution));
+        }
+    }
     turn_sequence
 }
 

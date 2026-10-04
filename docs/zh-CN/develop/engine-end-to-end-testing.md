@@ -13,7 +13,7 @@
 
 响应类型包括 `gameStarted`、`snapshot`、`commandAccepted`、`scenarios` 和 `error`。命令被接受时，响应包含新的版本号、领域事件和权威快照。命令被拒绝时，版本号不会增加。客户端提交下一条命令时必须使用最新版本号。
 
-集成测试 `crates/ooaw-core/tests/engine_black_box.rs` 会启动已编译的可执行文件，并且只通过 JSON 与它通信。测试不导入任何 `ooaw_core` 类型，同时验证会话错误、创建游戏时结算的自动开局、规则拒绝、事件与版本号、状态变更和乐观并发拒绝。第二个测试进行一个 BALTAP 华约回合：把一个师标记为 OMG，检查预备队阶段只有该单位可以移动且只能战术移动，结束该阶段（移除标记并进行战后阶段），并检查北约战前阶段的补给报告。
+集成测试 `crates/ooaw-core/tests/engine_black_box.rs` 会启动已编译的可执行文件，并且只通过 JSON 与它通信。测试不导入任何 `ooaw_core` 类型，同时验证会话错误、创建游戏时结算的自动开局、规则拒绝、事件与版本号、状态变更和乐观并发拒绝。第二个测试进行一个 BALTAP 回合：把一个华约师标记为 OMG，检查华约预备队阶段只有该单位可以移动且只能战术移动，结束双方的预备队阶段（移除标记并进行战后阶段），并检查下一回合战前阶段的补给报告。
 
 ## 从自定义局面开始
 
@@ -24,12 +24,12 @@
 | `start` | `{ gameTurn, phaseId, sideId? }`：开始的步骤；联合阶段省略 `sideId`。默认是第一个步骤。 |
 | `units` | 替换所有在场单位。每项为 `{ id, hex?, step?, disruption?, supply?, trainStatus? }`。`id` 可以是剧本中的任意单位，包括尚未到达的增援；省略 `hex` 表示放入战略预备队；`step` 是战力面序号（0 为满编）；`supply`（`supplied` 或 `outOfSupply`）作用于该单位具有的所有补给类型，默认有补给。 |
 | `cityControl` | `[{ hexId, controller }]`，覆盖城市控制方。 |
-| `breakthroughMarkers` | 替换突破标记。 |
+| `breakthroughMarkers` | 替换突破标记：`[{ sideId, hexId }]`。 |
 | `airInterdictionZones` | 替换空中遮断区：`[{ sideId, hexId }]`。 |
 | `airPoints` | 替换所列各方的空中点数：`[{ sideId, tactical, operational, bonusTactical }]`。 |
 | `attackTargets`、`reserveUnitIds` | 设置当前战斗计划的攻击目标和预备队/OMG 单位；需要已有战斗计划，因此 `start` 必须在该方战斗计划阶段或之后。 |
 
-局面直接替换状态而不重新检查规则，所以测试可以构造正常游戏要很多回合才能形成的局面。开始步骤本身的自动结算已经执行：若要让引擎为铺设的局面检查补给，应从上一方的预备队阶段开始，再提交 `endPhase`。未知的单位、格子、阵营或字段，或无法到达的 `start`，都会以 `invalidSetup` 拒绝。被拒绝的请求不会开始游戏。
+局面直接替换状态而不重新检查规则，所以测试可以构造正常游戏要很多回合才能形成的局面。开始步骤本身的自动结算已经执行：若要让引擎为铺设的局面检查补给，应从上一回合北约的预备队阶段开始，再提交 `endPhase`；双方的战前阶段都在每个回合开始时进行。未知的单位、格子、阵营或字段，或无法到达的 `start`，都会以 `invalidSetup` 拒绝。被拒绝的请求不会开始游戏。
 
 黑盒测试用它让三个苏军师包围一个西德旅，并检查北约下一个战前步骤会使其缺乏补给，同时检查各种拒绝情况。
 
@@ -43,7 +43,7 @@ cargo test -p ooaw-core --test engine_black_box
 
 ```json
 {"type":"newGame","scenarioId":"nato-1983-standard","gameId":"example"}
-{"type":"newGame","scenarioId":"nato-baltap-1983","gameId":"pocket","setup":{"start":{"gameTurn":1,"sideId":"warsawPact","phaseId":"reserve"},"units":[{"id":"westGermany.6panzergrenadierDivision.16panzergrenadierBrigade","hex":"2617"},{"id":"soviet.2gta.21motorRifleDivision","hex":"2516"}]}}
+{"type":"newGame","scenarioId":"nato-baltap-1983","gameId":"pocket","setup":{"start":{"gameTurn":1,"sideId":"nato","phaseId":"reserve"},"units":[{"id":"westGermany.6panzergrenadierDivision.16panzergrenadierBrigade","hex":"2617"},{"id":"soviet.2gta.21motorRifleDivision","hex":"2516"}]}}
 {"type":"submitCommand","expectedRevision":0,"command":{"type":"endPhase"}}
 {"type":"getSnapshot"}
 ```

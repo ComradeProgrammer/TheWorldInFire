@@ -174,13 +174,19 @@ impl Rules {
     pub(crate) fn recheck_reserve(&mut self, unit_id: &UnitId, events: &mut Vec<GameEvent>) {
         // Removes the marker from a unit that no longer qualifies: it moved
         // further, entrained, or an undo returned it into an enemy zone of control.
-        let Some(plan) = &self.battle_plan else {
+        let Some(side_id) = self
+            .units
+            .get(unit_id)
+            .map(|unit| unit.definition.side_id.clone())
+        else {
             return;
         };
-        if !plan.reserve_unit_ids.contains(unit_id) {
+        if !self
+            .plan_for(&side_id)
+            .is_some_and(|plan| plan.reserve_unit_ids.contains(unit_id))
+        {
             return;
         }
-        let side_id = plan.side_id.clone();
         let eligible = self.units.get(unit_id).is_some_and(|unit| {
             let context = MovementContext::new(self, &side_id);
             self.reserve_eligibility(&context, unit).is_ok()
@@ -188,7 +194,7 @@ impl Rules {
         if eligible {
             return;
         }
-        if let Some(plan) = &mut self.battle_plan {
+        if let Some(plan) = self.plan_for_mut(&side_id) {
             plan.reserve_unit_ids.retain(|id| id != unit_id);
         }
         events.push(GameEvent::ReserveStatusChanged {
@@ -200,9 +206,9 @@ impl Rules {
 
     /// 12.6: no unit under a Reserve/OMG Marker can participate in a combat.
     pub(crate) fn is_reserve_unit(&self, unit_id: &UnitId) -> bool {
-        self.battle_plan
-            .as_ref()
-            .is_some_and(|plan| plan.reserve_unit_ids.contains(unit_id))
+        self.battle_plans
+            .iter()
+            .any(|plan| plan.reserve_unit_ids.contains(unit_id))
     }
 
     /// Opens the Reserve Phase for the acting side's surviving marked units.
@@ -212,9 +218,7 @@ impl Rules {
             return;
         };
         let unit_ids = self
-            .battle_plan
-            .as_ref()
-            .filter(|plan| plan.side_id == side_id)
+            .plan_for(&side_id)
             .map(|plan| {
                 plan.reserve_unit_ids
                     .iter()
@@ -239,7 +243,7 @@ impl Rules {
         let Some(reserve) = self.reserve.take() else {
             return;
         };
-        if let Some(plan) = &mut self.battle_plan {
+        if let Some(plan) = self.plan_for_mut(&reserve.side_id) {
             plan.reserve_unit_ids.clear();
         }
         if !reserve.unit_ids.is_empty() {

@@ -214,11 +214,15 @@ pub enum GameEvent {
     },
     /// A Strike cleared a hex of enemy units (25.9.1).
     BreakthroughMarkerPlaced {
+        /// Side that placed the marker.
+        side_id: SideId,
         /// Hex.
         hex_id: HexId,
     },
-    /// Breakthrough Markers were removed at the end of the Reserve Phase.
+    /// A side's Breakthrough Markers were removed at the end of its Reserve Phase.
     BreakthroughMarkersRemoved {
+        /// Side whose markers were removed.
+        side_id: SideId,
         /// Hexes cleared.
         hex_ids: Vec<HexId>,
     },

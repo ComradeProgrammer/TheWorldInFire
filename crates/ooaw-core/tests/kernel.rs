@@ -41,7 +41,7 @@ fn a_new_game_opens_on_the_first_interactive_phase() {
 
     let json = serde_json::to_value(&snapshot).unwrap();
     // Rules-owned state appears as top-level snapshot fields.
-    assert!(json.get("battlePlan").is_some_and(Value::is_object));
+    assert!(json.get("battlePlans").is_some_and(Value::is_array));
     assert!(json.get("airPoints").is_some_and(Value::is_array));
     assert!(json.get("combat").is_some_and(Value::is_null));
     // Rules-owned unit markers appear as unit fields.

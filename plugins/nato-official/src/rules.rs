@@ -15,8 +15,8 @@ use crate::dice::Dice;
 use crate::error::RuleError;
 use crate::event::GameEvent;
 use crate::model::{
-    AirInterdictionZone, AirPoints, BattlePlan, CombatState, HexId, PhaseActor, PhaseDefinition,
-    ReserveState, ScenarioDefinition, SideId, StrikePlan, UnitId, UnitState,
+    AirInterdictionZone, AirPoints, BattlePlan, BreakthroughMarker, CombatState, HexId, PhaseActor,
+    PhaseDefinition, ReserveState, ScenarioDefinition, SideId, StrikePlan, UnitId, UnitState,
 };
 
 /// The NATO rules' own top-level state entries, kept by the kernel under these
@@ -24,16 +24,17 @@ use crate::model::{
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct RulesState {
-    /// Plan currently being assembled or carried into later combat phases.
-    pub battle_plan: Option<BattlePlan>,
+    /// Each side's battle plan for the current or most recent turn, carried
+    /// from its Battle Planning Phase into its later phases.
+    pub battle_plans: Vec<BattlePlan>,
     /// Air Points held by each side.
     pub air_points: Vec<AirPoints>,
     /// Air missions of the current Offensive Strike Phase.
     pub strike_plan: Option<StrikePlan>,
     /// Active Air Interdiction Zones.
     pub air_interdiction_zones: Vec<AirInterdictionZone>,
-    /// Hexes holding a Breakthrough Marker (25.9).
-    pub breakthrough_markers: Vec<HexId>,
+    /// Breakthrough Markers (25.9) and the sides that placed them.
+    pub breakthrough_markers: Vec<BreakthroughMarker>,
     /// Units eliminated so far, in order of elimination.
     pub eliminated_unit_ids: Vec<UnitId>,
     /// Battles and restrictions of the current Combat Phase.
@@ -83,8 +84,8 @@ pub struct Rules {
     pub(super) step_index: usize,
     /// Units currently in play, indexed and iterated by stable unit identifier.
     pub(super) units: BTreeMap<UnitId, UnitState>,
-    /// Acting side's planning selections and movement history carried into later phases.
-    pub(super) battle_plan: Option<BattlePlan>,
+    /// Each side's planning selections and movement history, carried into its later phases.
+    pub(super) battle_plans: Vec<BattlePlan>,
     /// Current controlling side for each city hex, initially its scenario owner.
     pub(super) city_control: BTreeMap<HexId, SideId>,
     /// Remaining recurring and one-time Air Point pools for each side.
@@ -94,7 +95,7 @@ pub struct Rules {
     /// Active interdiction centers that restrict enemy movement in nearby hexes.
     pub(super) air_interdiction_zones: Vec<AirInterdictionZone>,
     /// Cleared hexes with Breakthrough Markers affecting combat and reserve movement.
-    pub(super) breakthrough_markers: Vec<HexId>,
+    pub(super) breakthrough_markers: Vec<BreakthroughMarker>,
     /// Identifiers of units destroyed so far, in elimination order.
     pub(super) eliminated_units: Vec<UnitId>,
     /// Current battles, attack restrictions, support use, and pending advance choice.
@@ -148,7 +149,7 @@ impl Rules {
             game_turn: 1,
             step_index: 0,
             units: BTreeMap::new(),
-            battle_plan: None,
+            battle_plans: Vec::new(),
             city_control,
             air_points,
             strike_plan: None,
@@ -200,7 +201,7 @@ impl Rules {
             .collect();
         self.city_control = state.city_control;
         let rules = state.rules;
-        self.battle_plan = rules.battle_plan;
+        self.battle_plans = rules.battle_plans;
         self.air_points = rules.air_points;
         self.strike_plan = rules.strike_plan;
         self.air_interdiction_zones = rules.air_interdiction_zones;
@@ -220,7 +221,7 @@ impl Rules {
     /// The rules-state entries as the kernel stores them.
     fn rules_entries(&self) -> Result<BTreeMap<String, Value>, RuleError> {
         let state = RulesState {
-            battle_plan: self.battle_plan.clone(),
+            battle_plans: self.battle_plans.clone(),
             air_points: self.air_points.clone(),
             strike_plan: self.strike_plan.clone(),
             air_interdiction_zones: self.air_interdiction_zones.clone(),
@@ -295,6 +296,54 @@ impl Rules {
                 format!("Filter {name} returned an invalid value: {error}"),
             )
         })
+    }
+
+    /// Whether `side_id` has a Breakthrough Marker in the hex.
+    pub(crate) fn has_breakthrough(&self, side_id: &SideId, hex_id: &HexId) -> bool {
+        self.breakthrough_markers
+            .iter()
+            .any(|marker| marker.side_id == *side_id && marker.hex_id == *hex_id)
+    }
+
+    /// Places a side's Breakthrough Marker unless one is already there (25.9).
+    pub(crate) fn place_breakthrough(
+        &mut self,
+        side_id: &SideId,
+        hex_id: &HexId,
+        events: &mut Vec<GameEvent>,
+    ) {
+        if !self.has_breakthrough(side_id, hex_id) {
+            self.breakthrough_markers.push(BreakthroughMarker {
+                side_id: side_id.clone(),
+                hex_id: hex_id.clone(),
+            });
+            events.push(GameEvent::BreakthroughMarkerPlaced {
+                side_id: side_id.clone(),
+                hex_id: hex_id.clone(),
+            });
+        }
+    }
+
+    /// The side acting in the current step, if one side acts alone.
+    pub(crate) fn acting_side(&self) -> Option<SideId> {
+        match &self.current_step()?.actor {
+            PhaseActor::Side { side_id } => Some(side_id.clone()),
+            PhaseActor::All => None,
+        }
+    }
+
+    /// A side's battle plan for the current or most recent turn.
+    pub(crate) fn plan_for(&self, side_id: &SideId) -> Option<&BattlePlan> {
+        self.battle_plans
+            .iter()
+            .find(|plan| plan.side_id == *side_id)
+    }
+
+    /// Mutably borrows a side's battle plan.
+    pub(crate) fn plan_for_mut(&mut self, side_id: &SideId) -> Option<&mut BattlePlan> {
+        self.battle_plans
+            .iter_mut()
+            .find(|plan| plan.side_id == *side_id)
     }
 
     /// Returns the active scenario step, or none once the game has completed.

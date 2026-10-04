@@ -1,5 +1,13 @@
 # Turn State Machine Development Notes
 
+## Turn order
+
+`standard_turn_sequence` in `plugins/nato-official/src/model/scenario.rs` builds every scenario's sequence: the two joint phases, then each side phase played by the Warsaw Pact and then by NATO (`warsawPact.preBattle`, `nato.preBattle`, `warsawPact.battlePlanning`, `nato.battlePlanning`, and so on through Offensive Strike, Combat, Reserve, and Post-Battle). The kernel just walks this list; the rules make the alternation work:
+
+- **Per-side battle plans.** The rules state keeps one plan per side in `battlePlans`. A side's Battle Planning replaces its own plan, which then serves its own Strike, Combat (WP marked objectives), and Reserve Phases while the other side plays in between. `Rules::active_plan` is the acting side's plan.
+- **Side-owned Breakthrough Markers.** Each `breakthroughMarkers` entry is `{ sideId, hexId }`. Only the owner may make an advance-only attack into it or use its Breakthrough Zone, and only the owner's Reserve Phase removes it. The `breakthroughMarkerPlaced` and `breakthroughMarkersRemoved` events carry `sideId`.
+- **Unchanged timings.** Air Interdiction Zones still end with the enemy's Reserve Phase, now in the same turn, so they affect only the enemy's Reserve movement. Disrupted markers still come off when their side's Battle Planning ends, so units disrupted by the enemy fight disrupted in their own Combat Phase that turn. Supply is still checked in each side's Pre-Battle step, now both at the start of the turn.
+
 ## Current implementation scope
 
 Completed:
@@ -73,7 +81,7 @@ The current prototype gives both sides a `battlePlanning` phase so that it can e
 
 `preBattle` checks the supply of every unit of the acting side with the simplified rule below and records the result in `preBattleSupplyChecked`. Reinforcements enter play fully supplied, and units in the Strategic Reserve are always supplied.
 
-`battlePlanning` is now the acting side's unified command phase. Resupply selection, adding or removing attack objectives, moving another unit, entraining, detraining, and air transport have no artificial submission order; each command checks only its real rule prerequisites. Movement immediately updates the authoritative location and records the route selected by the core. Objectives and resupply targets remain in `battlePlan`. Ending the phase restores applicable supply to the acting side's combat units in each selected target's hex, while the plan remains available to later strike and combat phases.
+`battlePlanning` is now the acting side's unified command phase. Resupply selection, adding or removing attack objectives, moving another unit, entraining, detraining, and air transport have no artificial submission order; each command checks only its real rule prerequisites. Movement immediately updates the authoritative location and records the route selected by the core. Objectives and resupply targets remain in the side's entry in `battlePlans`. Ending the phase restores applicable supply to the acting side's combat units in each selected target's hex, while the plan remains available to later strike and combat phases.
 
 Ground movement supports Tactical and March modes; see the player rules in `docs/en/rules/movement.md` and the implementation notes in "Movement rules" below. Entraining consumes the current planning phase and changes to `entrained` when that side next begins Battle Planning; an entrained unit may travel at most 20 hexes per turn. Basic Air Transport is limited to Airborne/Airmobile units carrying the `airTransportable` trait and moves them from a city or Strategic Reserve to a legal non-sea, non-mountain hex outside enemy ZOCs. Sea transport remains deferred.
 
@@ -130,7 +138,7 @@ Joint phases use actor `all`; later phases use the corresponding side as actor.
 - **Missions** (`strikePlan.missions`) are committed with `planAirStrike` or `planAirInterdiction` and resolved together with `resolveAirStrikes`, or automatically by `endPhase` (23.2.4). `cancelAirMission` refunds a pending mission to the pool it came from. Targeting enforces: two steps per strike, HQs alone and only with Operational points, no unit struck twice, two strikes per hex, and Tactical points only in friendly or contested Airspace.
 - **Strike Table**, one-point column, with the printed modifiers: Major/Key City −2; Forest, Rough, Mountain, or Minor City −1; train marker +1 instead of terrain; friendly Airspace +1; enemy Airspace −1; WP on the Surprise turn +1. When targets differ, the lowest total applies (23.3.1). The first named unit absorbs a step loss.
 - **Results**: Disrupted (HQs Suppressed; a Disrupted unit loses its train marker), step loss (flip and Disrupt, or eliminate), and a Breakthrough Marker when the last enemy unit in the hex is eliminated.
-- **Marker timing** in the merged sequence: Disrupted markers are removed when their side's Battle Planning ends (the original Recovery Phase follows movement); Suppressed markers are removed in their side's Post-Battle step (Unsuppression); Breakthrough Markers and enemy Air Interdiction Zones are removed when the acting side ends its Reserve Phase (23.8.2, 28.2.5).
+- **Marker timing** in the merged sequence: Disrupted markers are removed when their side's Battle Planning ends (the original Recovery Phase follows movement); Suppressed markers are removed in their side's Post-Battle step (Unsuppression); the acting side's own Breakthrough Markers and the enemy's Air Interdiction Zones are removed when the acting side ends its Reserve Phase (23.8.2, 28.2.5).
 - **Airspace**: each side projects within five hexes of its supplied on-map units and of every city it controls, except West Berlin (11.5, the map's `contestsAirspace: false`). City supply is not traced, so all controlled cities count. A hex projected by neither side is treated as contested. Airspace now also governs March and Rail (friendly only), entraining (friendly only), and Air Transport (not from or into enemy Airspace).
 - **Air Interdiction Zones** (23.8) add +1 MP to the other side's Tactical movement entering the zone and bar its March and Rail movement.
 - **Disruption and movement**: Disrupted or Suppressed units may use only Minimum movement and may not entrain.
@@ -163,7 +171,7 @@ Not implemented: Attack Helicopters, Defender Reaction, NATO Defensive Strikes, 
 
 `src/reserve.rs` implements Reserve/OMG status (12.6, living rules of 1 Jan 2026) and the Reserve Phase (28.2).
 
-- **Marking:** `setReserve { unitId, selected }` during Battle Planning stores the unit in `battlePlan.reserveUnitIds`. A unit qualifies when it is a Maneuver unit on the map, not immobile, not Disrupted, not Out of Movement or Combat Supply, not under a train marker, has not used rail or air transport this plan, has spent at most half its allowance (Tactical ≤ ⌊MA/2⌋, March ≤ MA, so Minimum movement never qualifies), and is not in an EZOC. `reserveOptions` previews the result for every planning-side unit.
+- **Marking:** `setReserve { unitId, selected }` during Battle Planning stores the unit in its side's plan's `reserveUnitIds`. A unit qualifies when it is a Maneuver unit on the map, not immobile, not Disrupted, not Out of Movement or Combat Supply, not under a train marker, has not used rail or air transport this plan, has spent at most half its allowance (Tactical ≤ ⌊MA/2⌋, March ≤ MA, so Minimum movement never qualifies), and is not in an EZOC. `reserveOptions` previews the result for every planning-side unit.
 - **Re-check:** after a move, undo, or entrain order of a marked unit, the core re-checks it. A unit that no longer qualifies loses the marker with `reserveStatusChanged { selected: false }`, instead of the order being rejected.
 - **Combat:** marked units are left out of `combatOptions`, so they cannot be committed.
 - **Reserve Phase:** entering it opens `snapshot.reserve { sideId, unitIds, movements }` with the surviving marked units. `moveUnit` and `undoUnitMovement` work as in planning but record into `reserve.movements`. Only listed units may move (`notInReserve`) and only by Tactical movement (`reserveTacticalOnly`); a single-hex Minimum move stays available as the first move. The allowance is ⌈printed MA / 2⌉. For Hard units, EZOC hexes inside a Breakthrough Zone (the marker hex and its six neighbours) do not add the +1 to enter or leave (25.9.3, 28.2.1).
@@ -246,7 +254,7 @@ plugins/nato-official/src/    official NATO rules plugin
 
 Counters do not depend on image assets. The rules supply game information through the unit definition and structured `attack`, `defense`, and `movement` fields for each strength step, and the frontend draws counters in its own visual style.
 
-The frontend calls `new_game` and `submit_game_command` through `src/gameApi.ts`. Joint Status is automatic (it has no player decisions yet), so `GameEngine::new` resolves the scenario's leading automatic phases (Joint Status, Joint Reinforcement with the opening deployment, and the WP Pre-Battle) before returning. Play opens on WP Battle Planning at revision 0 with the opening forces on the map; the events of that automatic opening are not returned. After each command the frontend redraws its unit layer and battle-plan overlay from the returned snapshot and focuses the camera on arriving reinforcements. Counters are drawn from PixiJS rectangles, lines, ellipses, and text; no counter images from the reference game are loaded.
+The frontend calls `new_game` and `submit_game_command` through `src/gameApi.ts`. Joint Status is automatic (it has no player decisions yet), so `GameEngine::new` resolves the scenario's leading automatic phases (Joint Status, Joint Reinforcement with the opening deployment, and both sides' Pre-Battle) before returning. Play opens on WP Battle Planning at revision 0 with the opening forces on the map; the events of that automatic opening are not returned. After each command the frontend redraws its unit layer and battle-plan overlay from the returned snapshot and focuses the camera on arriving reinforcements. Counters are drawn from PixiJS rectangles, lines, ellipses, and text; no counter images from the reference game are loaded.
 
 The NATO rules' tests (`plugins/nato-official/tests/`) run every command and query through the kernel and the WebAssembly plugin. Their harness (`tests/common/mod.rs`) reads the kernel state through the typed NATO model and edits it directly to lay out positions; `debug.checkSupply` runs a supply check on demand and is accepted only when a game enables debug commands.
 
@@ -262,7 +270,7 @@ new_game("nato-1983-standard")
 
 ```json
 {
-  "snapshot": { "protocolVersion": 17, "scenario": { "mapId": "nato-central-europe" }, "battlePlan": null },
+  "snapshot": { "protocolVersion": 18, "scenario": { "mapId": "nato-central-europe" }, "battlePlans": [] },
   "map": {
     "id": "nato-central-europe",
     "version": 1,
@@ -295,7 +303,7 @@ Current snapshot example:
 
 ```json
 {
-  "protocolVersion": 17,
+  "protocolVersion": 18,
   "gameId": "generated-uuid",
   "revision": 0,
   "scenario": {
@@ -324,7 +332,7 @@ Current snapshot example:
 }
 ```
 
-The kernel defines `protocolVersion`, `gameId`, `revision`, `scenario`, `status`, `turn`, `units`, `cities`, and `pendingDecision`. Every other top-level field (`battlePlan`, `airPoints`, `strikePlan`, `airInterdictionZones`, `breakthroughMarkers`, `eliminatedUnitIds`, `combat`, `reserve`) is rules state that the NATO plugin keeps in the kernel, and a unit's `supply`, `trainStatus`, and `disruption` are rules-owned unit markers. The JSON shape is the same as before the plugin split.
+The kernel defines `protocolVersion`, `gameId`, `revision`, `scenario`, `status`, `turn`, `units`, `cities`, and `pendingDecision`. Every other top-level field (`battlePlans`, `airPoints`, `strikePlan`, `airInterdictionZones`, `breakthroughMarkers`, `eliminatedUnitIds`, `combat`, `reserve`) is rules state that the NATO plugin keeps in the kernel, and a unit's `supply`, `trainStatus`, and `disruption` are rules-owned unit markers.
 
 Current command request:
 
@@ -387,7 +395,7 @@ rules_query(battlePreview, { "hexId": "2415", "unitIds": ["..."], "supportingHqI
 { "type": "advanceAfterCombat", "unitIds": ["soviet.2gta.21motorRifleDivision"] }
 ```
 
-Protocol 12 adds the snapshot's `combat` (battles, attacked units and hexes, Engaged units, pending advance) and the events `battleResolved`, `unitRetreated`, `advanceOffered`, and `unitsAdvanced`. Protocol 13 adds Offensive Support: `supportHqIds` on combat objectives, `supportingHqId` on battle reports, `combat.supportingHqIds`, and the `unitWithdrawn` event. Protocol 14 replaces the single `resupplyTargetUnitId` with `resupplyTargetUnitIds` and adds `selected` to the resupply command and event. Protocol 15 adds reserves: `battlePlan.reserveUnitIds`, the snapshot's `reserve`, the `setReserve` command, and the `reserveStatusChanged` and `reserveMarkersRemoved` events. Protocol 16 adds the `unitSupplyChanged { unitId, supply }` event and the map city flag `enclave`. Protocol 17 adds the movement modes `paradrop` and `seaTransport`, `battlePlan.sealiftStepsUsed`, and the map's `reinforcementSectors` (`{ number, sideId, hexId }`).
+Protocol 12 adds the snapshot's `combat` (battles, attacked units and hexes, Engaged units, pending advance) and the events `battleResolved`, `unitRetreated`, `advanceOffered`, and `unitsAdvanced`. Protocol 13 adds Offensive Support: `supportHqIds` on combat objectives, `supportingHqId` on battle reports, `combat.supportingHqIds`, and the `unitWithdrawn` event. Protocol 14 replaces the single `resupplyTargetUnitId` with `resupplyTargetUnitIds` and adds `selected` to the resupply command and event. Protocol 15 adds reserves: `battlePlan.reserveUnitIds`, the snapshot's `reserve`, the `setReserve` command, and the `reserveStatusChanged` and `reserveMarkersRemoved` events. Protocol 16 adds the `unitSupplyChanged { unitId, supply }` event and the map city flag `enclave`. Protocol 17 adds the movement modes `paradrop` and `seaTransport`, `battlePlan.sealiftStepsUsed`, and the map's `reinforcementSectors` (`{ number, sideId, hexId }`). Protocol 18 alternates the sides phase by phase: the single `battlePlan` becomes `battlePlans` (one per side), `breakthroughMarkers` entries become `{ sideId, hexId }`, and the Breakthrough Marker events gain `sideId`. `activeBattlePlan` in `src/gameApi.ts` selects the acting side's plan for the current turn.
 
 Reserve query and command:
 
@@ -418,7 +426,7 @@ Command variant names and their fields are both camelCase. Battle-planning comma
 
 The app opens on a title screen (`src/menu/TitleScreen.tsx`) with New Game, Load Game, Settings, and Quit; arrow keys and Enter work as well as the mouse. Load Game and Settings are placeholders. Quit calls the `quit_app` Tauri command. New Game opens the scenario screen (`src/menu/ScenarioSelect.tsx`). It lists every scenario returned by `list_scenarios`, so newly registered scenarios appear without frontend changes. `src/menu/scenarioCatalog.ts` adds presentation only: it groups registered scenarios into families (Introductory: BALTAP; Campaigns: Strategic Surprise, Extended Buildup, and War of Nerves; Development: the rules prototype) with 1983/1988 year variants and a short blurb. A registered scenario missing from the catalog still appears under "Other". Selecting a family shows its blurb, a year selector, its turns, map, identifier, and sides; ↑ ↓ change the family and ← → the year. Start Game calls `new_game` with the chosen scenario. `src/Root.tsx` switches between the screens and mounts the game screen (`App`) with the returned bootstrap, keyed by game ID.
 
-The right-hand Control Panel is the primary view. With no unit selected it shows Go to Hex, then the selected hex's terrain, command zone, city/port data, hexside features, and occupying units; during Battle Planning it also lists the active side's Strategic Reserve and offers a toggle that adds the selected enemy-occupied hex as an attack objective or removes it. Choosing a unit (from the list, or by clicking its counter once its hex is already selected) switches the panel to a unit detail view with a drawn counter, identity, strength values, supply, rail status, traits, and, for the planning side's own units, planning actions. Every action button becomes an Undo button once its order is in the plan; the frontend derives that state from the authoritative `battlePlan`, never from local bookkeeping. The first left-click on a hex, counters included, only selects the hex and shows the hex view; clicking a counter in the already-selected hex opens that unit. Left-clicking elsewhere returns the panel to the hex view.
+The right-hand Control Panel is the primary view. With no unit selected it shows Go to Hex, then the selected hex's terrain, command zone, city/port data, hexside features, and occupying units; during Battle Planning it also lists the active side's Strategic Reserve and offers a toggle that adds the selected enemy-occupied hex as an attack objective or removes it. Choosing a unit (from the list, or by clicking its counter once its hex is already selected) switches the panel to a unit detail view with a drawn counter, identity, strength values, supply, rail status, traits, and, for the planning side's own units, planning actions. Every action button becomes an Undo button once its order is in the plan; the frontend derives that state from the acting side's authoritative plan in `battlePlans`, never from local bookkeeping. The first left-click on a hex, counters included, only selects the hex and shows the hex view; clicking a counter in the already-selected hex opens that unit. Left-clicking elsewhere returns the panel to the hex view.
 
 Movement is ordered on the map. While the planning side's own unit is selected, the panel shows a movement-mode selector (Tactical, March, Rail, Air transport). After a unit has moved, the other systems are disabled. The frontend calls `movementModes` once for the selected unit and again after each accepted command, never per pointer move. Mode buttons are enabled and explained only from that response. The objective toggle is enabled only for hexes in `attackTargetOptions`. The hex view shows each city's controller and whether it is Free or Conquered. Hovering a listed destination draws a red arrow along the core-chosen route. Right-clicking it submits `moveUnit`. Hexes not in the list show no arrow and ignore right-clicks. The selected unit stays selected after a move so that it can continue or be undone.
 
@@ -451,7 +459,7 @@ The top bar shows the turn progress: the acting side (or Joint), "Round X / N", 
 
 During Battle Planning the unit detail view adds a "Mark as Reserve" (NATO) or "Mark as OMG" (WP) toggle. It is enabled from `reserveOptions` for the current revision and otherwise shows the core's reason. Marked units get a gold RES/OMG tab on their counter (map and sidebar), a Reserve row in the unit data, a tag in unit lists, and a line in the Battle Plan pane. In the Reserve Phase the hex view lists the units to move. Selecting one shows the same movement controls as planning (the core leaves only Tactical enabled), with right-click orders and Undo; its moves appear in the Battle Plan pane. Breakthrough Zones are shaded yellow on the map. Out-of-supply units carry a red OOS tab above their counter; the unit data shows HQ supply for HQs and Movement/Combat supply for other units, highlighted when out of supply, and the Combat Log reports supply changes. The Combat Log reports the markers removed at the end of the Reserve Phase, Recovery (Disrupted removed), and Post-Battle unsuppression.
 
-Display options (camera zoom, fit, and map-layer toggles) live in a modal Settings dialog opened from the top-right Settings button. The bottom bar is collapsible and split into two read-only panes: Battle Plan, rendered live from `snapshot.battlePlan`, and Combat Log, which stays empty until combat resolution exists.
+Display options (camera zoom, fit, and map-layer toggles) live in a modal Settings dialog opened from the top-right Settings button. The bottom bar is collapsible and split into two read-only panes: Battle Plan, rendered live from the acting side's plan in `snapshot.battlePlans`, and Combat Log, which stays empty until combat resolution exists.
 
 Each later Joint Reinforcement Phase is resolved inside the `endPhase` that ends NATO's turn (turn one's happens inside `new_game`). The returned event stream includes:
 

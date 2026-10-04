@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::RuleError;
 use crate::model::{
-    AirInterdictionZone, AirPoints, Disruption, HexId, PhaseId, SideId, SupplyStatus, TrainStatus,
-    UnitId, UnitLocation, UnitState, UnitSupplyState,
+    AirInterdictionZone, AirPoints, BreakthroughMarker, Disruption, HexId, PhaseId, SideId,
+    SupplyStatus, TrainStatus, UnitId, UnitLocation, UnitState, UnitSupplyState,
 };
 use crate::rules::Rules;
 
@@ -31,7 +31,7 @@ pub struct GameSetup {
     /// City control overrides; other cities keep their control.
     pub city_control: Vec<SetupCity>,
     /// Breakthrough Markers, replacing any present.
-    pub breakthrough_markers: Option<Vec<HexId>>,
+    pub breakthrough_markers: Option<Vec<BreakthroughMarker>>,
     /// Air Interdiction Zones, replacing any present.
     pub air_interdiction_zones: Option<Vec<AirInterdictionZone>>,
     /// Air Points, replacing those of the listed sides.
@@ -158,7 +158,7 @@ impl Rules {
         }
 
         if setup.attack_targets.is_some() || setup.reserve_unit_ids.is_some() {
-            let plan = self.battle_plan.as_mut().ok_or_else(|| {
+            let plan = self.active_plan_mut().map_err(|_| {
                 invalid("Attack targets and reserves need a battle plan: start at or after Battle Planning")
             })?;
             if let Some(targets) = &setup.attack_targets {
