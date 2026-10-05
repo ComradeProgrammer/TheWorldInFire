@@ -1,4 +1,4 @@
-import { ODDS_COLUMNS, type GameEvent, type StrikeResolution, type UnitState } from "../gameApi";
+import { ODDS_COLUMNS, type AirBaseState, type AirCombatPairing, type AirUnitState, type GameEvent, type StrikeResolution, type UnitState } from "../gameApi";
 
 /** One read-only line in the Combat Log pane. */
 export interface CombatLogEntry {
@@ -21,12 +21,31 @@ function signed(value: number): string {
   return value >= 0 ? `+${value}` : `${value}`;
 }
 
+const AIR_RESULT_LABELS = {
+  noEffect: "no effect",
+  abort: "abort",
+  damagedAbort: "step loss + abort",
+  destroyedAbort: "destroyed + abort",
+  destroyedAndDamagedAbort: "destroyed + damage + abort",
+} as const;
+
 /**
  * Turns authoritative combat, marker, and cleanup events into log lines. `units` must include units
  * eliminated by these events (pass the pre-command roster as well).
  */
-export function describeCombatEvents(events: GameEvent[], units: UnitState[], firstId: number): CombatLogEntry[] {
+export function describeCombatEvents(
+  events: GameEvent[],
+  units: UnitState[],
+  airUnits: AirUnitState[],
+  airBases: AirBaseState[],
+  firstId: number,
+): CombatLogEntry[] {
   const name = (id: string) => units.find((unit) => unit.id === id)?.name ?? id;
+  const airName = (id: string) => airUnits.find((unit) => unit.id === id)?.name ?? id;
+  const baseName = (id: string) => airBases.find((base) => base.id === id)?.name ?? id;
+  const pairingText = (pairing: AirCombatPairing) => [pairing.first, pairing.second].map((attack) =>
+    `${airName(attack.attackerId)} d20 ${attack.dieRoll}${attack.modifier ? ` ${signed(attack.modifier)}` : ""} on C${signed(attack.column)} → ${AIR_RESULT_LABELS[attack.result]}`,
+  ).join("; ");
   const lines: Omit<CombatLogEntry, "id">[] = [];
   // The phase whose automatic work produced the following events, if it started in this batch.
   let phase: string | null = null;
@@ -57,10 +76,34 @@ export function describeCombatEvents(events: GameEvent[], units: UnitState[], fi
         const { dieRoll, modifier, modifiedRoll, result } = event.resolution;
         lines.push({
           tone: "roll",
-          text: `${sideLabel(event.sideId)} air strike on ${event.hexId} (${event.unitIds.map(name).join(", ")}): rolled ${dieRoll} ${signed(modifier)} = ${modifiedRoll} → ${RESULT_LABELS[result]}`,
+          text: `${event.airUnitId ? airName(event.airUnitId) : sideLabel(event.sideId)} air strike on ${event.hexId}${event.unitIds.length > 0 ? ` (${event.unitIds.map(name).join(", ")})` : ""}: rolled ${dieRoll} ${signed(modifier)} = ${modifiedRoll} → ${RESULT_LABELS[result]}`,
         });
         break;
       }
+      case "airCombatRoundResolved":
+        lines.push({ tone: "roll", text: `Air combat round ${event.pairing.round}: ${pairingText(event.pairing)}` });
+        break;
+      case "airInterceptionResolved":
+        lines.push({ tone: "roll", text: `Interception: ${pairingText(event.pairing)}` });
+        break;
+      case "airUnitStepLost":
+        lines.push({ tone: "hit", text: `${airName(event.airUnitId)} loses an air step` });
+        break;
+      case "airUnitAborted":
+        lines.push({ tone: "hit", text: `${airName(event.airUnitId)} aborts its mission` });
+        break;
+      case "airUnitEliminated":
+        lines.push({ tone: "hit", text: `${airName(event.airUnitId)} eliminated` });
+        break;
+      case "airStrikeAborted":
+        lines.push({ tone: "hit", text: `${airName(event.airUnitId)} cannot complete its planned strike` });
+        break;
+      case "airBaseSuppressed":
+        lines.push({ tone: "hit", text: `${baseName(event.airBaseId)} suppressed through turn ${event.throughTurn}` });
+        break;
+      case "airBaseDamaged":
+        lines.push({ tone: "hit", text: `${baseName(event.airBaseId)} takes runway damage (${event.damage}/2)` });
+        break;
       case "battleResolved": {
         const { report } = event;
         const attackers = report.attackingUnitIds.map(name).join(", ");

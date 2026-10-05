@@ -17,6 +17,7 @@ import type {
   UnitState,
 } from "../gameApi";
 import { AirStrikePanel } from "./AirStrikePanel";
+import { AirOperationsPanel, type AirOperationsContext } from "./AirOperationsPanel";
 import { readableId, sideName } from "./unitFormat";
 import { UnitCounterIcon } from "./UnitCounterIcon";
 import { MOVEMENT_MODES, type MovementPreviewStatus } from "./movementModes";
@@ -369,17 +370,42 @@ export interface SidePanelProps {
   movement: MovementControl;
   /** Offensive Strike Phase context; present only during that phase. */
   strike: StrikeContext | null;
+  /** Named-aircraft command shown only while an airbase installation is selected. */
+  air: AirOperationsContext | null;
   /** Combat Phase context; present only during that phase. */
   combat: CombatContext | null;
   /** Battle Planning: the core's reason each unit cannot take a Reserve/OMG Marker (null when it can). */
   reserveOptions: ReadonlyMap<string, RuleRejection | null>;
   /** Reserve Phase state; present only during that phase. */
   reserve: ReserveState | null;
+  canEndPhase: boolean;
+  phaseActionLabel: string;
+  phaseActionBusy: boolean;
   onGoTo(id: string): boolean;
   onSelectUnit(id: string | null): void;
   onPlanningCommand(command: GameCommand): void;
   /** Opens the Battle Planner for an Objective hex. */
   onOpenBattle(hexId: string): void;
+  onEndPhase(): void;
+  onOpenSettings(): void;
+}
+
+function ControlHeader({ canEndPhase, label, busy, onEndPhase, onOpenSettings }: {
+  canEndPhase: boolean;
+  label: string;
+  busy: boolean;
+  onEndPhase(): void;
+  onOpenSettings(): void;
+}) {
+  return (
+    <header className="control-panel-header">
+      <h2>Control Panel</h2>
+      <button className="panel-settings-action" type="button" onClick={onOpenSettings} aria-label="Open display settings" title="Display settings">⚙</button>
+      <button className="panel-phase-action" type="button" disabled={!canEndPhase || busy} onClick={onEndPhase}>
+        {busy ? "Resolving…" : label}
+      </button>
+    </header>
+  );
 }
 
 export function SidePanel(props: SidePanelProps) {
@@ -403,6 +429,7 @@ export function SidePanel(props: SidePanelProps) {
     return (
       <aside className="side-panel">
         <section className="panel control-panel">
+          <ControlHeader canEndPhase={props.canEndPhase} label={props.phaseActionLabel} busy={props.phaseActionBusy} onEndPhase={props.onEndPhase} onOpenSettings={props.onOpenSettings} />
           <UnitDetails
             unit={selectedUnit}
             plan={props.battlePlan}
@@ -435,7 +462,10 @@ export function SidePanel(props: SidePanelProps) {
   return (
     <aside className="side-panel">
       <section className="panel control-panel">
-        <h2>Control Panel</h2>
+        <ControlHeader canEndPhase={props.canEndPhase} label={props.phaseActionLabel} busy={props.phaseActionBusy} onEndPhase={props.onEndPhase} onOpenSettings={props.onOpenSettings} />
+        {props.air ? (
+          <AirOperationsPanel context={props.air} />
+        ) : <>
         <form className="goto primary-goto" onSubmit={submit}>
           <input value={goTo} onChange={(event) => { setGoTo(event.currentTarget.value); setGoToError(false); }} placeholder="Go to hex, e.g. 2417" inputMode="numeric" maxLength={4} className={goToError ? "error" : ""} />
           <button type="submit">Go</button>
@@ -516,6 +546,7 @@ export function SidePanel(props: SidePanelProps) {
             {reserveUnits.map((unit) => <UnitRow key={unit.id} unit={unit} onSelect={() => props.onSelectUnit(unit.id)} />)}
           </div>
         )}
+        </>}
       </section>
     </aside>
   );

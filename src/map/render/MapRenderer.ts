@@ -1,4 +1,4 @@
-import { Application, Container, CullerPlugin, extensions, Graphics } from "pixi.js";
+import { Application, Container, CullerPlugin, extensions, Graphics, Text } from "pixi.js";
 import type { AirInterdictionZone, AirMission, BattlePlan, MovementMode, MovementOption, UnitState } from "../../gameApi";
 import type { HexGrid } from "../hexGrid";
 import { hexId, neighborCoords } from "../hexGrid";
@@ -68,6 +68,35 @@ export interface StrikeOverlay {
   breakthroughs: string[];
 }
 
+/** Named-aircraft missions, bases, and legal targets drawn during planning and review. */
+export interface AirOverlay {
+  sorties: {
+    sideId: string;
+    kind: "fighter" | "fighterBomber" | "aew";
+    centerHexId: string;
+    baseDisplayHexId: string;
+    radius: number;
+    status: string;
+  }[];
+  bases: {
+    id: string;
+    name: string;
+    sideId: string;
+    anchorHexId: string;
+    displayHexId: string;
+    damage: number;
+    closed: boolean;
+    aircraft: {
+      id: string;
+      kind: "fighter" | "fighterBomber" | "aew";
+      strengthStepIndex: number;
+      readiness: string;
+      assigned: boolean;
+    }[];
+  }[];
+  legalTargetHexIds: string[];
+}
+
 /** Combat Phase state drawn on the map, from the core. */
 export interface CombatOverlay {
   objectives: { hexId: string; mandatory: boolean }[];
@@ -81,6 +110,22 @@ const OPTIONAL_OBJECTIVE_COLOR = 0xffa640;
 const RESOLVED_STRIKE_COLOR = 0xf0bf58;
 const INTERDICTION_COLOR = 0xb58cff;
 const BREAKTHROUGH_COLOR = 0xffd23f;
+const NATO_AIR_COLOR = 0x60a9ff;
+const PACT_AIR_COLOR = 0xff7168;
+const AEW_COLOR = 0xc895ff;
+
+/** Hex distance on the printed odd-row grid, matching the rules plugin. */
+function hexDistance(a: HexData, b: HexData): number {
+  const axial = (hex: HexData) => {
+    const x = -hex.col;
+    return { q: x - (hex.row - (hex.row & 1)) / 2, r: hex.row };
+  };
+  const aa = axial(a);
+  const bb = axial(b);
+  const dq = aa.q - bb.q;
+  const dr = aa.r - bb.r;
+  return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
+}
 
 /** Extent of the playable hexes in map pixels. */
 function mapBounds(map: MapData, grid: HexGrid): Rect {
@@ -116,10 +161,13 @@ export class MapRenderer {
   private readonly layerEnabled = { ...DEFAULT_LAYERS };
   private readonly highlight = new Graphics();
   private readonly planningLayer = new Graphics({ label: "battle-plan" });
+  private readonly airCoverage = new Graphics({ label: "air-coverage" });
   private readonly unitLayer = new Container({ label: "units" });
   private readonly moveArrow = new Graphics({ label: "move-preview" });
   private readonly strikeZones = new Graphics({ label: "air-interdiction" });
   private readonly strikeMarks = new Graphics({ label: "air-strikes" });
+  private readonly airMissionMarks = new Graphics({ label: "air-missions" });
+  private readonly airBaseLayer = new Container({ label: "off-map-airbases" });
   private readonly combatMarks = new Graphics({ label: "combat" });
   private movePreview: MovementPreview | null = null;
   private counterHits: CounterHit[] = [];
@@ -128,6 +176,7 @@ export class MapRenderer {
   private minorLabels!: Container;
   private hovered: HexData | null = null;
   private selected: HexData | null = null;
+  private airOverlay: AirOverlay = { sorties: [], bases: [], legalTargetHexIds: [] };
   private readonly hexByKey = new Map<string, HexData>();
   private readonly cleanup: (() => void)[] = [];
 
@@ -198,9 +247,12 @@ export class MapRenderer {
       this.hexNumbers,
       buildSectorLayer(map, grid),
       this.planningLayer,
+      this.airCoverage,
       this.strikeZones,
       this.unitLayer,
       this.strikeMarks,
+      this.airMissionMarks,
+      this.airBaseLayer,
       this.combatMarks,
       this.highlight,
       this.moveArrow,
@@ -485,6 +537,106 @@ export class MapRenderer {
       const cy = y + 46;
       g.circle(cx, cy, 16).fill({ color: 0x05080c, alpha: 0.8 }).stroke({ color: 0xd8dee5, width: 2 });
       g.moveTo(cx - 8, cy - 8).lineTo(cx + 8, cy + 8).moveTo(cx + 8, cy - 8).lineTo(cx - 8, cy + 8).stroke({ color: 0xd8dee5, width: 3 });
+    }
+  }
+
+  setAirOverlay(overlay: AirOverlay): void {
+    this.airOverlay = overlay;
+    this.redrawAirOverlay();
+  }
+
+  private redrawAirOverlay(): void {
+    const overlay = this.airOverlay;
+    const coverage = this.airCoverage.clear();
+    const marks = this.airMissionMarks.clear();
+    this.airBaseLayer.removeChildren().forEach((child) => child.destroy());
+
+    for (const hexId of overlay.legalTargetHexIds) {
+      const hex = this.hexByKey.get(hexId);
+      if (!hex) continue;
+      marks.poly(this.grid.corners(hex.row, hex.col, 0.9)).stroke({ color: 0xf0bf58, width: 4, alpha: 0.6 });
+    }
+
+    for (const base of overlay.bases) {
+      const hex = this.hexByKey.get(base.displayHexId);
+      if (!hex) continue;
+      const { x, y } = this.grid.center(hex.row, hex.col);
+      const color = base.sideId === "nato" ? NATO_AIR_COLOR : PACT_AIR_COLOR;
+      const hw = this.grid.halfWidth * 0.92;
+      const ry = this.grid.radiusY * 0.92;
+      const corners = [x, y - ry, x + hw, y - ry / 2, x + hw, y + ry / 2, x, y + ry, x - hw, y + ry / 2, x - hw, y - ry / 2];
+      const graphic = new Graphics();
+      graphic.poly(corners)
+        .stroke({ color, width: base.damage > 0 ? 6 : 4, alpha: base.closed ? 0.55 : 1 });
+      this.airBaseLayer.addChild(graphic);
+
+      const label = new Text({
+        text: "AIRBASE",
+        style: { fontFamily: "Arial", fontSize: 14, fontWeight: "700", fill: color, align: "center" },
+      });
+      label.anchor.set(0.5);
+      label.position.set(x, y - ry * 0.58);
+      this.airBaseLayer.addChild(label);
+
+      const visibleAircraft = base.aircraft.slice(0, 6);
+      visibleAircraft.forEach((aircraft, index) => {
+        const counterWidth = 31;
+        const counterHeight = 24;
+        const gap = 5;
+        const totalWidth = visibleAircraft.length * counterWidth + Math.max(0, visibleAircraft.length - 1) * gap;
+        const cx = x - totalWidth / 2 + counterWidth / 2 + index * (counterWidth + gap);
+        const cy = y + 7;
+        const counter = new Graphics();
+        counter.roundRect(cx - counterWidth / 2, cy - counterHeight / 2, counterWidth, counterHeight, 3)
+          .fill({ color: aircraft.assigned ? color : 0x131a22, alpha: aircraft.readiness === "destroyed" ? 0.35 : 1 })
+          .stroke({ color, width: 2, alpha: aircraft.readiness === "ready" ? 1 : 0.55 });
+        if (aircraft.kind === "fighter") {
+          counter.moveTo(cx - 9, cy + 5).lineTo(cx, cy - 7).lineTo(cx + 9, cy + 5).stroke({ color: 0xeaf2f9, width: 2 });
+        } else if (aircraft.kind === "fighterBomber") {
+          counter.moveTo(cx - 10, cy).lineTo(cx + 10, cy).moveTo(cx, cy - 8).lineTo(cx, cy + 8).stroke({ color: 0xeaf2f9, width: 2 });
+        } else {
+          counter.circle(cx, cy, 6).stroke({ color: 0xeaf2f9, width: 2 });
+          counter.circle(cx, cy, 2).fill(0xeaf2f9);
+        }
+        if (aircraft.strengthStepIndex > 0) {
+          counter.circle(cx + 11, cy - 8, 3).fill(0xffd166);
+        }
+        this.airBaseLayer.addChild(counter);
+      });
+      if (base.closed) {
+        graphic.moveTo(x - 18, y - 18).lineTo(x + 18, y + 18).moveTo(x + 18, y - 18).lineTo(x - 18, y + 18)
+          .stroke({ color: 0xd8dee5, width: 5, alpha: 0.75 });
+      }
+    }
+
+    for (const sortie of overlay.sorties) {
+      const center = this.hexByKey.get(sortie.centerHexId);
+      const baseHex = this.hexByKey.get(sortie.baseDisplayHexId);
+      const basePoint = baseHex ? this.grid.center(baseHex.row, baseHex.col) : null;
+      if (!center) continue;
+      const sideColor = sortie.sideId === "nato" ? NATO_AIR_COLOR : PACT_AIR_COLOR;
+      const color = sortie.kind === "aew" ? AEW_COLOR : sideColor;
+      if (sortie.radius > 0 && sortie.status !== "aborted") {
+        for (const hex of this.map.hexes) {
+          if (hexDistance(center, hex) <= sortie.radius) {
+            coverage.poly(this.grid.corners(hex.row, hex.col)).fill({ color, alpha: sortie.kind === "aew" ? 0.035 : 0.055 });
+          }
+        }
+      }
+      const targetPoint = this.grid.center(center.row, center.col);
+      if (basePoint) {
+        marks.moveTo(basePoint.x, basePoint.y).lineTo(targetPoint.x, targetPoint.y).stroke({ color, width: 4, alpha: 0.5 });
+      }
+      marks.circle(targetPoint.x, targetPoint.y, sortie.kind === "fighterBomber" ? 20 : 25)
+        .fill({ color: 0x05080c, alpha: 0.7 })
+        .stroke({ color, width: sortie.status === "aborted" ? 2 : 5, alpha: sortie.status === "aborted" ? 0.4 : 0.95 });
+      if (sortie.kind === "fighterBomber") {
+        marks.moveTo(targetPoint.x - 25, targetPoint.y).lineTo(targetPoint.x + 25, targetPoint.y)
+          .moveTo(targetPoint.x, targetPoint.y - 25).lineTo(targetPoint.x, targetPoint.y + 25)
+          .stroke({ color, width: 3, alpha: 0.9 });
+      } else if (sortie.kind === "aew") {
+        marks.circle(targetPoint.x, targetPoint.y, 9).fill(color);
+      }
     }
   }
 

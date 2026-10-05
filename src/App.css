@@ -45,7 +45,7 @@ select {
   width: 100vw;
   height: 100vh;
   grid-template-columns: minmax(0, 1fr) 320px;
-  grid-template-rows: 52px minmax(0, 1fr) 170px;
+  grid-template-rows: 58px minmax(0, 1fr) 170px;
   grid-template-areas:
     "top top"
     "map side"
@@ -54,7 +54,7 @@ select {
 }
 
 .app.log-collapsed {
-  grid-template-rows: 52px minmax(0, 1fr) 34px;
+  grid-template-rows: 58px minmax(0, 1fr) 34px;
 }
 
 /* ---------------------------------------------------------------- top bar */
@@ -63,8 +63,8 @@ select {
   grid-area: top;
   display: flex;
   align-items: center;
-  gap: 28px;
-  padding: 0 16px;
+  gap: 12px;
+  padding: 0 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
@@ -95,18 +95,10 @@ select {
 
 .phase-track {
   display: flex;
+  flex: 1;
   align-items: center;
-  gap: 12px;
-}
-
-.phase-side {
-  padding: 2px 8px;
-  border: 1px solid currentColor;
-  border-radius: 3px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  gap: 10px;
+  min-width: 0;
 }
 
 .phase-round {
@@ -116,18 +108,25 @@ select {
 
 .phase-steps {
   display: flex;
+  flex: 1;
+  min-width: 0;
   margin: 0;
   padding: 0;
+  overflow: hidden;
   list-style: none;
 }
 
 /* Chevron segments; each overlaps the previous one's point. */
 .phase-steps li {
-  padding: 5px 16px 5px 20px;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 6px 7px 6px 12px;
   background: var(--panel-2);
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
+  text-align: center;
+  text-overflow: ellipsis;
   clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%, 10px 50%);
 }
 
@@ -141,22 +140,42 @@ select {
 }
 
 .phase-steps li.done {
-  background: #26303a;
-  color: #9fb0bf;
+  opacity: 0.48;
+}
+
+.phase-steps li.phase-side-nato {
+  background: rgba(69, 128, 204, 0.34);
+  color: #a9d2ff;
+}
+
+.phase-steps li.phase-side-pact {
+  background: rgba(190, 70, 58, 0.34);
+  color: #ffaaa1;
+}
+
+.phase-steps li.phase-side-joint {
+  background: #303943;
+  color: #c5ced7;
+}
+
+.phase-steps li.phase-side-nato.current {
+  background: var(--nato);
+  color: #0c1722;
+}
+
+.phase-steps li.phase-side-pact.current {
+  background: var(--pact);
+  color: #1b0c0a;
+}
+
+.phase-steps li.phase-side-joint.current {
+  background: var(--accent);
+  color: #171208;
 }
 
 .phase-steps li.current {
-  background: var(--accent);
-  color: #11151a;
   font-weight: 800;
-}
-
-.track-nato .phase-steps li.current {
-  background: var(--nato);
-}
-
-.track-pact .phase-steps li.current {
-  background: var(--pact);
+  opacity: 1;
 }
 
 .hud-group.resources {
@@ -305,6 +324,58 @@ select {
 .control-panel {
   flex: 1;
   min-height: 0;
+  padding-top: 0;
+}
+
+.control-panel-header {
+  position: sticky;
+  z-index: 5;
+  top: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px auto;
+  align-items: center;
+  gap: 6px;
+  margin: 0 -2px 12px;
+  padding: 10px 2px 9px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.panel .control-panel-header h2 {
+  margin: 0;
+}
+
+.panel-settings-action,
+.panel-phase-action {
+  height: 30px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.panel-settings-action {
+  width: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+.panel-phase-action {
+  padding: 0 10px;
+  border: 1px solid #8f7134;
+  background: #3a301d;
+  color: #f1d48c;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.panel-settings-action:hover,
+.panel-phase-action:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.panel-phase-action:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 .empty {
@@ -888,6 +959,340 @@ select {
 }
 
 /* ---------------------------------------------------------------- air missions */
+
+.air-operations-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 0;
+  padding: 10px;
+  border: 1px solid #394a5b;
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(74, 111, 143, 0.12), rgba(12, 18, 24, 0.15));
+}
+
+.air-operations-heading,
+.air-editor-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.air-operations-heading h3 {
+  margin: 0;
+  color: #b9d8ef;
+  font-size: 13px;
+}
+
+.air-operations-heading > span,
+.air-heading-actions > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.air-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.air-heading-actions button {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.air-base-strip {
+  display: grid;
+  gap: 4px;
+}
+
+.air-base {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.16);
+  text-align: left;
+  cursor: pointer;
+}
+
+.air-base:hover {
+  border-color: #6689a6;
+}
+
+.air-base strong {
+  font-size: 11px;
+}
+
+.air-base span,
+.air-base em {
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.air-base em,
+.air-base.closed span {
+  color: var(--warn);
+}
+
+.air-unit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.air-unit-card {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-left: 3px solid currentColor;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.air-unit-card.selected {
+  border-color: var(--accent);
+  background: rgba(212, 169, 76, 0.1);
+}
+
+.air-unit-main {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.air-unit-main:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.air-unit-main:disabled {
+  cursor: default;
+}
+
+.air-counter {
+  display: flex;
+  width: 38px;
+  height: 32px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid currentColor;
+  border-radius: 3px;
+  background: #121820;
+  line-height: 1;
+}
+
+.air-counter b {
+  font-size: 11px;
+}
+
+.air-counter i {
+  margin-top: 3px;
+  font-size: 7px;
+  font-style: normal;
+  letter-spacing: 2px;
+}
+
+.air-unit-copy {
+  min-width: 0;
+}
+
+.air-unit-copy strong,
+.air-unit-copy small {
+  display: block;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.air-unit-copy strong {
+  font-size: 11px;
+}
+
+.air-unit-copy small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.air-readiness {
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  font-size: 9px;
+  font-style: normal;
+  text-transform: uppercase;
+}
+
+.air-readiness.ready,
+.air-readiness.planned,
+.air-readiness.cleared {
+  color: #a8d9b0;
+}
+
+.air-readiness.aborted,
+.air-readiness.targetGone {
+  color: #ff9a90;
+}
+
+.air-sortie-order {
+  display: flex;
+  gap: 4px;
+  padding: 0 6px 5px 47px;
+}
+
+.air-sortie-order button {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: #b9d8ef;
+  font-size: 10px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.air-sortie-order button.air-cancel {
+  margin-left: auto;
+  color: #ff9a90;
+}
+
+.air-unit-reason {
+  margin: 0;
+  padding: 0 6px 5px 47px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.air-mission-editor,
+.air-operation-report {
+  padding: 8px;
+  border: 1px solid #6d5830;
+  border-radius: 5px;
+  background: rgba(212, 169, 76, 0.06);
+}
+
+.air-editor-title > button {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.air-editor-section + .air-editor-section {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dotted var(--border);
+}
+
+.air-editor-section h4,
+.air-operation-report h4 {
+  margin: 0 0 4px;
+  color: #f1d48c;
+}
+
+.air-editor-section p,
+.air-phase-note {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.air-plan-button,
+.air-base-target {
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 7px;
+  border: 1px solid #6d5830;
+  border-radius: 4px;
+  background: #372f1e;
+  color: #f1d48c;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.air-plan-button:disabled,
+.air-base-target:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.air-base-target {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: 4px;
+  text-align: left;
+}
+
+.air-base-target em {
+  color: var(--muted);
+  font-size: 9px;
+  font-style: normal;
+}
+
+.air-ground-target {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 0;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.air-ground-target em {
+  color: var(--muted);
+  font-size: 9px;
+  font-style: normal;
+}
+
+.air-report-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.air-report-row {
+  padding-left: 6px;
+  border-left: 2px solid #6689a6;
+  font-size: 9px;
+}
+
+.air-report-row strong,
+.air-report-row span {
+  display: block;
+}
+
+.air-report-row span {
+  color: var(--muted);
+}
+
+.air-warning {
+  margin: 0;
+  color: var(--warn);
+  font-size: 10px;
+}
 
 .air-strike-panel {
   display: flex;

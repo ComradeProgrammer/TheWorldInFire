@@ -113,11 +113,12 @@ export function buildTerrainLayer(map: MapData, grid: HexGrid): Container {
 
   const base = new Graphics();
   for (const h of map.hexes) {
+    if (h.offMap) continue;
     base.poly(grid.corners(h.row, h.col, 1.005));
   }
   base.fill(COLORS.clear);
   for (const h of map.hexes) {
-    if (h.terrain !== "sea") continue;
+    if (h.offMap || h.terrain !== "sea") continue;
     base.poly(grid.corners(h.row, h.col, 1.005));
   }
   base.fill(COLORS.sea);
@@ -126,7 +127,7 @@ export function buildTerrainLayer(map: MapData, grid: HexGrid): Container {
   // Faint speckle so clear terrain is not a flat colour.
   const speck = new Graphics();
   for (const h of map.hexes) {
-    if (h.terrain === "sea") continue;
+    if (h.offMap || h.terrain === "sea") continue;
     const rand = rng(`s${h.id}`);
     const { x, y } = grid.center(h.row, h.col);
     for (let i = 0; i < 10; i++) {
@@ -139,13 +140,14 @@ export function buildTerrainLayer(map: MapData, grid: HexGrid): Container {
 
   // Opaque (pre-blended) shadow so overlapping shapes don't darken each other.
   const shadow = new Graphics();
-  for (const h of map.hexes) if (h.terrain === "forest") drawForestShadow(shadow, grid, h);
+  for (const h of map.hexes) if (!h.offMap && h.terrain === "forest") drawForestShadow(shadow, grid, h);
 
   const order: Terrain[] = ["marsh", "forest", "rough", "mountain"];
   for (const terrain of order) {
     if (terrain === "forest") layer.addChild(shadow);
     const g = new Graphics();
     for (const h of map.hexes) {
+      if (h.offMap) continue;
       if (h.terrain !== terrain) continue;
       if (terrain === "marsh") drawMarsh(g, grid, h);
       else if (terrain === "forest") drawForest(g, grid, h);

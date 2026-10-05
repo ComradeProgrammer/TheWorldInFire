@@ -158,6 +158,8 @@ export interface AirBaseState {
   name: string;
   sideId: string;
   anchorHexId: string;
+  /** Optional actual map space occupied by the base; otherwise the UI places it just beyond its anchor edge. */
+  locationHexId?: string;
   sortieCapacity: number;
   strikeModifier: number;
   damage: number;

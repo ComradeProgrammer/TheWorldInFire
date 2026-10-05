@@ -48,6 +48,10 @@ export interface HexData {
   town?: string;
   mobilization?: boolean;
   commandZone?: CommandZone;
+  /** Presentation-only space outside the rules map, drawn over the black surround. */
+  offMap?: boolean;
+  /** Installations occupying this space. Selection is still ordinary hex selection. */
+  installations?: { kind: "airBase"; id: string; airUnitId?: string }[];
 }
 
 export type HexsideFeature =

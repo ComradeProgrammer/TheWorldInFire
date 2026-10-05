@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { AirMission, BattlePlan, BattleReport, MovementMode, ReserveState, StrikePlan, UnitState } from "../gameApi";
+import type { AirBaseState, AirMission, AirPlan, AirSortie, AirUnitState, BattlePlan, BattleReport, MovementMode, ReserveState, StrikePlan, UnitState } from "../gameApi";
 import type { CombatLogEntry } from "./combatLog";
 
 function unitName(units: UnitState[], id: string): string {
@@ -26,6 +26,22 @@ function missionText(mission: AirMission, units: UnitState[]): string {
   return `${target} · ${point}${result}`;
 }
 
+function sortieText(sortie: AirSortie, airUnits: AirUnitState[], bases: AirBaseState[], units: UnitState[]): string {
+  const aircraft = airUnits.find((unit) => unit.id === sortie.airUnitId)?.name ?? sortie.airUnitId;
+  let target: string;
+  switch (sortie.mission.type) {
+    case "airSuperiority": target = `air superiority at ${sortie.mission.centerHexId}`; break;
+    case "earlyWarning": target = `AEW orbit at ${sortie.mission.centerHexId}`; break;
+    case "groundStrike": target = `strike ${sortie.mission.hexId} · ${sortie.mission.unitIds.map((id) => unitName(units, id)).join(", ")}`; break;
+    case "airBaseStrike": {
+      const baseId = sortie.mission.airBaseId;
+      target = `strike ${bases.find((base) => base.id === baseId)?.name ?? baseId}`;
+      break;
+    }
+  }
+  return `${aircraft} · ${target} · ${sortie.status}`;
+}
+
 function fromLabel(movement: BattlePlan["movements"][number]): string {
   return movement.from.type === "hex" ? movement.from.hexId : "Strategic Reserve";
 }
@@ -36,9 +52,12 @@ function battleText(battle: BattleReport, units: UnitState[]): string {
   return `${battle.hexId} · ${battle.odds?.finalOdds ?? ""} · rolled ${battle.dieRoll} → ${battle.result.code} · ${attackers}`;
 }
 
-export function BottomBar({ plan, strikePlan, battles, reserve, units, combatLog, collapsed, onToggleCollapsed }: {
+export function BottomBar({ plan, strikePlan, airPlans, airUnits, airBases, battles, reserve, units, combatLog, collapsed, onToggleCollapsed }: {
   plan: BattlePlan | null;
   strikePlan: StrikePlan | null;
+  airPlans: AirPlan[];
+  airUnits: AirUnitState[];
+  airBases: AirBaseState[];
   battles: BattleReport[];
   /** Reserve Phase movement, while that phase is active. */
   reserve: ReserveState | null;
@@ -47,7 +66,10 @@ export function BottomBar({ plan, strikePlan, battles, reserve, units, combatLog
   collapsed: boolean;
   onToggleCollapsed(): void;
 }) {
-  const orderCount = plan
+  const airSorties = airPlans
+    .filter((airPlan) => !plan || airPlan.sideId === plan.sideId)
+    .flatMap((airPlan) => airPlan.sorties);
+  const orderCount = (plan
     ? plan.resupplyTargetUnitIds.length
       + plan.attackTargets.length
       + plan.movements.length
@@ -57,7 +79,7 @@ export function BottomBar({ plan, strikePlan, battles, reserve, units, combatLog
       + (strikePlan?.missions.length ?? 0)
       + battles.length
       + (reserve?.movements.length ?? 0)
-    : 0;
+    : 0) + airSorties.length;
   const reserveLabel = plan?.sideId === "nato" ? "Reserve" : "OMG";
   const logRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -73,12 +95,12 @@ export function BottomBar({ plan, strikePlan, battles, reserve, units, combatLog
           <span>
             {plan
               ? `${plan.sideId === "nato" ? "NATO" : "Warsaw Pact"} · Turn ${plan.gameTurn} · ${orderCount} ${orderCount === 1 ? "order" : "orders"}`
-              : "No active plan"}
+              : airSorties.length > 0 ? `${airSorties.length} air ${airSorties.length === 1 ? "sortie" : "sorties"}` : "No active plan"}
           </span>
         </header>
         {!collapsed && (
           <div className="readonly-log-body">
-            {!plan && <p className="empty">No active battle plan.</p>}
+            {!plan && airSorties.length === 0 && <p className="empty">No active battle plan.</p>}
             {plan && orderCount === 0 && <p className="empty">No orders have been added yet.</p>}
             {plan?.resupplyTargetUnitIds.map((id) => <p key={`resupply-${id}`}><b>Resupply</b><span>{unitName(units, id)}</span></p>)}
             {plan?.attackTargets.map((hex) => <p key={`attack-${hex}`}><b>Attack</b><span>Objective hex {hex}</span></p>)}
@@ -91,6 +113,12 @@ export function BottomBar({ plan, strikePlan, battles, reserve, units, combatLog
             {plan?.entrainingUnitIds.map((id) => <p key={`entrain-${id}`}><b>Entrain</b><span>{unitName(units, id)}</span></p>)}
             {plan?.detrainedUnitIds.map((id) => <p key={`detrain-${id}`}><b>Detrain</b><span>{unitName(units, id)}</span></p>)}
             {plan?.reserveUnitIds.map((id) => <p key={`reserve-${id}`}><b>{reserveLabel}</b><span>{unitName(units, id)}</span></p>)}
+            {airSorties.map((sortie) => (
+              <p key={`air-sortie-${sortie.airUnitId}`}>
+                <b>Air</b>
+                <span>{sortieText(sortie, airUnits, airBases, units)}</span>
+              </p>
+            ))}
             {battles.map((battle) => (
               <p key={`battle-${battle.id}`}>
                 <b>Battle</b>

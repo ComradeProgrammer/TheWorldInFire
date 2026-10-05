@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   activeBattlePlan,
-  fetchAirStrikeOptions,
+  fetchAirMissionOptions,
+  fetchAirPlanningOptions,
   fetchCombatOptions,
   fetchAttackTargetOptions,
   fetchMovementOptions,
   fetchReserveOptions,
   submitGameCommand,
   type GameCommand,
-  type AirStrikeOptionsResponse,
+  type AirMissionOptionsResponse,
+  type AirPlanningOptionsResponse,
   type CombatOptionsResponse,
   type UnitState,
   type GameSnapshot,
@@ -25,6 +27,7 @@ import {
   type MapRenderer,
   type MovementPreview,
   type StrikeOverlay,
+  type AirOverlay,
   type CombatOverlay,
 } from "./map/render/MapRenderer";
 import { BattlePlanner } from "./ui/BattlePlanner";
@@ -33,7 +36,7 @@ import { describeCombatEvents, type CombatLogEntry } from "./ui/combatLog";
 import { PREVIEW_HUD } from "./ui/hudPreview";
 import { defaultMovementMode, type MovementPreviewStatus } from "./ui/movementModes";
 import { SettingsDialog } from "./ui/SettingsDialog";
-import { SidePanel, type CombatContext, type StrikeContext } from "./ui/SidePanel";
+import { SidePanel, type CombatContext } from "./ui/SidePanel";
 import { TopBar } from "./ui/TopBar";
 import "./App.css";
 
@@ -42,6 +45,7 @@ const PHASE_NAMES: Record<string, string> = {
   jointReinforcement: "Joint Reinforcement",
   preBattle: "Pre-Battle",
   battlePlanning: "Battle Planning",
+  jointAirOperations: "Joint Air Operations",
   offensiveStrike: "Offensive Strike",
   combat: "Combat",
   reserve: "Reserve",
@@ -50,11 +54,15 @@ const PHASE_NAMES: Record<string, string> = {
 
 /** Short labels for the top-bar phase track. */
 const PHASE_TRACK_LABELS: Record<string, string> = {
-  jointStatus: "Joint Status",
+  jointStatus: "Status",
+  jointReinforcement: "Reinforce",
+  preBattle: "Pre-Battle",
   battlePlanning: "Plan",
+  jointAirOperations: "Air Ops",
   offensiveStrike: "Strike",
   combat: "Combat",
   reserve: "Reserve",
+  postBattle: "Post-Battle",
 };
 
 function phaseName(id: string): string {
@@ -72,6 +80,69 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
+/**
+ * Adds presentation-only off-map spaces for bases that do not occupy a rules-map
+ * hex. They remain ordinary selectable hexes; an in-map base can instead provide
+ * `locationHexId` and uses exactly the same installation path.
+ */
+function mapWithAirBases(
+  source: MapData,
+  bases: GameSnapshot["airBases"],
+  airUnits: GameSnapshot["airUnits"],
+): {
+  map: MapData;
+  displayHexByAirUnitId: ReadonlyMap<string, string>;
+} {
+  const displayHexByAirUnitId = new Map<string, string>();
+  const byId = new Map<string, HexData>(
+    source.hexes.map((hex) => [hex.id, { ...hex, installations: [...(hex.installations ?? [])] }]),
+  );
+  const centers = source.hexes.map((hex) => {
+    const columnIndex = source.grid.columnBase - hex.col;
+    return source.grid.originX + source.grid.hexWidth * columnIndex + (hex.row % 2 ? source.grid.hexWidth / 2 : 0);
+  });
+  const middleX = (Math.min(...centers) + Math.max(...centers)) / 2;
+  const minColumn = Math.min(...source.hexes.map((hex) => hex.col));
+  const maxColumn = Math.max(...source.hexes.map((hex) => hex.col));
+
+  for (const base of bases) {
+    const basedUnits = airUnits.filter((unit) => unit.baseId === base.id);
+    const inMapHex = base.locationHexId ? byId.get(base.locationHexId) : undefined;
+    if (inMapHex) {
+      for (const unit of basedUnits) {
+        inMapHex.installations = [...(inMapHex.installations ?? []), { kind: "airBase", id: base.id, airUnitId: unit.id }];
+        displayHexByAirUnitId.set(unit.id, inMapHex.id);
+      }
+      continue;
+    }
+
+    const anchor = byId.get(base.anchorHexId);
+    if (!anchor) continue;
+    const anchorX = source.grid.originX
+      + source.grid.hexWidth * (source.grid.columnBase - anchor.col)
+      + (anchor.row % 2 ? source.grid.hexWidth / 2 : 0);
+    // Two columns beyond the global board edge leaves a full empty column
+    // between the rules map and this scenario's off-map aircraft spaces.
+    const offMapColumn = anchorX < middleX ? maxColumn + 2 : minColumn - 2;
+    const firstRow = anchor.row - Math.floor((basedUnits.length - 1) / 2);
+    basedUnits.forEach((unit, index) => {
+      const row = firstRow + index;
+      const displayHexId = `${String(row).padStart(2, "0")}${String(offMapColumn).padStart(2, "0")}`;
+      const displayHex: HexData = {
+        id: displayHexId,
+        row,
+        col: offMapColumn,
+        terrain: "clear",
+        offMap: true,
+        installations: [{ kind: "airBase", id: base.id, airUnitId: unit.id }],
+      };
+      byId.set(displayHexId, displayHex);
+      displayHexByAirUnitId.set(unit.id, displayHexId);
+    });
+  }
+  return { map: { ...source, hexes: [...byId.values()] }, displayHexByAirUnitId };
+}
+
 /** The game screen for one started game. Remount it (by key) for a new game. */
 function App({ game }: { game: NewGameResponse }) {
   const rendererRef = useRef<MapRenderer | null>(null);
@@ -79,8 +150,13 @@ function App({ game }: { game: NewGameResponse }) {
   const [zoom, setZoom] = useState(1);
   const [layers, setLayers] = useState(DEFAULT_LAYERS);
   const [snapshot, setSnapshot] = useState<GameSnapshot | null>(game.snapshot);
-  // The map and turn sequence never change during a game; the bootstrap carries them once.
-  const map: MapData = game.map;
+  // Rules-map geometry is immutable. Bases without a map location get a normal
+  // selectable display hex just outside the nearest edge.
+  const airBaseLayout = useMemo(
+    () => mapWithAirBases(game.map, game.snapshot.airBases, game.snapshot.airUnits),
+    [game],
+  );
+  const map: MapData = airBaseLayout.map;
   const turnSequence: PhaseSnapshot[] = game.turnSequence;
   const [commandBusy, setCommandBusy] = useState(false);
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
@@ -91,43 +167,42 @@ function App({ game }: { game: NewGameResponse }) {
   const [movementStatus, setMovementStatus] = useState<MovementPreviewStatus>({ state: "loading" });
   const [attackTargets, setAttackTargets] = useState<ReadonlySet<string>>(new Set());
   const [reserveOptions, setReserveOptions] = useState<ReadonlyMap<string, RuleRejection | null>>(new Map());
-  const [strikeOptions, setStrikeOptions] = useState<AirStrikeOptionsResponse | null>(null);
+  const [airPlanningOptions, setAirPlanningOptions] = useState<AirPlanningOptionsResponse | null>(null);
+  const [airMissionOptions, setAirMissionOptions] = useState<AirMissionOptionsResponse | null>(null);
+  const [selectedAirUnitId, setSelectedAirUnitId] = useState<string | null>(null);
+  const [selectedAirBaseId, setSelectedAirBaseId] = useState<string | null>(null);
+  const [selectedAirCommandUnitId, setSelectedAirCommandUnitId] = useState<string | null>(null);
+  const [airQueryBusy, setAirQueryBusy] = useState(false);
   const [combatOptions, setCombatOptions] = useState<CombatOptionsResponse | null>(null);
   const [combatLog, setCombatLog] = useState<CombatLogEntry[]>([]);
   const [battleHexId, setBattleHexId] = useState<string | null>(null);
   // Every unit ever seen, so eliminated units keep their names in logs and plans.
   const [roster, setRoster] = useState<ReadonlyMap<string, UnitState>>(new Map());
+  const [airRoster, setAirRoster] = useState<ReadonlyMap<string, GameSnapshot["airUnits"][number]>>(
+    new Map(game.snapshot.airUnits.map((unit) => [unit.id, unit])),
+  );
   const movementPreviewRef = useRef<MovementPreview | null>(null);
   const strikeOverlayRef = useRef<StrikeOverlay | null>(null);
+  const airOverlayRef = useRef<AirOverlay | null>(null);
   const combatOverlayRef = useRef<CombatOverlay | null>(null);
 
   const hud = useMemo(() => {
     if (!snapshot) return PREVIEW_HUD;
-    const current = snapshot.turn.currentStep;
-    const actor = current?.actor;
-    // The acting side's (or the joint) steps that wait for player input.
-    const steps = !current
-      ? []
-      : turnSequence.flatMap((step, index) => {
-        const sameActor = step.actor.type === actor?.type && step.actor.sideId === actor?.sideId;
-        if (!sameActor || step.execution === "automatic") return [];
-        const state = index < snapshot.turn.stepIndex ? "done" : index === snapshot.turn.stepIndex ? "current" : "upcoming";
-        return [{ id: step.id, label: PHASE_TRACK_LABELS[step.phaseId] ?? phaseName(step.phaseId), state } as const];
-      });
+    const steps = turnSequence.flatMap((step, index) => {
+      if (step.execution !== "interactive") return [];
+      const side = step.actor.type === "all" ? "joint" : step.actor.sideId === "nato" ? "nato" : "pact";
+      const state = index < snapshot.turn.stepIndex ? "done" : index === snapshot.turn.stepIndex ? "current" : "upcoming";
+      return [{
+        id: step.id,
+        label: PHASE_TRACK_LABELS[step.phaseId] ?? phaseName(step.phaseId),
+        state,
+        side,
+      } as const];
+    });
     return {
-      ...PREVIEW_HUD,
-      scenario: snapshot.scenario.name,
       turn: snapshot.turn.gameTurn,
       lastTurn: snapshot.scenario.maxGameTurns,
-      activePlayer:
-        actor?.type === "all" ? ("Both" as const) : actor?.sideId === "nato" ? ("NATO" as const) : ("Warsaw Pact" as const),
-      phase: current ? phaseName(current.phaseId) : "Game over",
       steps,
-      resources: snapshot.airPoints.map((points) => ({
-        label: `${points.sideId === "nato" ? "NATO" : "WP"} Air`,
-        value: `${points.tactical}T · ${points.operational}O${points.bonusTactical > 0 ? ` · +${points.bonusTactical}` : ""}`,
-        side: points.sideId === "nato" ? ("nato" as const) : ("pact" as const),
-      })),
     };
   }, [snapshot, turnSequence]);
 
@@ -145,6 +220,7 @@ function App({ game }: { game: NewGameResponse }) {
       rendererRef.current = renderer;
       renderer.setMovementPreview(movementPreviewRef.current);
       if (strikeOverlayRef.current) renderer.setStrikeOverlay(strikeOverlayRef.current);
+      if (airOverlayRef.current) renderer.setAirOverlay(airOverlayRef.current);
       if (combatOverlayRef.current) renderer.setCombatOverlay(combatOverlayRef.current);
       if (!snapshot) return;
       renderer.setUnits(snapshot.units, reserveMarkers(snapshot));
@@ -236,15 +312,17 @@ function App({ game }: { game: NewGameResponse }) {
     };
   }, [planningPhase, revision]);
 
-  // Offensive Strike Phase: the core's targets, modifiers, and Airspace, once per revision.
-  const strikePhase = snapshot?.turn.currentStep?.phaseId === "offensiveStrike";
+  // Named-aircraft availability and base capacity during Battle Planning.
   useEffect(() => {
-    setStrikeOptions(null);
-    if (!strikePhase || revision === undefined) return;
+    setAirPlanningOptions(null);
+    if (!planningPhase || revision === undefined) {
+      setSelectedAirUnitId(null);
+      return;
+    }
     let active = true;
-    fetchAirStrikeOptions().then(
+    fetchAirPlanningOptions().then(
       (response) => {
-        if (active && response.revision === revision) setStrikeOptions(response);
+        if (active && response.revision === revision) setAirPlanningOptions(response);
       },
       (error: unknown) => {
         if (active) setCommandNotice(errorMessage(error));
@@ -253,13 +331,44 @@ function App({ game }: { game: NewGameResponse }) {
     return () => {
       active = false;
     };
-  }, [strikePhase, revision]);
+  }, [planningPhase, revision]);
+
+  // Mission targets depend on the selected named aircraft and current revision.
+  useEffect(() => {
+    setAirMissionOptions(null);
+    if (!planningPhase || revision === undefined || !selectedAirUnitId) {
+      setAirQueryBusy(false);
+      return;
+    }
+    let active = true;
+    setAirQueryBusy(true);
+    fetchAirMissionOptions(selectedAirUnitId).then(
+      (response) => {
+        if (active && response.revision === revision) setAirMissionOptions(response);
+      },
+      (error: unknown) => {
+        if (active) setCommandNotice(errorMessage(error));
+      },
+    ).finally(() => {
+      if (active) setAirQueryBusy(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [planningPhase, revision, selectedAirUnitId]);
+
+  const strikePhase = snapshot?.turn.currentStep?.phaseId === "offensiveStrike";
 
   useEffect(() => {
     if (!snapshot) return;
     setRoster((current) => {
       const next = new Map(current);
       for (const unit of snapshot.units) next.set(unit.id, unit);
+      return next;
+    });
+    setAirRoster((current) => {
+      const next = new Map(current);
+      for (const unit of snapshot.airUnits) next.set(unit.id, unit);
       return next;
     });
   }, [snapshot]);
@@ -310,29 +419,83 @@ function App({ game }: { game: NewGameResponse }) {
     rendererRef.current?.setCombatOverlay(overlay);
   }, [combatOptions, snapshot]);
 
-  const strike = useMemo<StrikeContext | null>(() => {
-    const plan = snapshot?.strikePlan;
-    if (!strikePhase || !plan) return null;
-    return {
-      plan,
-      points: snapshot.airPoints.find((points) => points.sideId === plan.sideId),
-      targets: new Map((strikeOptions?.targets ?? []).map((target) => [target.hexId, target])),
-      tacticalHexes: new Set(strikeOptions?.tacticalHexes ?? []),
-      friendlyHexes: new Set(strikeOptions?.friendlyHexes ?? []),
-      ready: strikeOptions?.revision === snapshot.revision,
-    };
-  }, [snapshot, strikeOptions, strikePhase]);
-
   useEffect(() => {
     const overlay: StrikeOverlay = {
-      targets: strikeOptions?.targets.map((target) => ({ hexId: target.hexId, tacticalAllowed: target.tacticalAllowed })) ?? [],
-      missions: snapshot?.strikePlan?.missions ?? [],
+      targets: [],
+      missions: [],
       zones: snapshot?.airInterdictionZones ?? [],
       breakthroughs: snapshot?.breakthroughMarkers.map((marker) => marker.hexId) ?? [],
     };
     strikeOverlayRef.current = overlay;
     rendererRef.current?.setStrikeOverlay(overlay);
-  }, [snapshot, strikeOptions]);
+  }, [snapshot]);
+
+  useEffect(() => {
+    const airUnits = snapshot?.airUnits ?? [];
+    const bases = snapshot?.airBases ?? [];
+    const sorties: AirOverlay["sorties"] = !(planningPhase || strikePhase) ? [] : (snapshot?.airPlans ?? []).flatMap((plan) =>
+      plan.sorties.flatMap((sortie) => {
+        const unit = airUnits.find((candidate) => candidate.id === sortie.airUnitId);
+        const base = unit ? bases.find((candidate) => candidate.id === unit.baseId) : undefined;
+        if (!unit || !base) return [];
+        const mission = sortie.mission;
+        const centerHexId = mission.type === "airBaseStrike"
+          ? (() => {
+              const targetUnit = airUnits.find((candidate) => candidate.baseId === mission.airBaseId);
+              const targetBase = bases.find((candidate) => candidate.id === mission.airBaseId);
+              return (targetUnit && airBaseLayout.displayHexByAirUnitId.get(targetUnit.id)) ?? targetBase?.anchorHexId;
+            })()
+          : mission.type === "groundStrike"
+            ? mission.hexId
+            : mission.centerHexId;
+        if (!centerHexId) return [];
+        const step = unit.steps[unit.strengthStepIndex];
+        return [{
+          sideId: unit.sideId,
+          kind: unit.kind,
+          centerHexId,
+          baseDisplayHexId: airBaseLayout.displayHexByAirUnitId.get(unit.id) ?? base.anchorHexId,
+          radius: unit.kind === "fighter" ? step.combatRadius : unit.kind === "aew" ? step.aewRadius : 0,
+          status: sortie.status,
+        }];
+      }),
+    );
+    const legalTargetHexIds = airMissionOptions?.kind === "fighterBomber"
+      ? airMissionOptions.groundTargets.map((target) => target.hexId)
+      : [];
+    const overlay: AirOverlay = {
+      sorties,
+      bases: bases.flatMap((base) => {
+        const baseSorties = (snapshot?.airPlans ?? []).flatMap((plan) => plan.sorties)
+          .filter((sortie) => airUnits.find((unit) => unit.id === sortie.airUnitId)?.baseId === base.id);
+        const groups = new Map<string, typeof airUnits>();
+        for (const unit of airUnits.filter((candidate) => candidate.baseId === base.id)) {
+          const displayHexId = airBaseLayout.displayHexByAirUnitId.get(unit.id);
+          if (!displayHexId) continue;
+          groups.set(displayHexId, [...(groups.get(displayHexId) ?? []), unit]);
+        }
+        return [...groups.entries()].map(([displayHexId, displayedUnits]) => ({
+          id: base.id,
+          name: base.name,
+          sideId: base.sideId,
+          anchorHexId: base.anchorHexId,
+          displayHexId,
+          damage: base.damage,
+          closed: base.damage >= 2 || (base.suppressedThroughTurn !== null && (snapshot?.turn.gameTurn ?? 0) <= base.suppressedThroughTurn),
+          aircraft: displayedUnits.map((unit) => ({
+            id: unit.id,
+            kind: unit.kind,
+            strengthStepIndex: unit.strengthStepIndex,
+            readiness: unit.readiness,
+            assigned: baseSorties.some((sortie) => sortie.airUnitId === unit.id),
+          })),
+        }));
+      }),
+      legalTargetHexIds,
+    };
+    airOverlayRef.current = overlay;
+    rendererRef.current?.setAirOverlay(overlay);
+  }, [airBaseLayout.displayHexByAirUnitId, airMissionOptions, planningPhase, snapshot, strikePhase]);
 
   useEffect(() => {
     if (snapshot) {
@@ -349,10 +512,21 @@ function App({ game }: { game: NewGameResponse }) {
       setSnapshot(response.snapshot);
       // Units eliminated by these events are only in the previous roster.
       const roster = [...response.snapshot.units, ...snapshot.units];
-      setCombatLog((log) => [...log, ...describeCombatEvents(response.events, roster, (log.length > 0 ? log[log.length - 1].id : 0) + 1)]);
+      const airRoster = [...response.snapshot.airUnits, ...snapshot.airUnits];
+      const airBases = [...response.snapshot.airBases, ...snapshot.airBases];
+      setCombatLog((log) => [...log, ...describeCombatEvents(
+        response.events,
+        roster,
+        airRoster,
+        airBases,
+        (log.length > 0 ? log[log.length - 1].id : 0) + 1,
+      )]);
       rendererRef.current?.setUnits(response.snapshot.units, reserveMarkers(response.snapshot));
       rendererRef.current?.setBattlePlan(activeBattlePlan(response.snapshot));
       setCommandNotice(null);
+      if (response.events.some((event) => event.type === "airSortiePlanned" || event.type === "airSortieCancelled")) {
+        setSelectedAirUnitId(null);
+      }
       const arrivals = response.events.flatMap((event) =>
         event.type === "reinforcementsArrived" ? event.units : [],
       );
@@ -381,19 +555,27 @@ function App({ game }: { game: NewGameResponse }) {
     }
   }, [commandBusy, map, snapshot]);
 
-  // During Offensive Strike, committed missions are resolved before the phase can end.
-  const strikesPending = Boolean(
-    strikePhase && snapshot?.strikePlan && !snapshot.strikePlan.resolved && snapshot.strikePlan.missions.length > 0,
-  );
   const endPhase = useCallback(() => {
-    void submitCommand(strikesPending ? { type: "resolveAirStrikes" } : { type: "endPhase" });
-  }, [strikesPending, submitCommand]);
+    void submitCommand({ type: "endPhase" });
+  }, [submitCommand]);
 
   // Clicking a hex shows it in the Control Panel; clicking a counter in the selected hex then selects that unit.
   const onSelect = useCallback((hex: HexData | null) => {
     setSelected(hex);
     setSelectedUnitId(null);
-  }, []);
+    const airBaseInstallation = hex?.installations?.find((installation) => installation.kind === "airBase") ?? null;
+    if (airBaseInstallation) {
+      setSelectedAirBaseId(airBaseInstallation.id);
+      setSelectedAirCommandUnitId(airBaseInstallation.airUnitId ?? null);
+      const airUnit = snapshot?.airUnits.find((unit) => unit.id === airBaseInstallation.airUnitId);
+      const activeSideId = snapshot?.turn.currentStep?.actor.type === "side" ? snapshot.turn.currentStep.actor.sideId : null;
+      setSelectedAirUnitId(planningPhase && airUnit && airUnit.sideId === activeSideId ? airUnit.id : null);
+    }
+    else if (!selectedAirUnitId) {
+      setSelectedAirBaseId(null);
+      setSelectedAirCommandUnitId(null);
+    }
+  }, [planningPhase, selectedAirUnitId, snapshot]);
 
   const onMoveOrder = useCallback(
     (hexId: string) => {
@@ -408,34 +590,30 @@ function App({ game }: { game: NewGameResponse }) {
     rendererRef.current?.setLayerVisible(layer, visible);
   };
 
+  const canEndPhase = Boolean(
+    snapshot?.status === "inProgress"
+    && snapshot.turn.currentStep?.execution === "interactive"
+    && !(combatPhase && (!combat?.ready || (combatOptions?.mandatoryRemaining.length ?? 0) > 0)),
+  );
+  const phaseActionLabel = combatPhase && (combatOptions?.mandatoryRemaining.length ?? 0) > 0
+    ? `${combatOptions?.mandatoryRemaining.length} Marked Attack${combatOptions?.mandatoryRemaining.length === 1 ? "" : "s"} Left`
+    : "End Phase";
+
   return (
     <div className={logCollapsed ? "app log-collapsed" : "app"}>
-      <TopBar
-        hud={hud}
-        canEndPhase={
-          snapshot?.status === "inProgress"
-          && snapshot.turn.currentStep?.execution === "interactive"
-          // Wait for the core's combat options before offering to end the phase.
-          && !(combatPhase && (!combat?.ready || (combatOptions?.mandatoryRemaining.length ?? 0) > 0))
-        }
-        phaseActionLabel={
-          strikesPending
-            ? "Resolve Air Strikes"
-            : combatPhase && (combatOptions?.mandatoryRemaining.length ?? 0) > 0
-              ? `${combatOptions?.mandatoryRemaining.length} Marked Attack${combatOptions?.mandatoryRemaining.length === 1 ? "" : "s"} Left`
-              : "End Phase"
-        }
-        phaseActionBusy={commandBusy}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onEndPhase={endPhase}
-      />
+      <TopBar hud={hud} />
       <main className="map-area">
         <MapCanvas
           map={map}
           onReady={onReady}
           onHover={() => {}}
           onSelect={onSelect}
-          onUnitSelect={setSelectedUnitId}
+          onUnitSelect={(unitId) => {
+            setSelectedUnitId(unitId);
+            setSelectedAirUnitId(null);
+            setSelectedAirBaseId(null);
+            setSelectedAirCommandUnitId(null);
+          }}
           onMoveOrder={onMoveOrder}
           onZoom={setZoom}
         />
@@ -452,18 +630,63 @@ function App({ game }: { game: NewGameResponse }) {
           attackTargets={attackTargets}
           cities={snapshot.cities}
           movement={{ mode: movementMode, status: movementStatus, onModeChange: setModeChoice }}
-          strike={strike}
+          strike={null}
+          air={selectedAirBaseId && selectedAirCommandUnitId ? {
+            gameTurn: snapshot.turn.gameTurn,
+            phaseId: snapshot.turn.currentStep?.phaseId,
+            activeSideId: snapshot.turn.currentStep?.actor.type === "side" ? snapshot.turn.currentStep.actor.sideId : undefined,
+            units: snapshot.airUnits,
+            knownUnits: [...airRoster.values()],
+            bases: snapshot.airBases,
+            plans: snapshot.airPlans,
+            report: snapshot.airOperationsReport,
+            planningOptions: airPlanningOptions?.revision === snapshot.revision ? airPlanningOptions : null,
+            missionOptions: airMissionOptions?.revision === snapshot.revision && airMissionOptions.airUnitId === selectedAirUnitId ? airMissionOptions : null,
+            selectedAirUnitId,
+            selectedHex: selected,
+            queryBusy: airQueryBusy,
+            commandBusy,
+            groundUnits: snapshot.units,
+            selectedBaseId: selectedAirBaseId,
+            focusedAirUnitId: selectedAirCommandUnitId,
+            onSelectAirUnit: setSelectedAirUnitId,
+            onCommand: (command) => void submitCommand(command),
+            onGoTo: (hexId) => {
+              rendererRef.current?.selectById(hexId, true, false);
+              setSelected(map.hexes.find((hex) => hex.id === hexId) ?? null);
+              setSelectedUnitId(null);
+            },
+            onClose: () => {
+              setSelectedAirUnitId(null);
+              setSelectedAirBaseId(null);
+              setSelectedAirCommandUnitId(null);
+              setSelected(null);
+              rendererRef.current?.select(null, false);
+            },
+          } : null}
           combat={combat}
           onGoTo={(id) => {
             if (!rendererRef.current) return false;
             rendererRef.current.selectById(id);
             return true;
           }}
-          onSelectUnit={setSelectedUnitId}
+          onSelectUnit={(unitId) => {
+            setSelectedUnitId(unitId);
+            if (unitId) {
+              setSelectedAirUnitId(null);
+              setSelectedAirBaseId(null);
+              setSelectedAirCommandUnitId(null);
+            }
+          }}
           onPlanningCommand={(command) => void submitCommand(command)}
           onOpenBattle={setBattleHexId}
           reserveOptions={reserveOptions}
           reserve={snapshot.reserve}
+          canEndPhase={canEndPhase}
+          phaseActionLabel={phaseActionLabel}
+          phaseActionBusy={commandBusy}
+          onEndPhase={endPhase}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
       )}
       {snapshot?.combat && map && combat && plannerHexId && (
@@ -485,6 +708,9 @@ function App({ game }: { game: NewGameResponse }) {
       <BottomBar
         plan={snapshot ? activeBattlePlan(snapshot) : null}
         strikePlan={snapshot?.strikePlan ?? null}
+        airPlans={snapshot?.airPlans ?? []}
+        airUnits={[...airRoster.values()]}
+        airBases={snapshot?.airBases ?? []}
         battles={snapshot?.combat?.battles ?? []}
         reserve={snapshot?.reserve ?? null}
         units={[...roster.values()]}
