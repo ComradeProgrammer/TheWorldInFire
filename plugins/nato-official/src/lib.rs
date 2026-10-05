@@ -10,6 +10,7 @@
 
 #![deny(missing_docs)]
 
+mod air_operations;
 mod airspace;
 mod cities;
 mod combat;
@@ -30,6 +31,7 @@ mod setup;
 mod strikes;
 mod supply;
 
+pub use air_operations::air_combat_table;
 pub use combat::parse_result;
 pub use command::GameCommand;
 pub use error::RuleError;
@@ -37,7 +39,7 @@ pub use event::{GameEvent, UnitSupplyCheck};
 pub use model::*;
 pub use plugin::{NatoPlugin, PLUGIN_ID};
 pub use rules::{Rules, RulesState};
-pub use setup::{GameSetup, SetupCity, SetupStart, SetupUnit};
+pub use setup::{GameSetup, SetupAirBase, SetupAirUnit, SetupCity, SetupStart, SetupUnit};
 pub use strikes::strike_table;
 
 ooaw_plugin_sdk::export_plugin!(NatoPlugin);

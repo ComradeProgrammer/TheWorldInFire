@@ -43,6 +43,12 @@ export interface GameSnapshot {
   airPoints: AirPoints[];
   strikePlan: StrikePlan | null;
   airInterdictionZones: AirInterdictionZone[];
+  /** Named two-step aircraft and off-map bases in the new air-operations system. */
+  airUnits: AirUnitState[];
+  airBases: AirBaseState[];
+  airPlans: AirPlan[];
+  airOperationsReport: AirOperationsReport | null;
+  eliminatedAirUnitIds: string[];
   breakthroughMarkers: BreakthroughMarker[];
   eliminatedUnitIds: string[];
   combat: CombatState | null;
@@ -120,6 +126,103 @@ export interface StrikePlan {
 export interface AirInterdictionZone {
   sideId: string;
   hexId: string;
+}
+
+export type AirUnitKind = "fighter" | "fighterBomber" | "aew";
+export type AirReadiness = "ready" | "aborted" | "flown";
+export type AirSortieStatus = "planned" | "cleared" | "aborted" | "completed" | "targetGone";
+
+export interface AirUnitStep {
+  airCombat: number;
+  evasion: number;
+  strikeModifier: number;
+  combatRadius: number;
+  aewModifier: number;
+  aewRadius: number;
+}
+
+export interface AirUnitState {
+  id: string;
+  name: string;
+  sideId: string;
+  nationId: string;
+  kind: AirUnitKind;
+  baseId: string;
+  steps: [AirUnitStep, AirUnitStep];
+  strengthStepIndex: number;
+  readiness: AirReadiness;
+}
+
+export interface AirBaseState {
+  id: string;
+  name: string;
+  sideId: string;
+  anchorHexId: string;
+  sortieCapacity: number;
+  strikeModifier: number;
+  damage: number;
+  suppressedThroughTurn: number | null;
+}
+
+export type AirMissionAssignment =
+  | { type: "airSuperiority"; centerHexId: string }
+  | { type: "groundStrike"; hexId: string; unitIds: string[] }
+  | { type: "airBaseStrike"; airBaseId: string }
+  | { type: "earlyWarning"; centerHexId: string };
+
+export interface AirSortie {
+  id: number;
+  airUnitId: string;
+  mission: AirMissionAssignment;
+  status: AirSortieStatus;
+}
+
+export interface AirPlan {
+  gameTurn: number;
+  sideId: string;
+  sorties: AirSortie[];
+  nextSortieId: number;
+}
+
+export type AirCombatResult = "noEffect" | "abort" | "damagedAbort" | "destroyedAbort" | "destroyedAndDamagedAbort";
+
+export interface AirCombatAttack {
+  attackerId: string;
+  defenderId: string;
+  column: number;
+  dieRoll: number;
+  modifier: number;
+  modifiedRoll: number;
+  result: AirCombatResult;
+}
+
+export interface AirCombatPairing {
+  round: number;
+  first: AirCombatAttack;
+  second: AirCombatAttack;
+}
+
+export interface AirOperationsReport {
+  gameTurn: number;
+  fighterCombat: AirCombatPairing[];
+  interceptions: AirCombatPairing[];
+  roundLimitReached: boolean;
+}
+
+export interface AirPlanningOptionsResponse {
+  revision: number;
+  sideId: string;
+  units: { airUnitId: string; unavailable: RuleRejection | null }[];
+  bases: AirBaseState[];
+}
+
+export interface AirMissionOptionsResponse {
+  revision: number;
+  airUnitId: string;
+  kind: AirUnitKind;
+  centerHexes: string[];
+  groundTargets: { hexId: string; unitIds: string[] }[];
+  airBaseIds: string[];
 }
 
 export interface StrikeTargetUnit {
@@ -357,6 +460,8 @@ export type GameCommand =
   | { type: "entrainUnit"; unitId: string }
   | { type: "detrainUnit"; unitId: string }
   | { type: "undoDetrainUnit"; unitId: string }
+  | { type: "planAirSortie"; airUnitId: string; mission: AirMissionAssignment }
+  | { type: "cancelAirSortie"; sortieId: number }
   | { type: "planAirStrike"; hexId: string; unitIds: string[]; airPoint: AirPointKind }
   | { type: "planAirInterdiction"; hexId: string; airPoint: AirPointKind }
   | { type: "cancelAirMission"; missionId: number }
@@ -378,9 +483,20 @@ export type GameEvent =
   | { type: "trainStatusChanged"; unitId: string; status: UnitState["trainStatus"] }
   | { type: "unitsResupplied"; hexId: string; unitIds: string[] }
   | { type: "airPointsReset"; airPoints: AirPoints[] }
+  | { type: "airUnitsReadied"; airUnits: AirUnitState[] }
+  | { type: "airSortiePlanned"; sideId: string; sortie: AirSortie }
+  | { type: "airSortieCancelled"; sideId: string; sortieId: number }
+  | { type: "airCombatRoundResolved"; pairing: AirCombatPairing }
+  | { type: "airInterceptionResolved"; pairing: AirCombatPairing }
+  | { type: "airUnitStepLost"; airUnitId: string; strengthStepIndex: number }
+  | { type: "airUnitAborted"; airUnitId: string }
+  | { type: "airUnitEliminated"; airUnitId: string }
+  | { type: "airStrikeAborted"; airUnitId: string }
+  | { type: "airBaseSuppressed"; airBaseId: string; throughTurn: number }
+  | { type: "airBaseDamaged"; airBaseId: string; damage: number }
   | { type: "airMissionPlanned"; sideId: string; mission: AirMission }
   | { type: "airMissionCancelled"; sideId: string; missionId: number }
-  | { type: "airStrikeResolved"; sideId: string; missionId: number; hexId: string; unitIds: string[]; resolution: StrikeResolution }
+  | { type: "airStrikeResolved"; sideId: string; airUnitId?: string; missionId: number; hexId: string; unitIds: string[]; resolution: StrikeResolution }
   | { type: "airInterdictionZonePlaced"; sideId: string; hexId: string }
   | { type: "airInterdictionZonesRemoved"; sideId: string; hexIds: string[] }
   | { type: "unitSupplyChanged"; unitId: string; supply: UnitState["supply"] }
@@ -464,6 +580,18 @@ export async function fetchReserveOptions(): Promise<ReserveOptionsResponse> {
 /** Read-only preview of the phasing side's Air Strike Segment choices. */
 export async function fetchAirStrikeOptions(): Promise<AirStrikeOptionsResponse> {
   const { revision, result } = await rulesQuery<Omit<AirStrikeOptionsResponse, "revision">>("airStrikeOptions");
+  return { revision, ...result };
+}
+
+/** Named-aircraft availability and off-map base state for the planning side. */
+export async function fetchAirPlanningOptions(): Promise<AirPlanningOptionsResponse> {
+  const { revision, result } = await rulesQuery<Omit<AirPlanningOptionsResponse, "revision">>("airPlanningOptions");
+  return { revision, ...result };
+}
+
+/** Legal mission families and targets for one named air counter. */
+export async function fetchAirMissionOptions(airUnitId: string): Promise<AirMissionOptionsResponse> {
+  const { revision, result } = await rulesQuery<Omit<AirMissionOptionsResponse, "revision">>("airMissionOptions", { airUnitId });
   return { revision, ...result };
 }
 

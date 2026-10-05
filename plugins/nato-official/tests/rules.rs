@@ -6,9 +6,10 @@ use common::{CommandOutcome, TestGame};
 use ooaw_core::api::GameStatus;
 use ooaw_core::{Dice, GameId};
 use ooaw_nato::{
-    find_scenario, list_scenarios, AirPointKind, AirPointSource, Airspace, Disruption, GameCommand,
-    GameEvent, HexId, MovementMode, PhaseActor, PhaseExecution, ScenarioDefinition, SideId,
-    StrikeResult, SupplyStatus, TrainStatus, UnitId, UnitLocation, UnitState,
+    air_combat_table, find_scenario, list_scenarios, AirCombatResult, AirMissionAssignment,
+    AirUnitId, AirUnitKind, Airspace, Disruption, GameCommand, GameEvent, HexId, MovementMode,
+    PhaseActor, PhaseExecution, ScenarioDefinition, SideId, StrikeResult, SupplyStatus,
+    TrainStatus, UnitId, UnitLocation, UnitState,
 };
 
 /// Creates a fresh standard NATO scenario engine for unit tests.
@@ -151,6 +152,7 @@ fn sides_alternate_within_each_phase() {
             "nato.preBattle",
             "warsawPact.battlePlanning",
             "nato.battlePlanning",
+            "joint.jointAirOperations",
             "warsawPact.offensiveStrike",
             "nato.offensiveStrike",
             "warsawPact.combat",
@@ -1303,16 +1305,6 @@ fn advance_to(game: &mut TestGame, side: &str, phase: &str) {
     }
 }
 
-/// Builds an Air Strike command with an ordered target list and chosen Air Point kind.
-fn air_strike(hex: &str, units: &[&str], air_point: AirPointKind) -> GameCommand {
-    GameCommand::PlanAirStrike {
-        hex_id: HexId(hex.to_owned()),
-        unit_ids: units.iter().map(|id| UnitId((*id).to_owned())).collect(),
-        air_point,
-    }
-}
-
-const PZG_16: &str = "westGermany.6panzergrenadierDivision.16panzergrenadierBrigade";
 const PZG_17: &str = "westGermany.6panzergrenadierDivision.17panzergrenadierBrigade";
 
 /// A side's Breakthrough Marker in a hex.
@@ -1331,6 +1323,14 @@ fn dice_rolling(roll: u8) -> Dice {
         .unwrap()
 }
 
+/// Dice whose next d20 roll is `roll`.
+fn dice_d20_rolling(roll: u8) -> Dice {
+    (0..)
+        .map(|seed: u32| Dice::from_seed_text(&seed.to_string()))
+        .find(|dice| dice.clone().roll(20) == u32::from(roll))
+        .unwrap()
+}
+
 /// Verifies modified die rolls map to the one-point Strike Table results.
 #[test]
 fn strike_table_matches_the_one_point_column() {
@@ -1343,200 +1343,210 @@ fn strike_table_matches_the_one_point_column() {
     assert_eq!(strike_table(8), StrikeResult::StepLoss);
 }
 
-/// Verifies recurring Air Points reset while unspent bonus Tactical points carry over.
+/// Verifies the boundary rows of the 1985 d20 Air Combat Table.
 #[test]
-fn baltap_air_points_reset_each_turn_and_the_bonus_is_kept() {
-    let game = baltap_at("warsawPact", "offensiveStrike");
-    for points in game.snapshot().air_points {
-        assert_eq!(
-            (points.tactical, points.operational, points.bonus_tactical),
-            (1, 0, 1)
-        );
-    }
+fn air_combat_table_matches_1985() {
+    assert_eq!(air_combat_table(-4, 15), AirCombatResult::NoEffect);
+    assert_eq!(air_combat_table(-4, 16), AirCombatResult::Abort);
+    assert_eq!(air_combat_table(-4, 19), AirCombatResult::DamagedAbort);
+    assert_eq!(
+        air_combat_table(0, 19),
+        AirCombatResult::DestroyedAndDamagedAbort
+    );
+    assert_eq!(air_combat_table(4, 3), AirCombatResult::NoEffect);
+    assert_eq!(
+        air_combat_table(4, 13),
+        AirCombatResult::DestroyedAndDamagedAbort
+    );
 }
 
-/// Verifies air mission targeting limits and cancellation refunds to the correct Air Point pool.
-#[test]
-fn air_strikes_respect_targeting_limits_and_refund_on_cancel() {
-    let mut game = baltap_at("warsawPact", "offensiveStrike");
-    // Two one-step brigades in one strike.
-    game.execute(air_strike(
-        "2415",
-        &[PZG_16, PZG_17],
-        AirPointKind::Tactical,
-    ))
-    .unwrap();
-    // No unit may be struck twice in the segment.
-    assert_eq!(
-        game.execute(air_strike("2415", &[PZG_16], AirPointKind::Tactical))
-            .unwrap_err()
-            .code,
-        "unitAlreadyTargeted"
-    );
-    // An HQ needs Operational Air Points.
-    assert_eq!(
-        game.execute(air_strike(
-            "2117",
-            &["westGermany.landjut.hq"],
-            AirPointKind::Tactical
-        ))
-        .unwrap_err()
-        .code,
-        "operationalPointRequired"
-    );
-    // Tactical Air Points never reach enemy Airspace (Sjælland, far from WP sources).
-    assert_eq!(
-        game.execute(air_strike(
-            "1411",
-            &["denmark.landzealand.1mechanizedBrigade"],
-            AirPointKind::Tactical
-        ))
-        .unwrap_err()
-        .code,
-        "enemyAirspace"
-    );
-    // The second Tactical point comes from the one-time bonus; then none are left.
-    game.execute(air_strike(
-        "2216",
-        &["westGermany.6panzergrenadierDivision.18panzerBrigade"],
-        AirPointKind::Tactical,
-    ))
-    .unwrap();
-    let points = |game: &TestGame| {
-        let points = game.snapshot().air_points;
-        let wp = points.iter().find(|p| p.side_id.0 == "warsawPact").unwrap();
-        (wp.tactical, wp.bonus_tactical)
-    };
-    assert_eq!(points(&game), (0, 0));
-    let plan = game.snapshot().strike_plan.unwrap();
-    assert_eq!(plan.missions[1].source, AirPointSource::BonusTactical);
-
-    game.execute(GameCommand::CancelAirMission {
-        mission_id: plan.missions[1].id,
+fn plan_sortie(game: &mut TestGame, air_unit_id: &str, mission: AirMissionAssignment) {
+    game.execute(GameCommand::PlanAirSortie {
+        air_unit_id: AirUnitId(air_unit_id.to_owned()),
+        mission,
     })
     .unwrap();
-    assert_eq!(points(&game), (0, 1));
 }
 
-/// Verifies deterministic strike rolls use the target modifier shown by the preview.
+/// Verifies named air counters, mission compatibility, and cancellation.
 #[test]
-fn air_strike_resolution_is_deterministic_and_uses_the_previewed_modifier() {
-    let mut game = baltap_at("warsawPact", "offensiveStrike");
-    let preview = game.air_strike_options().unwrap();
-    let target = preview
-        .targets
-        .iter()
-        .find(|target| target.hex_id.0 == "2415")
-        .unwrap();
-    let modifier = target.units.iter().map(|unit| unit.modifier).min().unwrap();
-    // Surprise gives the WP +1 on turn 1.
-    assert!(target.units.iter().all(|unit| unit.modifier >= 1));
-
-    game.execute(air_strike(
-        "2415",
-        &[PZG_16, PZG_17],
-        AirPointKind::Tactical,
-    ))
-    .unwrap();
-    let expected_roll = game.dice().d6();
-    let outcome = game.execute(GameCommand::ResolveAirStrikes).unwrap();
-    let resolution = outcome
-        .events
-        .iter()
-        .find_map(|event| match event {
-            GameEvent::AirStrikeResolved { resolution, .. } => Some(resolution.clone()),
-            _ => None,
-        })
-        .unwrap();
-    assert_eq!(resolution.die_roll, expected_roll);
-    assert_eq!(resolution.modifier, modifier);
+fn named_air_units_are_planned_from_off_map_bases() {
+    let mut game = baltap_planning("warsawPact", &[(GERMAN, "2415")]);
+    let options = game.air_planning_options().unwrap();
+    assert_eq!(options.units.len(), 5);
+    assert_eq!(options.bases[0].effective_capacity(1), 5);
+    let fighter = AirUnitId("soviet.787.fighter".to_owned());
     assert_eq!(
-        resolution.result,
-        ooaw_nato::strike_table(expected_roll as i8 + modifier)
+        game.air_mission_options(&fighter).unwrap().kind,
+        AirUnitKind::Fighter
     );
-    let plan = outcome.snapshot.strike_plan.unwrap();
-    assert!(plan.resolved);
-    assert_eq!(plan.missions[0].resolution, Some(resolution));
-    // No further missions after resolution.
+    plan_sortie(
+        &mut game,
+        &fighter.0,
+        AirMissionAssignment::AirSuperiority {
+            center_hex_id: HexId("2806".to_owned()),
+        },
+    );
     assert_eq!(
-        game.execute(air_strike(
-            "2216",
-            &["westGermany.6panzergrenadierDivision.18panzerBrigade"],
-            AirPointKind::Tactical
-        ))
+        game.execute(GameCommand::PlanAirSortie {
+            air_unit_id: fighter.clone(),
+            mission: AirMissionAssignment::AirSuperiority {
+                center_hex_id: HexId("2807".to_owned()),
+            },
+        })
         .unwrap_err()
         .code,
-        "strikesResolved"
+        "airUnitAlreadyAssigned"
     );
-}
-
-/// Verifies eliminating a hex's last enemy unit by a strike places a Breakthrough Marker.
-#[test]
-fn a_step_loss_on_the_last_unit_in_a_hex_leaves_a_breakthrough_marker() {
-    let mut game = baltap_at("warsawPact", "offensiveStrike");
-    game.execute(air_strike(
-        "2216",
-        &["westGermany.6panzergrenadierDivision.18panzerBrigade"],
-        AirPointKind::Tactical,
-    ))
-    .unwrap();
-    game.set_dice(dice_rolling(6));
-    let outcome = game.execute(GameCommand::ResolveAirStrikes).unwrap();
-    let brigade = UnitId("westGermany.6panzergrenadierDivision.18panzerBrigade".to_owned());
-    assert!(outcome.events.contains(&GameEvent::UnitEliminated {
-        unit_id: brigade.clone(),
-        hex_id: HexId("2216".to_owned()),
-    }));
-    assert_eq!(outcome.snapshot.eliminated_unit_ids, vec![brigade]);
-    assert_eq!(
-        outcome.snapshot.breakthrough_markers,
-        vec![marker("warsawPact", "2216")]
-    );
-    // Breakthrough Markers come off at the end of the WP Reserve Phase.
-    advance_to(&mut game, "warsawPact", "reserve");
-    game.execute(GameCommand::EndPhase).unwrap();
-    assert!(game.snapshot().breakthrough_markers.is_empty());
-}
-
-/// Verifies Disrupted units are limited to Minimum movement until their markers are removed.
-#[test]
-fn disrupted_units_use_minimum_movement_until_their_recovery() {
-    let mut game = baltap_at("warsawPact", "offensiveStrike");
-    game.execute(air_strike(
-        "2415",
-        &[PZG_16, PZG_17],
-        AirPointKind::Tactical,
-    ))
-    .unwrap();
-    game.set_dice(dice_rolling(3)); // 3 + modifiers stays in the Disrupted band.
-    let outcome = game.execute(GameCommand::ResolveAirStrikes).unwrap();
-    assert!(outcome.events.contains(&GameEvent::UnitDisruptionChanged {
-        unit_id: UnitId(PZG_16.to_owned()),
-        disruption: Some(Disruption::Disrupted),
-    }));
-
-    advance_to(&mut game, "nato", "battlePlanning");
-    let modes = game.movement_modes(&UnitId(PZG_16.to_owned())).unwrap();
-    let mode = |mode: MovementMode| modes.iter().find(|entry| entry.mode == mode).unwrap();
-    assert_eq!(
-        mode(MovementMode::March).unavailable.as_ref().unwrap().code,
-        "unitDisrupted"
-    );
-    // Only single-hex Minimum movement remains.
-    assert!(mode(MovementMode::Tactical)
-        .options
-        .iter()
-        .all(|option| option.path.len() == 1));
-
-    // Recovery at the end of Battle Planning removes the marker.
-    game.execute(GameCommand::EndPhase).unwrap();
-    let unit = game
-        .snapshot()
-        .units
-        .into_iter()
-        .find(|unit| unit.id().0 == PZG_16)
+    let sortie_id = game.snapshot().air_plans[0].sorties[0].id;
+    game.execute(GameCommand::CancelAirSortie { sortie_id })
         .unwrap();
-    assert_eq!(unit.disruption, None);
+    assert!(game.snapshot().air_plans[0].sorties.is_empty());
+
+    let duplicate = UnitId(GERMAN.to_owned());
+    assert_eq!(
+        game.execute(GameCommand::PlanAirSortie {
+            air_unit_id: AirUnitId("soviet.296.su17".to_owned()),
+            mission: AirMissionAssignment::GroundStrike {
+                hex_id: HexId("2415".to_owned()),
+                unit_ids: vec![duplicate.clone(), duplicate],
+            },
+        })
+        .unwrap_err()
+        .code,
+        "duplicateStrikeTarget"
+    );
+}
+
+/// Verifies fighter combat is automatic, recorded, and receives AEW modifiers.
+#[test]
+fn fighters_fight_before_strikes_and_aew_modifies_the_roll() {
+    let mut game = baltap_planning("warsawPact", &[]);
+    plan_sortie(
+        &mut game,
+        "soviet.787.fighter",
+        AirMissionAssignment::AirSuperiority {
+            center_hex_id: HexId("2412".to_owned()),
+        },
+    );
+    plan_sortie(
+        &mut game,
+        "soviet.aew",
+        AirMissionAssignment::EarlyWarning {
+            center_hex_id: HexId("2412".to_owned()),
+        },
+    );
+    game.execute(GameCommand::EndPhase).unwrap();
+    plan_sortie(
+        &mut game,
+        "us.525.f15",
+        AirMissionAssignment::AirSuperiority {
+            center_hex_id: HexId("2412".to_owned()),
+        },
+    );
+    plan_sortie(
+        &mut game,
+        "nato.e3a",
+        AirMissionAssignment::EarlyWarning {
+            center_hex_id: HexId("2412".to_owned()),
+        },
+    );
+    game.execute(GameCommand::EndPhase).unwrap();
+    let report = game.snapshot().air_operations_report.unwrap();
+    assert!(!report.fighter_combat.is_empty());
+    let first = &report.fighter_combat[0];
+    let nato_attack = [&first.first, &first.second]
+        .into_iter()
+        .find(|attack| attack.attacker_id.0 == "us.525.f15")
+        .unwrap();
+    assert_eq!(nato_attack.modifier, 2);
+}
+
+/// Verifies an unopposed fighter can intercept at most one hostile strike aircraft.
+#[test]
+fn surviving_fighter_intercepts_a_fighter_bomber_in_its_radius() {
+    let mut game = baltap_planning("warsawPact", &[(SOVIET, "2412")]);
+    plan_sortie(
+        &mut game,
+        "soviet.787.fighter",
+        AirMissionAssignment::AirSuperiority {
+            center_hex_id: HexId("2412".to_owned()),
+        },
+    );
+    game.execute(GameCommand::EndPhase).unwrap();
+    plan_sortie(
+        &mut game,
+        "us.480.strike",
+        AirMissionAssignment::GroundStrike {
+            hex_id: HexId("2412".to_owned()),
+            unit_ids: vec![UnitId(SOVIET.to_owned())],
+        },
+    );
+    game.execute(GameCommand::EndPhase).unwrap();
+    assert_eq!(
+        game.snapshot()
+            .air_operations_report
+            .unwrap()
+            .interceptions
+            .len(),
+        1
+    );
+}
+
+/// Verifies a strike aircraft destroyed during interception records its cancelled strike.
+#[test]
+fn interception_elimination_aborts_the_planned_strike() {
+    let mut game = baltap_planning("warsawPact", &[(SOVIET, "2412")]);
+    plan_sortie(
+        &mut game,
+        "soviet.787.fighter",
+        AirMissionAssignment::AirSuperiority {
+            center_hex_id: HexId("2412".to_owned()),
+        },
+    );
+    game.execute(GameCommand::EndPhase).unwrap();
+    plan_sortie(
+        &mut game,
+        "us.480.strike",
+        AirMissionAssignment::GroundStrike {
+            hex_id: HexId("2412".to_owned()),
+            unit_ids: vec![UnitId(SOVIET.to_owned())],
+        },
+    );
+    game.set_dice(dice_d20_rolling(20));
+    let events = game.execute(GameCommand::EndPhase).unwrap().events;
+    let bomber = AirUnitId("us.480.strike".to_owned());
+    assert!(events.iter().any(
+        |event| matches!(event, GameEvent::AirUnitEliminated { air_unit_id } if air_unit_id == &bomber)
+    ));
+    assert!(events.iter().any(
+        |event| matches!(event, GameEvent::AirStrikeAborted { air_unit_id } if air_unit_id == &bomber)
+    ));
+}
+
+/// Verifies an unopposed fighter-bomber automatically damages an off-map airbase.
+#[test]
+fn fighter_bomber_can_damage_an_off_map_airbase() {
+    let mut game = baltap_planning("warsawPact", &[]);
+    plan_sortie(
+        &mut game,
+        "soviet.296.su17",
+        AirMissionAssignment::AirBaseStrike {
+            air_base_id: ooaw_nato::AirBaseId("nato.airbase.west".to_owned()),
+        },
+    );
+    game.execute(GameCommand::EndPhase).unwrap();
+    game.set_dice(dice_rolling(6));
+    game.execute(GameCommand::EndPhase).unwrap();
+    let base = game
+        .snapshot()
+        .air_bases
+        .into_iter()
+        .find(|base| base.definition.id.0 == "nato.airbase.west")
+        .unwrap();
+    assert_eq!(base.damage, 1);
+    assert_eq!(base.suppressed_through_turn, Some(2));
+    assert_eq!(base.effective_capacity(2), 0);
 }
 
 /// Verifies enemy Air Interdiction Zones add Tactical movement costs and block March movement.
@@ -1575,30 +1585,10 @@ fn air_interdiction_zones_slow_tactical_and_bar_march_movement() {
     assert!(march.iter().all(|option| option.hex_id.0 != "3320"));
 }
 
-/// Verifies interdiction starts on mission resolution and expires after the enemy Reserve Phase.
-#[test]
-fn interdiction_is_placed_on_resolution_and_removed_after_the_enemy_reserve_phase() {
-    let mut game = baltap_at("warsawPact", "offensiveStrike");
-    game.execute(GameCommand::PlanAirInterdiction {
-        hex_id: HexId("2414".to_owned()),
-        air_point: AirPointKind::Tactical,
-    })
-    .unwrap();
-    // Ending the phase resolves pending missions.
-    game.execute(GameCommand::EndPhase).unwrap();
-    assert_eq!(game.snapshot().air_interdiction_zones.len(), 1);
-    // The zone survives the WP Reserve Phase and is removed after NATO's.
-    advance_to(&mut game, "warsawPact", "reserve");
-    game.execute(GameCommand::EndPhase).unwrap();
-    assert_eq!(game.snapshot().air_interdiction_zones.len(), 1);
-    game.execute(GameCommand::EndPhase).unwrap();
-    assert!(game.snapshot().air_interdiction_zones.is_empty());
-}
-
 /// Verifies West Berlin's city definition does not project airspace control.
 #[test]
 fn west_berlin_does_not_contest_airspace() {
-    let mut game = baltap_at("warsawPact", "offensiveStrike");
+    let mut game = baltap_planning("warsawPact", &[]);
     let airspace = game.airspace(&SideId("warsawPact".to_owned()));
     // Next to West Berlin, with no NATO unit nearby, the Airspace is WP-friendly.
     assert_eq!(airspace[&HexId("3006".to_owned())], Airspace::Friendly);

@@ -6,8 +6,8 @@ use serde::Deserialize;
 use super::nato_map::nato_map;
 use super::scenario::{reinforcement, side, standard_turn_sequence};
 use super::{
-    BattlePlanningRules, FormationId, HexId, OffensiveSupportHq, ScenarioDefinition, TrainStatus,
-    UnitId, UnitLocation,
+    standard_air_forces, BattlePlanningRules, FormationId, HexId, OffensiveSupportHq,
+    ScenarioDefinition, TrainStatus, UnitId, UnitLocation,
 };
 
 /// Stable public IDs, shared by lookup and the client-facing registry.
@@ -84,6 +84,7 @@ pub(crate) fn campaign_scenario(id: &str) -> Option<ScenarioDefinition> {
         "War of Nerves"
     };
     let year = id.rsplit('-').next()?;
+    let (air_bases, air_units) = standard_air_forces(year);
     let mut rules = BattlePlanningRules {
         // 37.2.1.2 / 38.2.1.2 / 40.2.1.2.
         warsaw_pact_airlift_commands: if extended_buildup { 4 } else { 3 },
@@ -171,6 +172,8 @@ pub(crate) fn campaign_scenario(id: &str) -> Option<ScenarioDefinition> {
         battle_planning_rules: rules,
         sides: vec![side("warsawPact", "Warsaw Pact"), side("nato", "NATO")],
         turn_sequence: standard_turn_sequence(),
+        air_bases,
+        air_units,
         reinforcements,
         offensive_support_hqs,
         withdrawals: Vec::new(),

@@ -12,7 +12,8 @@ use crate::command::GameCommand;
 use crate::error::RuleError;
 use crate::event::GameEvent;
 use crate::model::{
-    find_scenario, list_scenarios, HexId, MovementMode, ScenarioDefinition, SideId, UnitId,
+    find_scenario, list_scenarios, AirUnitId, HexId, MovementMode, ScenarioDefinition, SideId,
+    UnitId,
 };
 use crate::rules::{decode, encode, Rules};
 use crate::setup::GameSetup;
@@ -21,11 +22,12 @@ use crate::setup::GameSetup;
 pub const PLUGIN_ID: &str = "ooaw.nato";
 
 /// Phase types whose start or end the NATO rules handle.
-const PHASES: [&str; 8] = [
+const PHASES: [&str; 9] = [
     "jointStatus",
     "jointReinforcement",
     "preBattle",
     "battlePlanning",
+    "jointAirOperations",
     "offensiveStrike",
     "combat",
     "reserve",
@@ -33,7 +35,7 @@ const PHASES: [&str; 8] = [
 ];
 
 /// Command `type` tags the NATO rules execute.
-const COMMANDS: [&str; 15] = [
+const COMMANDS: [&str; 13] = [
     "setResupplyTarget",
     "setAttackTarget",
     "moveUnit",
@@ -42,22 +44,22 @@ const COMMANDS: [&str; 15] = [
     "entrainUnit",
     "detrainUnit",
     "undoDetrainUnit",
-    "planAirStrike",
-    "planAirInterdiction",
-    "cancelAirMission",
-    "resolveAirStrikes",
+    "planAirSortie",
+    "cancelAirSortie",
     "resolveBattle",
     "advanceAfterCombat",
     "debug.checkSupply",
 ];
 
 /// Read-only queries the NATO rules answer.
-const QUERIES: [&str; 9] = [
+const QUERIES: [&str; 11] = [
     "movementModes",
     "movementOptions",
     "attackTargetOptions",
     "reserveOptions",
     "airStrikeOptions",
+    "airPlanningOptions",
+    "airMissionOptions",
     "combatOptions",
     "battlePreview",
     "enemyZoc",
@@ -75,6 +77,12 @@ pub struct NatoPlugin {
 #[serde(rename_all = "camelCase")]
 struct UnitInput {
     unit_id: UnitId,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AirUnitInput {
+    air_unit_id: AirUnitId,
 }
 
 #[derive(Deserialize)]
@@ -221,6 +229,11 @@ impl RulesPlugin for NatoPlugin {
             "attackTargetOptions" => encode(&rules.attack_target_options()?),
             "reserveOptions" => encode(&rules.reserve_options()?),
             "airStrikeOptions" => encode(&rules.air_strike_options()?),
+            "airPlanningOptions" => encode(&rules.air_planning_options()?),
+            "airMissionOptions" => {
+                let input: AirUnitInput = decode(input)?;
+                encode(&rules.air_mission_options(&input.air_unit_id)?)
+            }
             "combatOptions" => encode(&rules.combat_options()?),
             "battlePreview" => {
                 let input: BattlePreviewInput = decode(input)?;

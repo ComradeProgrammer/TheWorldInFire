@@ -2,7 +2,7 @@
 
 ## 回合顺序
 
-`plugins/nato-official/src/model/scenario.rs` 中的 `standard_turn_sequence` 为每个场景生成阶段顺序：两个联合阶段之后，每个双方阶段都先由华约、再由北约进行（`warsawPact.preBattle`、`nato.preBattle`、`warsawPact.battlePlanning`、`nato.battlePlanning`，依此类推，经过进攻打击、战斗、预备队和战后阶段）。内核只是按这个列表推进；规则负责让交替进行成立：
+`plugins/nato-official/src/model/scenario.rs` 中的 `standard_turn_sequence` 为每个场景生成阶段顺序：开局联合阶段，华约与北约的战前和战斗计划阶段，自动 `jointAirOperations`，随后是双方的进攻打击、战斗、预备队和战后阶段。内核只是按这个列表推进；规则负责让交替进行成立：
 
 - **每方各自的战斗计划。**规则状态在 `battlePlans` 中为每方保存一份计划。一方的战斗计划阶段会替换该方自己的计划，该计划随后用于该方自己的打击、战斗（华约标记的目标）和预备队阶段，即使另一方在其间进行了自己的阶段。`Rules::active_plan` 返回行动方的计划。
 - **归属一方的突破标记。**`breakthroughMarkers` 的每一项是 `{ sideId, hexId }`。只有拥有方可以对该格进行仅推进的进攻或使用其突破区，也只有拥有方的预备队阶段会移除它。`breakthroughMarkerPlaced` 和 `breakthroughMarkersRemoved` 事件带有 `sideId`。
@@ -40,7 +40,7 @@
 - 内核权威寻路与移动校验：地形与格边消耗、移动力、禁行地形、敌方控制区、最低移动、丹麦渡轮、敌占格与堆叠限制，以及只读的移动预览；
 - 剧本规则数据中的铁路距离（20 格）、铁路容量（华约 8 步/北约 10 步，只计已装车单位）、各方空运司令部数量（BALTAP：华约 3、北约 1）、每回合再补给行动数量和 4 个机动步堆叠上限；
 - 战斗计划路线与攻击目标的前端地图叠加显示；
-- 空域（规则 11）与进攻打击阶段的空中打击环节：空中点数、空中打击、空中遮断区、混乱/压制标记、战力面损失、消灭和突破标记，并使用带种子的骰子；
+- 有名称的两步战斗机、战斗轰炸机和预警机，地图外机场，计划阶段出动，以及使用带种子骰子的自动制空战、截击和地面/机场打击；
 - 预备队/OMG 状态、带突破区的预备队阶段，以及战后阶段的解除压制（见“预备队与战后阶段”）；
 - 在每方战前步骤中追踪的简化补给（见“简化补给”）；
 - 七回合与十四回合状态机测试。
@@ -49,7 +49,7 @@
 
 - 完整单位序列与尚未进入地图数据的道路、河流通行修正；
 - 完整的规则 10 补给模型（本国与友国、上级 HQ 隶属、港口、地图边缘补给源、城市补给链，以及每场战斗后重新检查战斗补给）；目前实现的是简化的两阵营版本；
-- 拦截、空运损失与升降机司令部完整编制；
+- 对空运的截击、空运损失与升降机司令部完整编制；
 - 核打击、化学打击、炮兵打击、北约纵深遮断、北约防御性空中打击，以及下文“战斗阶段”所列的地面战斗未实现部分；
 - 预备队直升机移动（28.2.2），需要先实现直升机移动；
 - 完整战役部署、战前与和平/动员流程，以及正式剧本胜利条件（已接入六个战争阶段版本，见 [战役剧本](campaign-scenarios.md)）；
@@ -122,28 +122,37 @@ Pre-battle
 ```text
 jointStatus
 → jointReinforcement
-→ warsawPact.preBattle ... warsawPact.postBattle
-→ nato.preBattle ... nato.postBattle
+→ warsawPact.preBattle → nato.preBattle
+→ warsawPact.battlePlanning → nato.battlePlanning
+→ jointAirOperations
+→ warsawPact.offensiveStrike → nato.offensiveStrike
+→ warsawPact.combat → nato.combat
+→ warsawPact.reserve → nato.reserve
+→ warsawPact.postBattle → nato.postBattle
 ```
 
 联合阶段的 actor 为 `all`，之后的阶段 actor 为对应阵营。
 
 `jointReinforcement` 是自动阶段。进入该阶段时，内核从场景的增援表中取出当前回合的单位，将其加入权威状态，并返回包含完整单位状态的 `reinforcementsArrived` 事件。第一回合的条目使用同一机制表示开局部署，不另设一套初始化逻辑。
 
-### 进攻打击阶段
+### 空中行动与进攻打击阶段
 
-`src/strikes.rs` 实现空中打击环节（20、23），`src/airspace.rs` 计算空域（11）。骰子属于内核（`crates/ooaw-core/src/dice.rs`）：以游戏 ID 为种子的 SplitMix64 生成器，插件通过 `roll` 导入函数掷骰，因此相同的命令序列会得到完全相同的结果。骰子状态属于内核状态，但不在客户端快照中；存档必须保存它。
+`src/air_operations.rs` 实现命名空军算子的计划、制空战、截击和机场打击，`src/strikes.rs` 提供地面打击结算，`src/airspace.rs` 计算用于地面移动的静态空域（11）。骰子属于内核（`crates/ooaw-core/src/dice.rs`）：以游戏 ID 为种子的 SplitMix64 生成器，插件通过 `roll` 导入函数掷 d6 或 d20，因此相同的命令序列会得到完全相同的结果。骰子状态属于内核状态，但不在客户端快照中；存档必须保存它。
 
-- **空中点数**在每个联合增援阶段按 `BattlePlanningRules::air_power` 重置（每方：每回合的战术和战役点数，以及一次性的额外战术点数）。BALTAP：双方每回合各 1 个战术点数，各 1 个额外点数，没有战役点数，第一回合奇袭（剧本手册 36.4.1.4、36.4.1.6）。规则原型使用占位值（2 战术、1 战役）；空中战役表尚未实现。
-- **任务**（`strikePlan.missions`）通过 `planAirStrike` 或 `planAirInterdiction` 下达，并由 `resolveAirStrikes` 一并结算，或在 `endPhase` 时自动结算（23.2.4）。`cancelAirMission` 将未结算任务的点数退回其来源。目标限制：每次打击两个战力面；HQ 只能被单独打击且只能用战役点数；同一单位不能被打击两次；每格最多两次打击；战术点数只能用于己方或争夺空域。
+- **空军算子**分为战斗机、战斗轰炸机和预警机，均为两步单位并隶属于地图外机场。联合增援阶段会把尚存飞机恢复为 `ready`，但不恢复损失的战力面。
+- **任务**在各方战斗计划阶段通过 `planAirSortie` 下达，通过 `cancelAirSortie` 撤回。战斗机指定制空中心格，战斗轰炸机指定地面单位或敌方机场，预警机指定支援中心格。引擎校验单位状态、任务类型、机场容量、目标位置、两步目标上限、HQ 单独受击和重复目标。
+- **联合空中行动**在双方计划结束后自动运行。相交战斗空域中的战斗机用确定性最大匹配配对并同时攻击；随后仍可作战的战斗机各截击一架目标位于其半径内的战斗轰炸机。空战值减目标规避值得到 −4 至 +4 的表列，掷 d20 并加有效预警机修正。完整结果保存在 `airOperationsReport`。
+- **预警机**在支援半径内提供修正，多个修正只取最高值。当前版本不允许攻击预警机。
+- **地图外机场**有出动容量、地图边缘锚点、0–2 点损伤和压制截止回合。1 点损伤使容量减半并向上取整，2 点损伤或压制使容量为零。本回合已升空的飞机不受稍后机场损伤影响。
+- **进攻打击**在所属方进攻打击阶段开始时自动结算所有幸存且未中止的战斗轰炸机任务；互动阶段保留为结果检查点。地面任务仍使用 NATO 的 d6 打击表，机场任务按结果造成压制或永久损伤。
 - **打击表**采用 1 点一栏，并使用印刷的修正：大型/关键城市 −2；森林、崎岖地、山地或小城市 −1；铁路标记 +1（取代地形修正）；己方空域 +1；敌方空域 −1；奇袭回合的华约 +1。目标修正不同时取最低总和（23.3.1）。第一个指定的单位承受战力面损失。
 - **结果**：混乱（HQ 为压制；混乱的单位失去铁路标记）、战力面损失（翻面并混乱，或消灭），以及当格内最后一个敌方单位被消灭时放置突破标记。
 - **标记时机**（合并后的顺序）：混乱标记在所属方战斗计划结束时移除（原规则的恢复阶段在移动之后）；压制标记在所属方的战后步骤（解除压制）移除；行动方自己的突破标记和敌方空中遮断区在行动方结束预备阶段时移除（23.8.2、28.2.5）。
 - **空域**：每方在其有补给的地图单位以及其控制的每个城市五格以内投射空域，西柏林除外（11.5，地图中的 `contestsAirspace: false`）。城市补给尚未追踪，因此所有己方控制的城市都计入。双方都未投射到的格子视为争夺空域。空域现在也约束行军和铁路（仅己方空域）、装车（仅己方空域）以及空运（不能从敌方空域出发或进入敌方空域）。
-- **空中遮断区**（23.8）：另一方战术移动进入遮断区额外 +1 移动点，并禁止其行军和铁路移动进入。
+- **空中遮断区**（23.8）的状态和移动效果仍可读取旧存档与测试局面，但新空军任务暂不提供遮断任务。
 - **混乱与移动**：混乱或被压制的单位只能进行最低移动，且不能装车。
 
-本阶段尚未实现：核打击与化学打击（及末日与战争罪惩罚）、华约炮兵师（BALTAP 中没有）、北约纵深遮断、对 Reforger 地点的打击、筑垒格，以及丹麦空域例外。
+本阶段尚未实现：预警机受击、机场修复、空军补充、SEAD/高炮、核打击与化学打击（及末日与战争罪惩罚）、华约炮兵师（BALTAP 中没有）、北约纵深遮断、对 Reforger 地点的打击、筑垒格，以及丹麦空域例外。
 
 ### 战斗阶段
 
@@ -236,6 +245,7 @@ plugins/nato-official/src/    官方 NATO 规则插件
 ├─ filters.rs    其他插件可参与的扩展点
 ├─ phase.rs      阶段入口处理器
 ├─ planning.rs   战斗计划命令与计划记录
+├─ air_operations.rs 空军计划、空战、截击与打击
 ├─ movement.rs   移动规则、寻路与移动预览
 ├─ strikes.rs    进攻打击阶段：空中任务、打击表与标记
 ├─ combat.rs     战斗阶段：战斗比、战斗结果表、结果、撤退与推进
@@ -332,7 +342,7 @@ new_game("nato-baltap-1983")
 }
 ```
 
-`protocolVersion`、`gameId`、`revision`、`scenario`、`status`、`turn`、`units`、`cities` 和 `pendingDecision` 由内核定义。其余顶层字段（`battlePlans`、`airPoints`、`strikePlan`、`airInterdictionZones`、`breakthroughMarkers`、`eliminatedUnitIds`、`combat`、`reserve`）是 NATO 插件保存在内核中的规则状态；单位的 `supply`、`trainStatus` 和 `disruption` 是规则拥有的单位标记。
+`protocolVersion`、`gameId`、`revision`、`scenario`、`status`、`turn`、`units`、`cities` 和 `pendingDecision` 由内核定义。其余顶层字段（`battlePlans`、`airUnits`、`airBases`、`airPlans`、`airOperationsReport`、`eliminatedAirUnitIds`、`airInterdictionZones`、`breakthroughMarkers`、`eliminatedUnitIds`、`combat`、`reserve`）是 NATO 插件保存在内核中的规则状态；`airPoints` 和 `strikePlan` 暂时以空值保留供旧前端迁移。单位的 `supply`、`trainStatus` 和 `disruption` 是规则拥有的单位标记。
 
 当前命令请求：
 
@@ -368,18 +378,16 @@ rules_query(attackTargetOptions)  →  { "revision": 3, "result": ["2214", "2415
 `attackTargetOptions` 列出有敌方单位或属于敌方自由城市的格子（25.1.1）。
 
 ```text
-rules_query(airStrikeOptions)  →  { "revision": 5, "result": { "tacticalHexes": [...], "friendlyHexes": [...],
-  "targets": [{ "hexId": "2415", "airspace": "contested", "tacticalAllowed": true, "strikesRemaining": 2,
-                "units": [{ "unitId": "...", "steps": 1, "modifier": 1, "headquarters": false, "alreadyTargeted": false }] }] } }
+rules_query(airPlanningOptions) → 当前计划方的飞机可用性与机场状态
+rules_query(airMissionOptions, { "airUnitId": "us.525.f15" }) → 可选中心格或目标
 ```
 
-进攻打击命令：
+空军计划命令：
 
 ```json
-{ "type": "planAirStrike", "hexId": "2415", "unitIds": ["westGermany.6panzergrenadierDivision.16panzergrenadierBrigade"], "airPoint": "tactical" }
-{ "type": "planAirInterdiction", "hexId": "2414", "airPoint": "tactical" }
-{ "type": "cancelAirMission", "missionId": 1 }
-{ "type": "resolveAirStrikes" }
+{ "type": "planAirSortie", "airUnitId": "us.525.f15", "mission": { "type": "airSuperiority", "centerHexId": "2415" } }
+{ "type": "planAirSortie", "airUnitId": "us.480.strike", "mission": { "type": "groundStrike", "hexId": "2415", "unitIds": ["soviet.2gta.21motorRifleDivision"] } }
+{ "type": "cancelAirSortie", "sortieId": 1 }
 ```
 
 战斗查询与命令：
@@ -408,7 +416,7 @@ rules_query(reserveOptions)  →  { "revision": 4, "result": [{ "unitId": "...",
 { "type": "setReserve", "unitId": "eastGermany.2gta.8motorRifleDivision", "selected": true }
 ```
 
-快照新增 `airPoints`、`strikePlan`、`airInterdictionZones`、`breakthroughMarkers`、`eliminatedUnitIds` 以及每个单位的 `disruption`。新增事件：`airPointsReset`、`airMissionPlanned`、`airMissionCancelled`、`airStrikeResolved`（骰点、修正与结果）、`airInterdictionZonePlaced`、`airInterdictionZonesRemoved`、`unitDisruptionChanged`、`unitStepLost`、`unitEliminated`、`breakthroughMarkerPlaced` 和 `breakthroughMarkersRemoved`。快照的 `cities` 数组为每个城市格给出 `{ hexId, owner, controller, free }`。占领或解放城市的移动及其撤销会附带 `CityControlChanged` 事件；每条 `PlannedMovement` 记录其 `cityControlChanges`。
+空军重写在快照中加入 `airUnits`、`airBases`、`airPlans`、`airOperationsReport` 和 `eliminatedAirUnitIds`。对应事件涵盖飞机恢复、任务计划/取消、每轮空战与截击、飞机中止/翻面/消灭、地面与机场打击。原有地面事件、`airInterdictionZones`、`breakthroughMarkers`、`eliminatedUnitIds` 和每个单位的 `disruption` 继续保留。快照的 `cities` 数组为每个城市格给出 `{ hexId, owner, controller, free }`。
 
 命令的变体名和字段名都使用 camelCase。战斗计划命令：
 

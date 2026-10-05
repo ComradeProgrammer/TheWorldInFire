@@ -44,10 +44,11 @@ and checks the next turn's Pre-Battle supply reports.
 | `cityControl` | `[{ hexId, controller }]` overrides for city control. |
 | `breakthroughMarkers` | Replaces the Breakthrough Markers: `[{ sideId, hexId }]`. |
 | `airInterdictionZones` | Replaces the zones: `[{ sideId, hexId }]`. |
-| `airPoints` | Replaces the listed sides' Air Points: `[{ sideId, tactical, operational, bonusTactical }]`. |
+| `airUnits` | Overrides air-counter step and state: `[{ id, step?, readiness? }]`. |
+| `airBases` | Overrides off-map airbase state: `[{ id, damage?, suppressedThroughTurn? }]`. |
 | `attackTargets`, `reserveUnitIds` | Set the active battle plan's objectives and Reserve/OMG units; they need a battle plan, so `start` must be at or after that side's Battle Planning. |
 
-The situation replaces state without re-checking rules, so tests can build positions ordinary play would take many turns to reach. Automatic work of the start step itself has already run: to have the engine check supply for a laid-out position, start at NATO's Reserve Phase of the previous turn and submit `endPhase`; both sides' Pre-Battle Phases run at the start of each turn. An unknown unit, hex, side, or field, or an unreachable `start`, is rejected with `invalidSetup`. No game is started by a rejected request.
+The situation replaces state without re-checking rules, so tests can build positions ordinary play would take many turns to reach. Aircraft `step` must be 0 or 1, and airbase `damage` must be 0–2. Automatic work of the start step itself has already run: to have the engine check supply for a laid-out position, start at NATO's Reserve Phase of the previous turn and submit `endPhase`; both sides' Pre-Battle Phases run at the start of each turn. An unknown unit, hex, side, or field, or an unreachable `start`, is rejected with `invalidSetup`. No game is started by a rejected request.
 
 The black-box tests use this to surround a West German brigade with three Soviet divisions and check that NATO's next Pre-Battle step puts it out of supply, and to check the rejections.
 

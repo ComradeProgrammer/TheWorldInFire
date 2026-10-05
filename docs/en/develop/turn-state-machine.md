@@ -2,7 +2,7 @@
 
 ## Turn order
 
-`standard_turn_sequence` in `plugins/nato-official/src/model/scenario.rs` builds every scenario's sequence: the two joint phases, then each side phase played by the Warsaw Pact and then by NATO (`warsawPact.preBattle`, `nato.preBattle`, `warsawPact.battlePlanning`, `nato.battlePlanning`, and so on through Offensive Strike, Combat, Reserve, and Post-Battle). The kernel just walks this list; the rules make the alternation work:
+`standard_turn_sequence` in `plugins/nato-official/src/model/scenario.rs` builds every scenario's sequence: opening joint phases; WP and NATO Pre-Battle and Battle Planning; automatic `jointAirOperations`; then WP and NATO Offensive Strike, Combat, Reserve, and Post-Battle. The kernel just walks this list; the rules make the alternation work:
 
 - **Per-side battle plans.** The rules state keeps one plan per side in `battlePlans`. A side's Battle Planning replaces its own plan, which then serves its own Strike, Combat (WP marked objectives), and Reserve Phases while the other side plays in between. `Rules::active_plan` is the acting side's plan.
 - **Side-owned Breakthrough Markers.** Each `breakthroughMarkers` entry is `{ sideId, hexId }`. Only the owner may make an advance-only attack into it or use its Breakthrough Zone, and only the owner's Reserve Phase removes it. The `breakthroughMarkerPlaced` and `breakthroughMarkersRemoved` events carry `sideId`.
@@ -40,7 +40,7 @@ Completed:
 - authoritative pathfinding and validation for terrain and hexside costs, movement allowance, prohibited terrain, enemy zones of control, minimum movement, the Danish Ferry, enemy occupation, and stacking, plus a read-only movement preview;
 - scenario rule data for the 20-hex rail limit, eight-step WP and ten-step NATO rail capacities (Entrained units only), per-side Airlift Commands (BALTAP: WP 3, NATO 1), the number of resupply operations per turn, and the four-maneuver-step stacking limit;
 - frontend map overlays for planned routes and attack objectives;
-- Airspace (rule 11) and the Offensive Strike Phase's Air Strike Segment: Air Points, Air Strikes, Air Interdiction Zones, Disrupted/Suppressed markers, step loss, elimination, and Breakthrough Markers, with seeded dice;
+- named two-step fighters, fighter-bombers, and AEW aircraft; off-map airbases; Battle Planning sorties; automatic fighter combat, interception, and ground/airbase strikes with seeded dice;
 - Reserve/OMG status, the Reserve Phase with Breakthrough Zones, and Post-Battle unsuppression (see "Reserve and Post-Battle Phases");
 - simplified supply traced in each side's Pre-Battle step (see "Simplified supply");
 - tests covering both seven-turn and fourteen-turn state machines.
@@ -49,7 +49,7 @@ Not implemented yet:
 
 - the complete unit roster and road/river movement modifiers not yet represented in map data;
 - the full rule-10 supply model (home and friendly countries, Superior HQ assignments, ports, map-edge sources, city supply chains, and Combat Supply re-checked after each battle); a simplified two-alliance version is implemented instead;
-- interception, air-transport losses, and the complete Lift Command order of battle;
+- interception of air transport, air-transport losses, and the complete Lift Command order of battle;
 - Nuclear, Chemical, and Artillery Strikes, NATO Deep Interdiction, NATO Defensive Air Strikes, and the parts of ground combat listed under "Combat Phase" below;
 - Reserve Helicopter movement (28.2.2), which needs helicopter movement;
 - complete campaign deployment, pre-war and peace/mobilization sequences, and official scenario victory conditions (six war-turn entries are available; see [Campaign scenarios](campaign-scenarios.md));
@@ -122,28 +122,37 @@ The complete game turn remains one flat sequence table rather than introducing a
 ```text
 jointStatus
 → jointReinforcement
-→ warsawPact.preBattle ... warsawPact.postBattle
-→ nato.preBattle ... nato.postBattle
+→ warsawPact.preBattle → nato.preBattle
+→ warsawPact.battlePlanning → nato.battlePlanning
+→ jointAirOperations
+→ warsawPact.offensiveStrike → nato.offensiveStrike
+→ warsawPact.combat → nato.combat
+→ warsawPact.reserve → nato.reserve
+→ warsawPact.postBattle → nato.postBattle
 ```
 
 Joint phases use actor `all`; later phases use the corresponding side as actor.
 
 `jointReinforcement` is automatic. On entering it, the core selects units scheduled for the current turn, adds them to authoritative state, and returns a `reinforcementsArrived` event containing their complete state. Turn-one entries use the same mechanism for opening deployment, so there is no separate setup path.
 
-### Offensive Strike Phase
+### Air Operations and Offensive Strike
 
-`src/strikes.rs` implements the Air Strike Segment (20, 23) and `src/airspace.rs` computes Airspace (11). Dice belong to the kernel (`crates/ooaw-core/src/dice.rs`): a SplitMix64 generator seeded from the game ID, which plugins roll through the `roll` import, so a game replays identically for the same commands. The dice state is part of the kernel's state but not of the client snapshot; saves must persist it.
+`src/air_operations.rs` implements named-aircraft planning, fighter combat, interception, and airbase strikes. `src/strikes.rs` supplies ground-strike resolution, while `src/airspace.rs` computes the static Airspace used by ground movement (11). Dice belong to the kernel (`crates/ooaw-core/src/dice.rs`): a SplitMix64 generator seeded from the game ID, exposed through the `roll` import for d6 and d20 rolls, so the same command sequence produces the same results. Dice state is kernel state but is not part of the client snapshot; saved games must retain it.
 
-- **Air Points** reset each Joint Reinforcement Phase from `BattlePlanningRules::air_power` (per side: Tactical and Operational per turn and a one-time bonus Tactical point). BALTAP: 1 Tactical per turn each, 1 bonus each, no Operational, Surprise on turn 1 (Play Booklet 36.4.1.4, 36.4.1.6). The rules prototype uses placeholder values (2 Tactical, 1 Operational); the Air Campaign Table is not implemented.
-- **Missions** (`strikePlan.missions`) are committed with `planAirStrike` or `planAirInterdiction` and resolved together with `resolveAirStrikes`, or automatically by `endPhase` (23.2.4). `cancelAirMission` refunds a pending mission to the pool it came from. Targeting enforces: two steps per strike, HQs alone and only with Operational points, no unit struck twice, two strikes per hex, and Tactical points only in friendly or contested Airspace.
+- **Air counters** are two-step fighters, fighter-bombers, and AEW aircraft based at off-map airbases. Joint Reinforcement readies every surviving aircraft but does not restore lost steps.
+- **Missions** are assigned in each side's Battle Planning Phase with `planAirSortie` and withdrawn with `cancelAirSortie`. Fighters select an air-superiority center, fighter-bombers select ground units or an enemy base, and AEW aircraft select a support center. The engine validates readiness, mission compatibility, base capacity, target location, the two-step target limit, HQ-alone targeting, and duplicate targets.
+- **Joint Air Operations** resolve automatically after both plans. Fighters with intersecting combat areas use deterministic maximum matching and simultaneous attacks; surviving fighters then intercept at most one fighter-bomber whose target is in radius. Air Combat minus Evasion selects a −4 to +4 column; a d20 plus the eligible AEW modifier gives the result. `airOperationsReport` retains the full record.
+- **AEW** gives its current-step modifier inside its support radius; use only the highest eligible modifier. AEW aircraft cannot be attacked in the current version.
+- **Off-map airbases** have sortie capacity, a map-edge anchor, zero-to-two damage, and suppression through a turn. One damage halves capacity rounded up; two damage or suppression reduces it to zero. Damage does not affect aircraft already launched that turn.
+- **Offensive Strikes** automatically resolve surviving, unaborted fighter-bomber missions when their side's phase begins. The interactive phase remains as a result-review stop. Ground missions retain the NATO d6 strike table; airbase missions suppress or permanently damage the base.
 - **Strike Table**, one-point column, with the printed modifiers: Major/Key City −2; Forest, Rough, Mountain, or Minor City −1; train marker +1 instead of terrain; friendly Airspace +1; enemy Airspace −1; WP on the Surprise turn +1. When targets differ, the lowest total applies (23.3.1). The first named unit absorbs a step loss.
 - **Results**: Disrupted (HQs Suppressed; a Disrupted unit loses its train marker), step loss (flip and Disrupt, or eliminate), and a Breakthrough Marker when the last enemy unit in the hex is eliminated.
 - **Marker timing** in the merged sequence: Disrupted markers are removed when their side's Battle Planning ends (the original Recovery Phase follows movement); Suppressed markers are removed in their side's Post-Battle step (Unsuppression); the acting side's own Breakthrough Markers and the enemy's Air Interdiction Zones are removed when the acting side ends its Reserve Phase (23.8.2, 28.2.5).
 - **Airspace**: each side projects within five hexes of its supplied on-map units and of every city it controls, except West Berlin (11.5, the map's `contestsAirspace: false`). City supply is not traced, so all controlled cities count. A hex projected by neither side is treated as contested. Airspace now also governs March and Rail (friendly only), entraining (friendly only), and Air Transport (not from or into enemy Airspace).
-- **Air Interdiction Zones** (23.8) add +1 MP to the other side's Tactical movement entering the zone and bar its March and Rail movement.
+- **Air Interdiction Zones** (23.8) remain readable for old saves and test setups, including their movement effect, but the new sortie system does not currently offer an interdiction mission.
 - **Disruption and movement**: Disrupted or Suppressed units may use only Minimum movement and may not entrain.
 
-Not implemented in this phase: Nuclear and Chemical Strikes (with Armageddon and war-crimes penalties), WP Artillery divisions (BALTAP has none), NATO Deep Interdiction, strikes on Reforger Sites, Fortified hexes, and the Danish Airspace exception.
+Not implemented in this phase: attacking AEW aircraft, airbase repair, aircraft replacements, SEAD/Flak, Nuclear and Chemical Strikes (with Armageddon and war-crimes penalties), WP Artillery divisions (BALTAP has none), NATO Deep Interdiction, strikes on Reforger Sites, Fortified hexes, and the Danish Airspace exception.
 
 ### Combat Phase
 
@@ -236,6 +245,7 @@ plugins/nato-official/src/    official NATO rules plugin
 ├─ filters.rs    extension points other plugins may take part in
 ├─ phase.rs      phase-entry handlers
 ├─ planning.rs   battle-planning commands and plan bookkeeping
+├─ air_operations.rs named-aircraft planning, combat, interception, and strikes
 ├─ movement.rs   movement rules, pathfinding, and movement previews
 ├─ strikes.rs    Offensive Strike Phase: air missions, Strike Table, markers
 ├─ combat.rs     Combat Phase: odds, CRT, results, retreat, advance
@@ -332,7 +342,7 @@ Current snapshot example:
 }
 ```
 
-The kernel defines `protocolVersion`, `gameId`, `revision`, `scenario`, `status`, `turn`, `units`, `cities`, and `pendingDecision`. Every other top-level field (`battlePlans`, `airPoints`, `strikePlan`, `airInterdictionZones`, `breakthroughMarkers`, `eliminatedUnitIds`, `combat`, `reserve`) is rules state that the NATO plugin keeps in the kernel, and a unit's `supply`, `trainStatus`, and `disruption` are rules-owned unit markers.
+The kernel defines `protocolVersion`, `gameId`, `revision`, `scenario`, `status`, `turn`, `units`, `cities`, and `pendingDecision`. Every other top-level field (`battlePlans`, `airUnits`, `airBases`, `airPlans`, `airOperationsReport`, `eliminatedAirUnitIds`, `airInterdictionZones`, `breakthroughMarkers`, `eliminatedUnitIds`, `combat`, and `reserve`) is NATO plugin rules state stored by the kernel. Empty `airPoints` and `strikePlan` fields remain temporarily for old-frontend migration. A unit's `supply`, `trainStatus`, and `disruption` are rules-owned markers.
 
 Current command request:
 
@@ -368,18 +378,16 @@ rules_query(attackTargetOptions)  →  { "revision": 3, "result": ["2214", "2415
 `attackTargetOptions` lists hexes containing an enemy unit or an enemy Free City (25.1.1).
 
 ```text
-rules_query(airStrikeOptions)  →  { "revision": 5, "result": { "tacticalHexes": [...], "friendlyHexes": [...],
-  "targets": [{ "hexId": "2415", "airspace": "contested", "tacticalAllowed": true, "strikesRemaining": 2,
-                "units": [{ "unitId": "...", "steps": 1, "modifier": 1, "headquarters": false, "alreadyTargeted": false }] }] } }
+rules_query(airPlanningOptions) → acting side's aircraft availability and airbase state
+rules_query(airMissionOptions, { "airUnitId": "us.525.f15" }) → legal centers or targets
 ```
 
-Offensive Strike commands:
+Air-planning commands:
 
 ```json
-{ "type": "planAirStrike", "hexId": "2415", "unitIds": ["westGermany.6panzergrenadierDivision.16panzergrenadierBrigade"], "airPoint": "tactical" }
-{ "type": "planAirInterdiction", "hexId": "2414", "airPoint": "tactical" }
-{ "type": "cancelAirMission", "missionId": 1 }
-{ "type": "resolveAirStrikes" }
+{ "type": "planAirSortie", "airUnitId": "us.525.f15", "mission": { "type": "airSuperiority", "centerHexId": "2415" } }
+{ "type": "planAirSortie", "airUnitId": "us.480.strike", "mission": { "type": "groundStrike", "hexId": "2415", "unitIds": ["soviet.2gta.21motorRifleDivision"] } }
+{ "type": "cancelAirSortie", "sortieId": 1 }
 ```
 
 Combat queries and commands:
@@ -408,7 +416,7 @@ rules_query(reserveOptions)  →  { "revision": 4, "result": [{ "unitId": "...",
 { "type": "setReserve", "unitId": "eastGermany.2gta.8motorRifleDivision", "selected": true }
 ```
 
-The snapshot adds `airPoints`, `strikePlan`, `airInterdictionZones`, `breakthroughMarkers`, `eliminatedUnitIds`, and each unit's `disruption`. New events: `airPointsReset`, `airMissionPlanned`, `airMissionCancelled`, `airStrikeResolved` (die roll, modifier, result), `airInterdictionZonePlaced`, `airInterdictionZonesRemoved`, `unitDisruptionChanged`, `unitStepLost`, `unitEliminated`, `breakthroughMarkerPlaced`, and `breakthroughMarkersRemoved`. The snapshot's `cities` array gives `{ hexId, owner, controller, free }` for every city hex. `CityControlChanged` events accompany movements that take or liberate a city, and their undo; each `PlannedMovement` records its `cityControlChanges`.
+The air rewrite adds `airUnits`, `airBases`, `airPlans`, `airOperationsReport`, and `eliminatedAirUnitIds` to the snapshot. Events cover aircraft readiness, sortie planning/cancellation, each fighter-combat and interception pairing, aircraft abort/step loss/elimination, and ground or airbase strikes. Existing ground events, `airInterdictionZones`, `breakthroughMarkers`, `eliminatedUnitIds`, and unit `disruption` remain. The snapshot's `cities` array gives `{ hexId, owner, controller, free }` for every city hex.
 
 Command variant names and their fields are both camelCase. Battle-planning commands:
 

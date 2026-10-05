@@ -17,6 +17,7 @@ impl Rules {
             "jointReinforcement" => self.resolve_joint_reinforcement(events),
             "preBattle" => self.resolve_pre_battle(events),
             "battlePlanning" => self.resolve_battle_planning(events),
+            "jointAirOperations" => self.resolve_joint_air_operations(events),
             "offensiveStrike" => self.resolve_offensive_strike(events),
             "combat" => self.resolve_combat(events),
             "reserve" => self.resolve_reserve(events),
@@ -28,9 +29,9 @@ impl Rules {
     /// Provides the Joint Status Phase hook, which currently has no automatic effects.
     fn resolve_joint_status(&mut self, _events: &mut Vec<GameEvent>) {}
 
-    /// Resets air points, withdraws scheduled units, and adds this turn's reinforcements.
+    /// Readies air counters, withdraws scheduled units, and adds this turn's reinforcements.
     fn resolve_joint_reinforcement(&mut self, events: &mut Vec<GameEvent>) {
-        self.reset_air_points(events);
+        self.ready_air_units(events);
         let withdrawn: Vec<_> = self
             .scenario
             .withdrawals
@@ -104,9 +105,9 @@ impl Rules {
         self.start_battle_plan(events);
     }
 
-    /// Starts an empty air mission plan for the acting side's Offensive Strike Phase.
-    fn resolve_offensive_strike(&mut self, _events: &mut Vec<GameEvent>) {
-        self.start_strike_plan();
+    /// Resolves the acting side's surviving fighter-bomber missions.
+    fn resolve_offensive_strike(&mut self, events: &mut Vec<GameEvent>) {
+        self.resolve_air_strike_phase(events);
     }
 
     /// Starts the acting side's combat records and per-phase restrictions.

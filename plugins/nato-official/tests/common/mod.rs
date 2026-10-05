@@ -16,9 +16,10 @@ use ooaw_core::api::{
 };
 use ooaw_core::{Dice, GameEngine, GameId, MapDefinition};
 use ooaw_nato::{
-    find_scenario, AirInterdictionZone, AirPoints, AirStrikeOptions, Airspace, BattleOdds,
-    BattlePlan, BreakthroughMarker, CombatOptions, CombatState, GameCommand, GameEvent, GameSetup,
-    HexId, MovementMode, MovementModeOptions, MovementOption, PhaseActor, ReserveOption,
+    find_scenario, AirBaseState, AirInterdictionZone, AirMissionOptions, AirOperationsReport,
+    AirPlan, AirPlanningOptions, AirPoints, AirStrikeOptions, AirUnitId, AirUnitState, Airspace,
+    BattleOdds, BattlePlan, BreakthroughMarker, CombatOptions, CombatState, GameCommand, GameEvent,
+    GameSetup, HexId, MovementMode, MovementModeOptions, MovementOption, PhaseActor, ReserveOption,
     ReserveState, RuleError, RulesState, ScenarioDefinition, SideId, StrikePlan, UnitId, UnitState,
 };
 use serde::de::DeserializeOwned;
@@ -45,6 +46,11 @@ pub struct GameSnapshot {
     pub air_points: Vec<AirPoints>,
     pub strike_plan: Option<StrikePlan>,
     pub air_interdiction_zones: Vec<AirInterdictionZone>,
+    pub air_units: Vec<AirUnitState>,
+    pub air_bases: Vec<AirBaseState>,
+    pub air_plans: Vec<AirPlan>,
+    pub air_operations_report: Option<AirOperationsReport>,
+    pub eliminated_air_unit_ids: Vec<AirUnitId>,
     pub breakthrough_markers: Vec<BreakthroughMarker>,
     pub eliminated_unit_ids: Vec<UnitId>,
     pub combat: Option<CombatState>,
@@ -180,6 +186,17 @@ impl TestGame {
 
     pub fn air_strike_options(&mut self) -> Result<AirStrikeOptions, RuleError> {
         self.query("airStrikeOptions", Value::Null)
+    }
+
+    pub fn air_planning_options(&mut self) -> Result<AirPlanningOptions, RuleError> {
+        self.query("airPlanningOptions", Value::Null)
+    }
+
+    pub fn air_mission_options(
+        &mut self,
+        air_unit_id: &AirUnitId,
+    ) -> Result<AirMissionOptions, RuleError> {
+        self.query("airMissionOptions", json!({ "airUnitId": air_unit_id }))
     }
 
     pub fn combat_options(&mut self) -> Result<CombatOptions, RuleError> {

@@ -9,7 +9,7 @@ use crate::filters::{self, StrikeModifierInput};
 use crate::model::{
     AirInterdictionZone, AirMission, AirMissionKind, AirPointKind, AirPointSource,
     AirStrikeOptions, Airspace, CityKind, Disruption, HexId, MapHex, PhaseActor, SideId,
-    StrikePlan, StrikeResolution, StrikeResult, StrikeTargetHex, StrikeTargetUnit, Terrain, UnitId,
+    StrikeResolution, StrikeResult, StrikeTargetHex, StrikeTargetUnit, Terrain, UnitId,
     UnitLocation, UnitState,
 };
 use crate::rules::Rules;
@@ -35,36 +35,6 @@ fn is_tactical_airspace(airspace: Airspace) -> bool {
 
 impl Rules {
     // ------------------------------------------------------------------ phase hooks
-
-    /// Resets recurring Air Points for the new turn while retaining unspent one-time bonus points (23.1.1, 23.1.7).
-    pub(crate) fn reset_air_points(&mut self, events: &mut Vec<GameEvent>) {
-        // 23.1.1, 23.1.7: fresh Air Points each Joint Reinforcement Phase; unused
-        // points are lost. One-time bonus points carry over until spent.
-        let rules = &self.scenario.battle_planning_rules.air_power;
-        for points in &mut self.air_points {
-            let power = rules.for_side(&points.side_id);
-            points.tactical = power.tactical_per_turn;
-            points.operational = power.operational_per_turn;
-        }
-        events.push(GameEvent::AirPointsReset {
-            air_points: self.air_points.clone(),
-        });
-    }
-
-    /// Creates an empty unresolved air mission plan for the acting side.
-    pub(crate) fn start_strike_plan(&mut self) {
-        let Some(PhaseActor::Side { side_id }) = self.current_step().map(|step| step.actor.clone())
-        else {
-            return;
-        };
-        self.strike_plan = Some(StrikePlan {
-            game_turn: self.game_turn,
-            side_id,
-            missions: Vec::new(),
-            resolved: false,
-            next_mission_id: 1,
-        });
-    }
 
     /// Ending the phase resolves any committed missions that were not yet rolled.
     pub(crate) fn finish_offensive_strike(
@@ -421,6 +391,7 @@ impl Rules {
                         &side_id,
                         &mission.hex_id,
                         unit_ids,
+                        0,
                         &mut consequences,
                     )?;
                     if let Some(entry) = self
@@ -433,6 +404,7 @@ impl Rules {
                     // The roll is reported before its consequences.
                     events.push(GameEvent::AirStrikeResolved {
                         side_id: side_id.clone(),
+                        air_unit_id: None,
                         mission_id: mission.id,
                         hex_id: mission.hex_id.clone(),
                         unit_ids: unit_ids.clone(),
@@ -446,11 +418,12 @@ impl Rules {
     }
 
     /// Rolls a strike with the least favorable target modifier and applies disruption, losses, and breakthrough.
-    fn resolve_strike(
+    pub(crate) fn resolve_strike(
         &mut self,
         side_id: &SideId,
         hex_id: &HexId,
         unit_ids: &[UnitId],
+        aircraft_modifier: i8,
         events: &mut Vec<GameEvent>,
     ) -> Result<StrikeResolution, RuleError> {
         let hex = self
@@ -474,7 +447,8 @@ impl Rules {
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .min()
-            .unwrap_or(0);
+            .unwrap_or(0)
+            + aircraft_modifier;
         let die_roll = self.dice.d6();
         let modified_roll = die_roll as i8 + modifier;
         let result = strike_table(modified_roll);

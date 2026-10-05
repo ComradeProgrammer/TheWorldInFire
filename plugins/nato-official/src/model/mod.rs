@@ -1,13 +1,21 @@
+mod air;
 mod combat;
 mod nato_map;
 mod planning;
 mod rules;
 mod scenario;
+mod scenario_air;
 mod scenario_baltap;
 mod scenario_campaign;
 mod strike;
 mod unit;
 
+pub use air::{
+    AirBaseDefinition, AirBaseId, AirBaseState, AirCombatAttack, AirCombatPairing, AirCombatResult,
+    AirGroundTarget, AirMissionAssignment, AirMissionOptions, AirOperationsReport, AirPlan,
+    AirPlanningOptions, AirReadiness, AirSortie, AirSortieStatus, AirUnitDefinition, AirUnitId,
+    AirUnitKind, AirUnitPlanningOption, AirUnitState, AirUnitStep,
+};
 pub use combat::{
     BattleOdds, BattleReport, BreakthroughMarker, ColumnShift, ColumnShiftReason, CombatObjective,
     CombatOptions, CombatResult, CombatState, CounterattackRoll, PendingAdvance, StrengthModifier,
@@ -30,6 +38,7 @@ pub use scenario::{
     find_scenario, list_scenarios, OffensiveSupportHq, ReinforcementDefinition, ScenarioDefinition,
     Withdrawal,
 };
+pub(crate) use scenario_air::standard_air_forces;
 pub use strike::{
     AirInterdictionZone, AirMission, AirMissionKind, AirPointKind, AirPointSource, AirPoints,
     AirPowerRules, AirStrikeOptions, Airspace, Disruption, SideAirPower, StrikePlan,

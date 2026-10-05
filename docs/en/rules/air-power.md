@@ -1,80 +1,108 @@
-# Air Power and the Offensive Strike Phase
+# Air Power
 
-## Airspace
+Named squadron counters represent air forces. Every counter has full and reduced steps and belongs to an off-map airbase. The current system has three air-unit types:
 
-Every hex is friendly, contested, or enemy Airspace, always judged from one side's point of view.
+- **Fighters** fly air-superiority missions, engage enemy fighters within their combat radius, and intercept enemy fighter-bombers.
+- **Fighter-bombers** strike ground units or enemy off-map airbases.
+- **Airborne early-warning aircraft (AEW)** modify friendly air combat within their support radius. AEW aircraft cannot be attacked in the current version.
 
-- A side projects Airspace within **five hexes** of each of its units in supply and of each city it controls. Units in the Strategic Reserve do not count. West Berlin never projects Airspace.
-- A hex only your side projects into is **friendly**. A hex only the enemy projects into is **enemy**. A hex both sides project into (or neither side) is **contested**.
+An aircraft that takes one step loss flips to its reduced side; a further step loss eliminates it. An aborted aircraft cannot continue its mission that turn. During each new turn's Joint Reinforcement Phase, every surviving aircraft becomes ready again. Lost steps do not recover automatically.
 
-Airspace affects movement:
+## Off-map airbases
 
-- March and Rail movement must start in, and stay entirely within, friendly Airspace.
-- A unit may entrain only in friendly Airspace.
-- Air transport may not start in enemy Airspace or land in it.
+Every aircraft has a fixed home airbase. Each base has a map-edge anchor hex and a sortie capacity. The anchor represents the approach route for interception and display; the current version imposes no base-to-target range limit.
 
-## Air Points
+Airbases can be struck:
 
-At the start of every game turn, during the Joint Reinforcement Phase, each side receives the Air Points set by the scenario. Points not spent by the end of the turn are lost.
+- 0 damage: full sortie capacity;
+- 1 damage: half capacity, rounded up;
+- 2 damage: closed and unable to launch sorties;
+- suppressed: unable to launch sorties while suppression lasts.
 
-- **Tactical Air Points** may be used only in friendly or contested Airspace.
-- **Operational Air Points** may be used anywhere. Only Operational Air Points may strike an HQ.
-- Some scenarios grant a one-time extra Tactical Air Point that a side may spend on any turn it chooses. It is used automatically once that turn's Tactical Air Points are gone.
+Damage does not affect aircraft that already launched that turn. Airbase damage does not repair automatically in the first version.
+
+## Battle Planning Phase
+
+During its Battle Planning Phase, a side may assign at most one mission to each available aircraft. A mission may be withdrawn before that phase ends.
+
+| Aircraft | Mission | Selection |
+| --- | --- | --- |
+| Fighter | Air superiority | a combat-area center hex |
+| Fighter-bomber | Ground strike | a target hex and up to two steps in that hex |
+| Fighter-bomber | Airbase strike | one enemy off-map airbase |
+| AEW | Early warning | a support-area center hex |
+
+Each aircraft flies at most once per turn, and all sorties count against the effective capacity of their home airbase. A ground strike cannot name the same unit twice or name a unit already targeted by another air strike that turn. An HQ must be targeted alone.
+
+## Joint Air Operations Phase
+
+After both sides finish Battle Planning, the game automatically resolves Joint Air Operations. Every roll and modifier is preserved in the event log and air-operations report.
+
+### Fighter combat
+
+A fighter projects a combat area from its mission center, using the combat radius on its current step. Two hostile fighters may engage when their combat areas intersect. The game uses deterministic maximum matching so that as many aircraft as possible engage, with each aircraft fighting at most once per round.
+
+Both aircraft attack simultaneously. For each attack, subtract the defender's evasion from the attacker's air-combat value to find the table column, limited to −4 through +4. Roll a d20, apply an eligible AEW modifier, and consult the Air Combat Table. Apply both results together. Fighters that can still operate fight another round while hostile combat areas continue to intersect.
+
+An AEW counter provides the modifier printed on its current step to combat within its support radius. Multiple AEW modifiers do not add; use the highest eligible modifier.
+
+### Fighter interception
+
+After fighter combat, each fighter still able to operate checks the target hexes of enemy fighter-bombers. It may intercept a mission whose target lies within its combat radius. Each fighter may intercept one fighter-bomber, and each fighter-bomber may be intercepted once.
+
+Interception uses the same simultaneous Air Combat Table procedure, so the fighter-bomber fires back. An aborted or eliminated fighter-bomber does not perform its planned strike. A fighter-bomber that loses one step is also aborted by the corresponding table result.
+
+### 1985 Air Combat Table
+
+Results are: `—` no effect, `A` abort, `DA` one step loss and abort, `1A` destroyed/one step loss and abort, and `1DA` destroyed plus a damaged step and abort. With the current two-step counters, `DA` and `1A` each remove one step, while `1DA` eliminates a full-strength counter.
+
+| Column | — | A | DA | 1A | 1DA |
+| ---: | :---: | :---: | :---: | :---: | :---: |
+| −4 | 1–15 | 16–18 | 19–20 | — | — |
+| −3 | 1–13 | 14–16 | 17–19 | 20 | — |
+| −2 | 1–11 | 12–14 | 15–17 | 18–20 | — |
+| −1 | 1–10 | 11–13 | 14–16 | 17–19 | 20 |
+| 0 | 1–9 | 10–12 | 13–15 | 16–18 | 19–20 |
+| +1 | 1–8 | 9–11 | 12–14 | 15–17 | 18–20 |
+| +2 | 1–7 | 8–10 | 11–13 | 14–16 | 17–20 |
+| +3 | 1–5 | 6–8 | 9–11 | 12–14 | 15–20 |
+| +4 | 1–3 | 4–6 | 7–9 | 10–12 | 13–20 |
 
 ## Offensive Strike Phase
 
-In its Offensive Strike Phase, the acting side spends Air Points on **air missions**. First commit every mission you want; then resolve them all together. Until you resolve them, any mission may be withdrawn and its Air Point refunded. Once resolved, no further missions may be committed that phase. Ending the phase resolves any missions still pending.
+After Joint Air Operations, each surviving, unaborted fighter-bomber automatically performs its planned mission at the start of its side's Offensive Strike Phase. The phase remains an interactive review stop so the player can inspect the results before ending it.
 
-### Air Strikes
+### Ground strikes
 
-Each Air Point makes one Air Strike against enemy units in one hex:
-
-- A strike targets up to two steps: two one-step units, or one two-step unit.
-- An HQ may be struck only on its own, and only with an Operational Air Point.
-- No unit may be struck twice in the same phase, and a hex may receive at most two Air Strikes.
-- When the strike names two units, the first unit named takes any step loss.
-
-To resolve a strike, roll one die, apply the modifiers, and read the result:
-
-| Modified roll | Result |
-| --- | --- |
-| 1 or less | No effect |
-| 2–4 | Every target is Disrupted |
-| 5 or more | One step is lost; the other targets are Disrupted |
-
-Die roll modifiers:
+Ground strikes use the existing NATO strike procedure. Roll a d6 for each fighter-bomber and add its current-step strike modifier and the target modifiers:
 
 | Condition | Modifier |
 | --- | ---: |
 | Target in a Major or Key City | −2 |
 | Target in a Forest, Rough, Mountain, or Minor City hex | −1 |
-| Target under a train marker (instead of any terrain modifier) | +1 |
-| Target hex in the striking side's friendly Airspace | +1 |
-| Target hex in the striking side's enemy Airspace | −1 |
-| Warsaw Pact strikes on the turn NATO is Surprised | +1 |
+| Target under a train marker, replacing terrain | +1 |
+| Target in the striking side's friendly ground Airspace | +1 |
+| Target in the striking side's enemy ground Airspace | −1 |
+| Warsaw Pact strike during NATO's Surprise turn | +1 |
 
-If the targets would receive different modifiers, the lower total applies to the strike.
+| Modified roll | Result |
+| --- | --- |
+| 1 or less | No effect |
+| 2–4 | Disrupt every target |
+| 5 or more | First target loses one step; disrupt the remaining targets |
 
-**Step loss:** a two-step unit flips to its reduced side and is Disrupted; a one-step unit is eliminated. An HQ is never reduced: any result against an HQ Suppresses it instead.
+If every named target has disappeared before resolution, record `targetGone`; do not reroll or select a new target.
 
-**Breakthrough:** if strikes eliminate the last enemy unit in a hex, a Breakthrough Marker is placed there. It is removed at the end of the striking side's Reserve Phase.
+### Airbase strikes
 
-### Air Interdiction
+Roll a d6 and add the aircraft's strike modifier and the target airbase's modifier:
 
-Instead of striking, an Air Point may place an **Air Interdiction Zone** on a land hex: the marked hex and its six neighbours. A Tactical Air Point may place it only in friendly or contested Airspace. The zone affects only the other side's units:
+| Modified roll | Result |
+| --- | --- |
+| 1 or less | No effect |
+| 2–4 | Suppress the base through the end of the next turn |
+| 5 or more | Add one permanent damage and suppress the base through the end of the next turn |
 
-- Tactical movement pays one extra Movement Point to enter a hex in the zone (leaving costs nothing extra).
-- March and Rail movement may not enter the zone.
+## Ground Airspace
 
-The zone takes effect when the missions are resolved and is removed at the end of the enemy's next Reserve Phase.
-
-## Disrupted and Suppressed units
-
-A **Disrupted** unit:
-
-- may move only one hex, by Minimum movement (no March, Rail, or air transport);
-- may not entrain, and immediately loses any train marker.
-
-Disrupted markers are removed when the unit's side ends its Battle Planning Phase (after its movement).
-
-HQs are **Suppressed** instead of Disrupted. A Suppressed HQ is limited in the same way; the marker is removed during its side's Post-Battle Phase.
+The original static Airspace rules remain in force for ground movement, rail movement, and air transport. Supplied ground units and controlled cities project that Airspace. Fighter combat areas are a separate concept used only for air combat and interception, so they do not retroactively invalidate ground movement already completed this turn.

@@ -1,9 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    AirMission, AirPoints, BattleReport, Disruption, HexId, MovementMode, PendingAdvance,
-    PhaseDefinition, PlannedMovement, SideId, StrikeResolution, TrainStatus, UnitId, UnitLocation,
-    UnitState, UnitSupplyState,
+    AirBaseId, AirCombatPairing, AirMission, AirPoints, AirSortie, AirUnitId, AirUnitState,
+    BattleReport, Disruption, HexId, MovementMode, PendingAdvance, PhaseDefinition,
+    PlannedMovement, SideId, StrikeResolution, TrainStatus, UnitId, UnitLocation, UnitState,
+    UnitSupplyState,
 };
 
 /// Supply result recorded for one unit during automatic pre-battle resolution.
@@ -127,6 +128,71 @@ pub enum GameEvent {
         /// Balances after the reset.
         air_points: Vec<AirPoints>,
     },
+    /// Every surviving air counter became available for the new turn.
+    AirUnitsReadied {
+        /// Authoritative air-counter states after the reset.
+        air_units: Vec<AirUnitState>,
+    },
+    /// A named air counter received a sortie order.
+    AirSortiePlanned {
+        /// Side making the plan.
+        side_id: SideId,
+        /// Newly committed sortie.
+        sortie: AirSortie,
+    },
+    /// A planned sortie was withdrawn.
+    AirSortieCancelled {
+        /// Side withdrawing the sortie.
+        side_id: SideId,
+        /// Sortie removed from the plan.
+        sortie_id: u32,
+    },
+    /// One simultaneous fighter-combat pairing was resolved.
+    AirCombatRoundResolved {
+        /// Pairing, rolls, modifiers, and raw results.
+        pairing: AirCombatPairing,
+    },
+    /// One fighter intercepted a fighter-bomber.
+    AirInterceptionResolved {
+        /// Pairing, rolls, modifiers, and raw results.
+        pairing: AirCombatPairing,
+    },
+    /// An air counter lost one step and flipped.
+    AirUnitStepLost {
+        /// Air counter that lost the step.
+        air_unit_id: AirUnitId,
+        /// New active step index.
+        strength_step_index: usize,
+    },
+    /// An air counter aborted its mission for the rest of the turn.
+    AirUnitAborted {
+        /// Air counter leaving the operation.
+        air_unit_id: AirUnitId,
+    },
+    /// An air counter lost its last step.
+    AirUnitEliminated {
+        /// Air counter removed from play.
+        air_unit_id: AirUnitId,
+    },
+    /// A fighter-bomber's planned strike was cancelled by interception.
+    AirStrikeAborted {
+        /// Air counter whose strike did not arrive.
+        air_unit_id: AirUnitId,
+    },
+    /// An off-map airbase was suppressed through a specified turn.
+    AirBaseSuppressed {
+        /// Airbase affected.
+        air_base_id: AirBaseId,
+        /// Last turn in which the base cannot launch sorties.
+        through_turn: u16,
+    },
+    /// An off-map airbase accumulated persistent runway damage.
+    AirBaseDamaged {
+        /// Airbase affected.
+        air_base_id: AirBaseId,
+        /// New damage level, capped at two.
+        damage: u8,
+    },
     /// An Air Point was committed to a mission.
     AirMissionPlanned {
         /// Striking side.
@@ -145,6 +211,9 @@ pub enum GameEvent {
     AirStrikeResolved {
         /// Striking side.
         side_id: SideId,
+        /// Named fighter-bomber performing the strike in the unit system.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        air_unit_id: Option<AirUnitId>,
         /// Resolved mission.
         mission_id: u32,
         /// Target hex.

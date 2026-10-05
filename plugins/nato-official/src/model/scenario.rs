@@ -4,9 +4,10 @@ use super::nato_map::nato_map;
 use super::scenario_baltap::baltap_scenario;
 use super::scenario_campaign::{campaign_scenario, CAMPAIGN_IDS};
 use super::{
-    BattlePlanningRules, FormationId, HexId, MapDefinition, NationId, PhaseActor, PhaseDefinition,
-    PhaseExecution, PhaseId, ScenarioSummary, SideDefinition, SideId, StepId, UnitDefinition,
-    UnitId, UnitLocation, UnitState, UnitStepDefinition, UnitSupplyState, UnitTraitId, UnitTypeId,
+    standard_air_forces, AirBaseDefinition, AirUnitDefinition, BattlePlanningRules, FormationId,
+    HexId, MapDefinition, NationId, PhaseActor, PhaseDefinition, PhaseExecution, PhaseId,
+    ScenarioSummary, SideDefinition, SideId, StepId, UnitDefinition, UnitId, UnitLocation,
+    UnitState, UnitStepDefinition, UnitSupplyState, UnitTraitId, UnitTypeId,
 };
 
 /// Static rules and content currently used to create a game scenario.
@@ -29,6 +30,12 @@ pub struct ScenarioDefinition {
     pub turn_sequence: Vec<PhaseDefinition>,
     /// Opening units and later arrivals scheduled by game turn.
     pub reinforcements: Vec<ReinforcementDefinition>,
+    /// Off-map airbases available in this scenario.
+    #[serde(default)]
+    pub air_bases: Vec<AirBaseDefinition>,
+    /// Named two-step air counters available from game turn one.
+    #[serde(default)]
+    pub air_units: Vec<AirUnitDefinition>,
     /// HQs that may give Offensive Support, with their Subordinate formations (25.4).
     pub offensive_support_hqs: Vec<OffensiveSupportHq>,
     /// Units the scenario removes from play at the start of a game turn.
@@ -118,26 +125,32 @@ fn joint_step(phase_id: &str, execution: PhaseExecution) -> PhaseDefinition {
     }
 }
 
-/// Phases each side plays every game turn, in order.
-const SIDE_PHASES: [(&str, PhaseExecution); 6] = [
-    ("preBattle", PhaseExecution::Automatic),
-    ("battlePlanning", PhaseExecution::Interactive),
-    ("offensiveStrike", PhaseExecution::Interactive),
-    ("combat", PhaseExecution::Interactive),
-    ("reserve", PhaseExecution::Interactive),
-    ("postBattle", PhaseExecution::Automatic),
-];
-
 /// Builds the joint opening phases followed by alternating side phases: the
-/// Warsaw Pact plays each phase, then NATO plays the same phase, before the
-/// turn moves on to the next phase.
+/// Warsaw Pact and NATO plan, air operations resolve jointly, and surviving
+/// fighter-bombers strike automatically before ground combat.
 pub(crate) fn standard_turn_sequence() -> Vec<PhaseDefinition> {
     let mut turn_sequence = vec![
         // Joint Status has no player decisions yet, so play passes straight through it.
         joint_step("jointStatus", PhaseExecution::Automatic),
         joint_step("jointReinforcement", PhaseExecution::Automatic),
     ];
-    for (phase_id, execution) in SIDE_PHASES {
+    for (phase_id, execution) in [
+        ("preBattle", PhaseExecution::Automatic),
+        ("battlePlanning", PhaseExecution::Interactive),
+    ] {
+        for side_id in ["warsawPact", "nato"] {
+            turn_sequence.push(step(side_id, phase_id, execution));
+        }
+    }
+    turn_sequence.push(joint_step("jointAirOperations", PhaseExecution::Automatic));
+    for (phase_id, execution) in [
+        // Resolution happens at phase start; the interactive stop lets players
+        // inspect the air report before advancing to ground combat.
+        ("offensiveStrike", PhaseExecution::Interactive),
+        ("combat", PhaseExecution::Interactive),
+        ("reserve", PhaseExecution::Interactive),
+        ("postBattle", PhaseExecution::Automatic),
+    ] {
         for side_id in ["warsawPact", "nato"] {
             turn_sequence.push(step(side_id, phase_id, execution));
         }
@@ -240,6 +253,8 @@ pub fn find_scenario(id: &str) -> Option<ScenarioDefinition> {
             battle_planning_rules: BattlePlanningRules::nato_standard(),
             sides: vec![side("warsawPact", "Warsaw Pact"), side("nato", "NATO")],
             turn_sequence: standard_turn_sequence(),
+            air_bases: standard_air_forces("1983").0,
+            air_units: standard_air_forces("1983").1,
             offensive_support_hqs: Vec::new(),
             withdrawals: Vec::new(),
             reinforcements: vec![

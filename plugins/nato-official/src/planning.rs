@@ -444,6 +444,7 @@ impl Rules {
         self.battle_plans.retain(|plan| plan.side_id != side_id);
         self.battle_plans
             .push(BattlePlan::new(self.game_turn, side_id));
+        self.start_air_plan();
     }
 
     /// Removes Disrupted markers and supplies friendly combat units in the selected target stacks.

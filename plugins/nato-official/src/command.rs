@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::model::{AirPointKind, HexId, MovementMode, SideId, UnitId};
+use crate::model::{
+    AirMissionAssignment, AirPointKind, AirUnitId, HexId, MovementMode, SideId, UnitId,
+};
 
 /// A player or client request that may change the authoritative game state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +63,18 @@ pub enum GameCommand {
     UndoDetrainUnit {
         /// Friendly unit detrained earlier in this plan.
         unit_id: UnitId,
+    },
+    /// Commits one named air counter to its current-turn mission.
+    PlanAirSortie {
+        /// Air counter receiving the order.
+        air_unit_id: AirUnitId,
+        /// Mission and target selected during Battle Planning.
+        mission: AirMissionAssignment,
+    },
+    /// Cancels one sortie in the acting side's current air plan.
+    CancelAirSortie {
+        /// Stable sortie identifier within the plan.
+        sortie_id: u32,
     },
     /// Commits one Air Point to strike up to two enemy steps in a hex (23.3).
     PlanAirStrike {

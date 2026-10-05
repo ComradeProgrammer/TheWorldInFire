@@ -14,4 +14,9 @@ impl Dice {
     pub(crate) fn d6(&mut self) -> u8 {
         host::roll(6)
     }
+
+    /// Rolls one twenty-sided die.
+    pub(crate) fn d20(&mut self) -> u8 {
+        host::roll(20)
+    }
 }

@@ -15,8 +15,10 @@ use crate::dice::Dice;
 use crate::error::RuleError;
 use crate::event::GameEvent;
 use crate::model::{
-    AirInterdictionZone, AirPoints, BattlePlan, BreakthroughMarker, CombatState, HexId, PhaseActor,
-    PhaseDefinition, ReserveState, ScenarioDefinition, SideId, StrikePlan, UnitId, UnitState,
+    AirBaseId, AirBaseState, AirInterdictionZone, AirOperationsReport, AirPlan, AirPoints,
+    AirReadiness, AirUnitId, AirUnitState, BattlePlan, BreakthroughMarker, CombatState, HexId,
+    PhaseActor, PhaseDefinition, ReserveState, ScenarioDefinition, SideId, StrikePlan, UnitId,
+    UnitState,
 };
 
 /// The NATO rules' own top-level state entries, kept by the kernel under these
@@ -33,6 +35,16 @@ pub struct RulesState {
     pub strike_plan: Option<StrikePlan>,
     /// Active Air Interdiction Zones.
     pub air_interdiction_zones: Vec<AirInterdictionZone>,
+    /// Named air counters and their current step/readiness.
+    pub air_units: Vec<AirUnitState>,
+    /// Off-map airbase damage and suppression.
+    pub air_bases: Vec<AirBaseState>,
+    /// Both sides' current-turn air sortie orders.
+    pub air_plans: Vec<AirPlan>,
+    /// Automatic fighter-combat and interception record for this turn.
+    pub air_operations_report: Option<AirOperationsReport>,
+    /// Air counters eliminated so far, in elimination order.
+    pub eliminated_air_unit_ids: Vec<AirUnitId>,
     /// Breakthrough Markers (25.9) and the sides that placed them.
     pub breakthrough_markers: Vec<BreakthroughMarker>,
     /// Units eliminated so far, in order of elimination.
@@ -94,6 +106,16 @@ pub struct Rules {
     pub(super) strike_plan: Option<StrikePlan>,
     /// Active interdiction centers that restrict enemy movement in nearby hexes.
     pub(super) air_interdiction_zones: Vec<AirInterdictionZone>,
+    /// Active named air counters, indexed by stable identifier.
+    pub(super) air_units: BTreeMap<AirUnitId, AirUnitState>,
+    /// Off-map airbases, indexed by stable identifier.
+    pub(super) air_bases: BTreeMap<AirBaseId, AirBaseState>,
+    /// Both sides' current-turn sortie orders.
+    pub(super) air_plans: Vec<AirPlan>,
+    /// Current turn's automatic air-combat record.
+    pub(super) air_operations_report: Option<AirOperationsReport>,
+    /// Air counters destroyed so far.
+    pub(super) eliminated_air_units: Vec<AirUnitId>,
     /// Cleared hexes with Breakthrough Markers affecting combat and reserve movement.
     pub(super) breakthrough_markers: Vec<BreakthroughMarker>,
     /// Identifiers of units destroyed so far, in elimination order.
@@ -129,18 +151,37 @@ impl Rules {
                     .map(|city| (hex.id.clone(), city.owner.clone()))
             })
             .collect();
-        let air_points = scenario
-            .sides
+        // Kept as an empty compatibility field while the frontend migrates from
+        // abstract points to named air counters.
+        let air_points = Vec::new();
+        let air_units = scenario
+            .air_units
             .iter()
-            .map(|side| AirPoints {
-                side_id: side.id.clone(),
-                tactical: 0,
-                operational: 0,
-                bonus_tactical: scenario
-                    .battle_planning_rules
-                    .air_power
-                    .for_side(&side.id)
-                    .bonus_tactical,
+            .cloned()
+            .map(|definition| {
+                (
+                    definition.id.clone(),
+                    AirUnitState {
+                        definition,
+                        strength_step_index: 0,
+                        readiness: AirReadiness::Ready,
+                    },
+                )
+            })
+            .collect();
+        let air_bases = scenario
+            .air_bases
+            .iter()
+            .cloned()
+            .map(|definition| {
+                (
+                    definition.id.clone(),
+                    AirBaseState {
+                        definition,
+                        damage: 0,
+                        suppressed_through_turn: None,
+                    },
+                )
             })
             .collect();
         Ok(Self {
@@ -154,6 +195,11 @@ impl Rules {
             air_points,
             strike_plan: None,
             air_interdiction_zones: Vec::new(),
+            air_units,
+            air_bases,
+            air_plans: Vec::new(),
+            air_operations_report: None,
+            eliminated_air_units: Vec::new(),
             breakthrough_markers: Vec::new(),
             eliminated_units: Vec::new(),
             combat: None,
@@ -205,6 +251,19 @@ impl Rules {
         self.air_points = rules.air_points;
         self.strike_plan = rules.strike_plan;
         self.air_interdiction_zones = rules.air_interdiction_zones;
+        self.air_units = rules
+            .air_units
+            .into_iter()
+            .map(|unit| (unit.definition.id.clone(), unit))
+            .collect();
+        self.air_bases = rules
+            .air_bases
+            .into_iter()
+            .map(|base| (base.definition.id.clone(), base))
+            .collect();
+        self.air_plans = rules.air_plans;
+        self.air_operations_report = rules.air_operations_report;
+        self.eliminated_air_units = rules.eliminated_air_unit_ids;
         self.breakthrough_markers = rules.breakthrough_markers;
         self.eliminated_units = rules.eliminated_unit_ids;
         self.combat = rules.combat;
@@ -225,6 +284,11 @@ impl Rules {
             air_points: self.air_points.clone(),
             strike_plan: self.strike_plan.clone(),
             air_interdiction_zones: self.air_interdiction_zones.clone(),
+            air_units: self.air_units.values().cloned().collect(),
+            air_bases: self.air_bases.values().cloned().collect(),
+            air_plans: self.air_plans.clone(),
+            air_operations_report: self.air_operations_report.clone(),
+            eliminated_air_unit_ids: self.eliminated_air_units.clone(),
             breakthrough_markers: self.breakthrough_markers.clone(),
             eliminated_unit_ids: self.eliminated_units.clone(),
             combat: self.combat.clone(),
@@ -378,6 +442,11 @@ impl Rules {
             GameCommand::EntrainUnit { unit_id } => self.entrain_unit(unit_id),
             GameCommand::DetrainUnit { unit_id } => self.detrain_unit(unit_id),
             GameCommand::UndoDetrainUnit { unit_id } => self.undo_detrain_unit(unit_id),
+            GameCommand::PlanAirSortie {
+                air_unit_id,
+                mission,
+            } => self.plan_air_sortie(air_unit_id, mission),
+            GameCommand::CancelAirSortie { sortie_id } => self.cancel_air_sortie(sortie_id),
             GameCommand::PlanAirStrike {
                 hex_id,
                 unit_ids,
@@ -542,6 +611,65 @@ fn validate_scenario(scenario: &ScenarioDefinition) -> Result<(), RuleError> {
                     format!("Unit {} references an unknown map hex", unit.id().0),
                 ));
             }
+        }
+    }
+    let mut air_base_ids = HashSet::new();
+    for base in &scenario.air_bases {
+        if !air_base_ids.insert(base.id.clone()) {
+            return Err(RuleError::new(
+                "invalidScenario",
+                format!("Duplicate airbase ID: {}", base.id.0),
+            ));
+        }
+        if !scenario.sides.iter().any(|side| side.id == base.side_id) {
+            return Err(RuleError::new(
+                "invalidScenario",
+                format!("Airbase {} references an unknown side", base.id.0),
+            ));
+        }
+        if !map_hex_ids.contains(&base.anchor_hex_id) || base.sortie_capacity == 0 {
+            return Err(RuleError::new(
+                "invalidScenario",
+                format!("Airbase {} has an invalid anchor or capacity", base.id.0),
+            ));
+        }
+    }
+    let mut air_unit_ids = HashSet::new();
+    for unit in &scenario.air_units {
+        if !air_unit_ids.insert(unit.id.clone()) {
+            return Err(RuleError::new(
+                "invalidScenario",
+                format!("Duplicate air-unit ID: {}", unit.id.0),
+            ));
+        }
+        if !scenario.sides.iter().any(|side| side.id == unit.side_id)
+            || !air_base_ids.contains(&unit.base_id)
+            || scenario
+                .air_bases
+                .iter()
+                .find(|base| base.id == unit.base_id)
+                .is_some_and(|base| base.side_id != unit.side_id)
+        {
+            return Err(RuleError::new(
+                "invalidScenario",
+                format!("Air unit {} has an invalid side or base", unit.id.0),
+            ));
+        }
+        let valid = match unit.kind {
+            crate::model::AirUnitKind::Fighter => {
+                unit.steps.iter().all(|step| step.combat_radius > 0)
+            }
+            crate::model::AirUnitKind::FighterBomber => true,
+            crate::model::AirUnitKind::Aew => unit
+                .steps
+                .iter()
+                .all(|step| step.aew_radius > 0 && step.aew_modifier > 0),
+        };
+        if !valid {
+            return Err(RuleError::new(
+                "invalidScenario",
+                format!("Air unit {} has invalid step capabilities", unit.id.0),
+            ));
         }
     }
     Ok(())

@@ -26,10 +26,11 @@
 | `cityControl` | `[{ hexId, controller }]`，覆盖城市控制方。 |
 | `breakthroughMarkers` | 替换突破标记：`[{ sideId, hexId }]`。 |
 | `airInterdictionZones` | 替换空中遮断区：`[{ sideId, hexId }]`。 |
-| `airPoints` | 替换所列各方的空中点数：`[{ sideId, tactical, operational, bonusTactical }]`。 |
+| `airUnits` | 覆盖空军算子的战力面与状态：`[{ id, step?, readiness? }]`。 |
+| `airBases` | 覆盖地图外机场状态：`[{ id, damage?, suppressedThroughTurn? }]`。 |
 | `attackTargets`、`reserveUnitIds` | 设置当前战斗计划的攻击目标和预备队/OMG 单位；需要已有战斗计划，因此 `start` 必须在该方战斗计划阶段或之后。 |
 
-局面直接替换状态而不重新检查规则，所以测试可以构造正常游戏要很多回合才能形成的局面。开始步骤本身的自动结算已经执行：若要让引擎为铺设的局面检查补给，应从上一回合北约的预备队阶段开始，再提交 `endPhase`；双方的战前阶段都在每个回合开始时进行。未知的单位、格子、阵营或字段，或无法到达的 `start`，都会以 `invalidSetup` 拒绝。被拒绝的请求不会开始游戏。
+局面直接替换状态而不重新检查规则，所以测试可以构造正常游戏要很多回合才能形成的局面。飞机 `step` 只允许 0 或 1，机场 `damage` 只允许 0–2。开始步骤本身的自动结算已经执行：若要让引擎为铺设的局面检查补给，应从上一回合北约的预备队阶段开始，再提交 `endPhase`；双方的战前阶段都在每个回合开始时进行。未知的单位、格子、阵营或字段，或无法到达的 `start`，都会以 `invalidSetup` 拒绝。被拒绝的请求不会开始游戏。
 
 黑盒测试用它让三个苏军师包围一个西德旅，并检查北约下一个战前步骤会使其缺乏补给，同时检查各种拒绝情况。
 

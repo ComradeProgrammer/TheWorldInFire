@@ -1,8 +1,9 @@
 use super::nato_map::nato_map;
 use super::scenario::{reinforcement, side, standard_turn_sequence};
 use super::{
-    AirPowerRules, BattlePlanningRules, FormationId, HexId, OffensiveSupportHq,
-    ReinforcementDefinition, ScenarioDefinition, SideAirPower, UnitId, UnitLocation, Withdrawal,
+    standard_air_forces, AirPowerRules, BattlePlanningRules, FormationId, HexId,
+    OffensiveSupportHq, ReinforcementDefinition, ScenarioDefinition, SideAirPower, UnitId,
+    UnitLocation, Withdrawal,
 };
 
 /// Builds an on-map unit location from a printed hex identifier.
@@ -47,6 +48,7 @@ fn unit(
 
 /// Builds the seven-turn BALTAP scenario with its rules, support HQs, and unit schedule.
 pub(crate) fn baltap_scenario() -> ScenarioDefinition {
+    let (air_bases, air_units) = standard_air_forces("1983");
     ScenarioDefinition {
         id: "nato-baltap-1983".to_owned(),
         name: "BALTAP 1983 Introductory Scenario".to_owned(),
@@ -78,6 +80,8 @@ pub(crate) fn baltap_scenario() -> ScenarioDefinition {
         },
         sides: vec![side("warsawPact", "Warsaw Pact"), side("nato", "NATO")],
         turn_sequence: standard_turn_sequence(),
+        air_bases,
+        air_units,
         reinforcements: baltap_units(),
         // 36.4.2.6: the NEGF HQ gives the WP one Offensive Support column shift
         // while on the map; the Baltic Front and Baltic Corps HQs never do (29.5.2,

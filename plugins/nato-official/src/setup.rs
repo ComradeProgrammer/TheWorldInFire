@@ -14,8 +14,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::RuleError;
 use crate::model::{
-    AirInterdictionZone, AirPoints, BreakthroughMarker, Disruption, HexId, PhaseId, SideId,
-    SupplyStatus, TrainStatus, UnitId, UnitLocation, UnitState, UnitSupplyState,
+    AirBaseId, AirInterdictionZone, AirPoints, AirReadiness, AirUnitId, BreakthroughMarker,
+    Disruption, HexId, PhaseId, SideId, SupplyStatus, TrainStatus, UnitId, UnitLocation, UnitState,
+    UnitSupplyState,
 };
 use crate::rules::Rules;
 
@@ -36,10 +37,46 @@ pub struct GameSetup {
     pub air_interdiction_zones: Option<Vec<AirInterdictionZone>>,
     /// Air Points, replacing those of the listed sides.
     pub air_points: Vec<AirPoints>,
+    /// Air-counter step and readiness overrides.
+    pub air_units: Vec<SetupAirUnit>,
+    /// Off-map airbase damage and suppression overrides.
+    pub air_bases: Vec<SetupAirBase>,
     /// Attack objectives of the active battle plan (requires one).
     pub attack_targets: Option<Vec<HexId>>,
     /// Units under a Reserve/OMG Marker in the active battle plan (requires one).
     pub reserve_unit_ids: Option<Vec<UnitId>>,
+}
+
+/// Mutable state override for one scenario air counter.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetupAirUnit {
+    /// Scenario air-counter identifier.
+    pub id: AirUnitId,
+    /// Active side of the two-step counter.
+    #[serde(default)]
+    pub step: usize,
+    /// Current-turn readiness.
+    #[serde(default = "ready")]
+    pub readiness: AirReadiness,
+}
+
+fn ready() -> AirReadiness {
+    AirReadiness::Ready
+}
+
+/// Mutable state override for one scenario off-map airbase.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetupAirBase {
+    /// Scenario airbase identifier.
+    pub id: AirBaseId,
+    /// Persistent damage, zero to two.
+    #[serde(default)]
+    pub damage: u8,
+    /// Last turn during which the base remains suppressed.
+    #[serde(default)]
+    pub suppressed_through_turn: Option<u16>,
 }
 
 /// The turn-sequence step a setup starts from.
@@ -155,6 +192,34 @@ impl Rules {
                 return Err(invalid(format!("Unknown side: {}", points.side_id.0)));
             };
             *current = points.clone();
+        }
+        for entry in &setup.air_units {
+            let unit = self
+                .air_units
+                .get_mut(&entry.id)
+                .ok_or_else(|| invalid(format!("Unknown air unit: {}", entry.id.0)))?;
+            if entry.step >= unit.definition.steps.len() {
+                return Err(invalid(format!(
+                    "{} has no air step {}",
+                    entry.id.0, entry.step
+                )));
+            }
+            unit.strength_step_index = entry.step;
+            unit.readiness = entry.readiness;
+        }
+        for entry in &setup.air_bases {
+            if entry.damage > 2 {
+                return Err(invalid(format!(
+                    "{} has invalid airbase damage",
+                    entry.id.0
+                )));
+            }
+            let base = self
+                .air_bases
+                .get_mut(&entry.id)
+                .ok_or_else(|| invalid(format!("Unknown airbase: {}", entry.id.0)))?;
+            base.damage = entry.damage;
+            base.suppressed_through_turn = entry.suppressed_through_turn;
         }
 
         if setup.attack_targets.is_some() || setup.reserve_unit_ids.is_some() {
