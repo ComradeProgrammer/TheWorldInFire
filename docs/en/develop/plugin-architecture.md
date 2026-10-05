@@ -7,9 +7,9 @@ Game rules are pluggable. A small kernel owns the game's state and turn structur
 Implemented:
 
 - The kernel (`crates/ooaw-core`) with a Wasmtime host, the shared protocol crate (`crates/ooaw-plugin-api`), and the Rust plugin SDK (`crates/ooaw-plugin-sdk`).
-- The official NATO rules (`plugins/nato-official`, package `ooaw-nato`). They are compiled to WebAssembly at build time, embedded in the kernel, and run as a WebAssembly plugin in the desktop app, the `ooaw-engine` process, and every test.
+- The official NATO rules (`crates/plugins/nato-official`, package `ooaw-nato`). They are compiled to WebAssembly at build time, embedded in the kernel, and run as a WebAssembly plugin in the desktop app, the `ooaw-engine` process, and every test.
 - Filters (named extension points) in the official combat and air-strike rules.
-- An example third-party plugin (`plugins/examples/night-fighting`) that the kernel's tests load alongside the official rules.
+- An example third-party plugin (`crates/plugins/examples/night-fighting`) that the kernel's tests load alongside the official rules.
 
 Not yet implemented: loading third-party plugins in the desktop app, saving or replaying games, and the other planned work at the end of this document.
 
@@ -129,7 +129,7 @@ The NATO plugin keeps a baseline of what it last reported. After each mutating c
 
 A filter is a named extension point. The plugin that needs a value computes it, then passes it through every other plugin taking part in the filter, in load order. Each plugin may return the value adjusted. If no other plugin takes part, the call is skipped. Before calling out, the caller sends its pending changes, so the other plugins see current state. Filters are read-only.
 
-The official rules expose (`plugins/nato-official/src/filters.rs`):
+The official rules expose (`crates/plugins/nato-official/src/filters.rs`):
 
 | Filter | Input | Value |
 | --- | --- | --- |
@@ -141,11 +141,11 @@ The official rules expose (`plugins/nato-official/src/filters.rs`):
 
 Battle previews use the same filters as resolution, so a preview always matches the battle. A strength modifier or column shift added by another plugin carries the plugin's own name, such as `example.nightFighting`. The battle planner shows such a name as written.
 
-The example plugin `plugins/examples/night-fighting` appends a −1 shift to every battle. It takes part in `nato.combat.columnShifts` only, declares itself `stateless`, and uses plain JSON rather than the `ooaw-nato` types, as a plugin in another language would. `crates/ooaw-core/tests/plugins.rs` checks that it shifts both the preview and the resolved battle.
+The example plugin `crates/plugins/examples/night-fighting` appends a −1 shift to every battle. It takes part in `nato.combat.columnShifts` only, declares itself `stateless`, and uses plain JSON rather than the `ooaw-nato` types, as a plugin in another language would. `crates/ooaw-core/tests/plugins.rs` checks that it shifts both the preview and the resolved battle.
 
 ## Writing a plugin in Rust
 
-An outline, with bodies elided; `plugins/examples/night-fighting/src/lib.rs` is a complete plugin.
+An outline, with bodies elided; `crates/plugins/examples/night-fighting/src/lib.rs` is a complete plugin.
 
 ```rust
 use ooaw_plugin_sdk::{export_plugin, Attachment, RulesPlugin};
@@ -179,7 +179,7 @@ The official module is about 2 MB, including the embedded map and campaign data.
 
 ## Testing
 
-- `plugins/nato-official/tests/rules.rs` and `campaign_scenarios.rs`: the NATO rules suite, run through the kernel and the WebAssembly plugin. The harness in `tests/common/mod.rs` reads state through the typed NATO model and edits it with `GameEngine::edit_state`. The kernel-gated `debug.checkSupply` command runs a supply check on demand.
+- `crates/plugins/nato-official/tests/rules.rs` and `campaign_scenarios.rs`: the NATO rules suite, run through the kernel and the WebAssembly plugin. The harness in `tests/common/mod.rs` reads state through the typed NATO model and edits it with `GameEngine::edit_state`. The kernel-gated `debug.checkSupply` command runs a supply check on demand.
 - `crates/ooaw-core/tests/kernel.rs`: routing, transactions, read-only queries, debug-command gating, and direct edits.
 - `crates/ooaw-core/tests/plugins.rs`: a third-party filter plugin in the guarded sandbox.
 - `crates/ooaw-core/tests/engine_black_box.rs` and `campaign_scenarios.rs`: the `ooaw-engine` JSON process.

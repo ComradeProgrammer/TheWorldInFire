@@ -2,7 +2,7 @@
 
 ## 回合顺序
 
-`plugins/nato-official/src/model/scenario.rs` 中的 `standard_turn_sequence` 为每个场景生成阶段顺序：开局联合阶段，华约与北约的战前和战斗计划阶段，自动 `jointAirOperations`，随后是双方的进攻打击、战斗、预备队和战后阶段。内核只是按这个列表推进；规则负责让交替进行成立：
+`crates/plugins/nato-official/src/model/scenario.rs` 中的 `standard_turn_sequence` 为每个场景生成阶段顺序：开局联合阶段，华约与北约的战前和战斗计划阶段，自动 `jointAirOperations`，随后是双方的进攻打击、战斗、预备队和战后阶段。内核只是按这个列表推进；规则负责让交替进行成立：
 
 - **每方各自的战斗计划。**规则状态在 `battlePlans` 中为每方保存一份计划。一方的战斗计划阶段会替换该方自己的计划，该计划随后用于该方自己的打击、战斗（华约标记的目标）和预备队阶段，即使另一方在其间进行了自己的阶段。`Rules::active_plan` 返回行动方的计划。
 - **归属一方的突破标记。**`breakthroughMarkers` 的每一项是 `{ sideId, hexId }`。只有拥有方可以对该格进行仅推进的进攻或使用其突破区，也只有拥有方的预备队阶段会移除它。`breakthroughMarkerPlaced` 和 `breakthroughMarkersRemoved` 事件带有 `sideId`。
@@ -113,7 +113,7 @@ Pre-battle
 已应用的在线更新规则（2026 年 1 月 1 日）勘误：铁路运力只计算已装车单位（13.3）；装车中的单位在战斗计划开始时，仅在运力允许时按单位 ID 顺序转为已装车（尚未提供由玩家选择哪些单位转换）；空运不能从敌控格出发（16.1.1）；BALTAP 空运司令部为华约 3 个、NATO 1 个，每个每回合运载一个战力面（3.8、36.2）。其他 1-1-26 变更（12.6 的 OMG/预备队资格、25.1.1.1 的华约战斗投入）涉及尚未实现的系统。
 - 堆叠在每条命令结束时检查，而不是只在阶段结束时检查（9.1.1 允许途经超堆叠）。
 
-格边数据：`plugins/nato-official/data/natoMap.json` 中的 `allSea`、`causeway`、`majorRiver`、`minorRiver` 和 `danishFerry` 由本地未提交的工具 `tmp/map-extract/water_hexsides.py` 生成。当海水颜色覆盖格边两侧带状区域至少 85% 的长度且没有描绘出的河流沿该格边时，判定为全海格边；河流类型取自已描绘的河流折线；渡轮按规则 12.8 设置。目前只描绘出一条堤道（小贝尔特桥），它穿过的并不是全海格边；阿夫鲁戴克大堤和其他堤道尚未描绘。
+格边数据：`crates/plugins/nato-official/data/natoMap.json` 中的 `allSea`、`causeway`、`majorRiver`、`minorRiver` 和 `danishFerry` 由本地未提交的工具 `tmp/map-extract/water_hexsides.py` 生成。当海水颜色覆盖格边两侧带状区域至少 85% 的长度且没有描绘出的河流沿该格边时，判定为全海格边；河流类型取自已描绘的河流折线；渡轮按规则 12.8 设置。目前只描绘出一条堤道（小贝尔特桥），它穿过的并不是全海格边；阿夫鲁戴克大堤和其他堤道尚未描绘。
 
 同一计划内的每条计划命令都可以撤销：`setResupplyTarget` 传入 `selected: false` 移除对应的再补给目标，`setAttackTarget` 传入 `selected: false` 移除攻击目标，`undoUnitMovement` 撤销单位最近一段移动，`detrainUnit` 取消本计划中下达的装车命令，`undoDetrainUnit` 恢复本计划中下车单位的已装车标记。如果该单位此后进行了非铁路移动，或铁路运力已不足，`undoDetrainUnit` 会被拒绝。
 
@@ -214,7 +214,7 @@ jointStatus
 
 ## 内核模块结构
 
-游戏拆分为内核与规则插件，详见 [plugin-architecture.md](plugin-architecture.md)。内核（`crates/ooaw-core`）负责状态、骰子、回合流程和命令路由。本文描述的所有规则都位于官方 NATO 规则插件（`plugins/nato-official`，包名 `ooaw-nato`）中；该插件编译为 WebAssembly 并打包进内核。
+游戏拆分为内核与规则插件，详见 [plugin-architecture.md](plugin-architecture.md)。内核（`crates/ooaw-core`）负责状态、骰子、回合流程和命令路由。本文描述的所有规则都位于官方 NATO 规则插件（`crates/plugins/nato-official`，包名 `ooaw-nato`）中；该插件编译为 WebAssembly 并打包进内核。
 
 ```text
 crates/ooaw-plugin-api/src/   共享模型与内核/插件协议
@@ -239,7 +239,7 @@ crates/ooaw-core/src/         内核
 ├─ dice.rs       带种子、可复现的骰子
 └─ bin/ooaw-engine.rs   JSON 进程适配器
 
-plugins/nato-official/src/    官方 NATO 规则插件
+crates/plugins/nato-official/src/    官方 NATO 规则插件
 ├─ plugin.rs     清单、场景与调用路由
 ├─ rules.rs      Rules：场景、状态镜像、变更上报与命令
 ├─ filters.rs    其他插件可参与的扩展点
@@ -258,7 +258,7 @@ plugins/nato-official/src/    官方 NATO 规则插件
 └─ model/        单位、场景、战斗与空中模型，以及内嵌地图加载
 ```
 
-`plugins/nato-official/src/model/` 保存 NATO 游戏内容模型；共享的地图、阶段、阵营和标识模型来自 `ooaw-plugin-api`。`model/nato_map.rs` 从 `plugins/nato-official/data/natoMap.json` 加载内嵌地图。`model/unit.rs` 定义带类型的 NATO 单位（每个战力面印刷的攻击、防御和移动值，以及 HQ、移动和战斗补给），它序列化后就是内核的通用单位，其中 `supply`、`trainStatus` 和 `disruption` 作为标记字段。`src/planning.rs` 实现战斗计划命令，`src/movement.rs` 实现权威移动规则与寻路。
+`crates/plugins/nato-official/src/model/` 保存 NATO 游戏内容模型；共享的地图、阶段、阵营和标识模型来自 `ooaw-plugin-api`。`model/nato_map.rs` 从 `crates/plugins/nato-official/data/natoMap.json` 加载内嵌地图。`model/unit.rs` 定义带类型的 NATO 单位（每个战力面印刷的攻击、防御和移动值，以及 HQ、移动和战斗补给），它序列化后就是内核的通用单位，其中 `supply`、`trainStatus` 和 `disruption` 作为标记字段。`src/planning.rs` 实现战斗计划命令，`src/movement.rs` 实现权威移动规则与寻路。
 
 `model/scenario_baltap.rs` 保存 BALTAP 1983 的场景数据。场景共有 44 个单位：第一回合 27 个，第二至第六回合分别为 11、2、2、1、1 个。第一回合单位中，17 个进入地图格，10 个进入战略预备队。后续增援进入战略预备队。
 
@@ -266,7 +266,7 @@ plugins/nato-official/src/    官方 NATO 规则插件
 
 前端通过 `src/gameApi.ts` 调用 `new_game` 和 `submit_game_command`。联合状态阶段是自动阶段（目前没有玩家决策），因此 `GameEngine::new` 在返回前会结算剧本开头的自动阶段（联合状态、带开局部署的联合增援，以及双方的战前阶段）。游戏在 revision 0 时就处于华约战斗计划阶段，开局部队已在地图上；这段自动开局产生的事件不会返回。每条命令之后，前端使用返回快照重绘单位层和战斗计划叠加层，并将镜头聚焦到新到达的增援。算子由 PixiJS 的矩形、线条、椭圆和文字现场绘制，不加载原作算子图片。
 
-NATO 规则的测试（`plugins/nato-official/tests/`）让每条命令和查询都经过内核与 WebAssembly 插件。测试辅助模块（`tests/common/mod.rs`）通过带类型的 NATO 模型读取内核状态，并直接修改状态来布置局面；`debug.checkSupply` 可按需执行补给检查，仅在游戏启用调试命令时被接受。
+NATO 规则的测试（`crates/plugins/nato-official/tests/`）让每条命令和查询都经过内核与 WebAssembly 插件。测试辅助模块（`tests/common/mod.rs`）通过带类型的 NATO 模型读取内核状态，并直接修改状态来布置局面；`debug.checkSupply` 可按需执行补给检查，仅在游戏启用调试命令时被接受。
 
 ## 当前 IPC
 

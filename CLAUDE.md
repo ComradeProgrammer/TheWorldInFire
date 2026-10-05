@@ -37,7 +37,7 @@ Known reference material includes:
 
 Game rules must eventually live in a UI-independent Rust core. Treat that core as the authoritative game state and rules implementation. It should be deterministic, testable without a window, serializable, and usable later by a local client, multiplayer server, AI, or replay tool.
 
-The core is split into a kernel and rules plugins (see `docs/en/develop/plugin-architecture.md`). The kernel (`crates/ooaw-core`) owns state, seeded dice, the turn sequencer, command routing, and transactions, and knows no game rule. Every game rule lives in a rules plugin compiled to WebAssembly and run by the kernel in a deterministic Wasmtime sandbox. The official NATO rules (`plugins/nato-official`) are such a plugin, bundled into the kernel and always loaded. Implement or change rules in the plugin, not in the kernel; extend the kernel only for rule-independent services, and extend the plugin protocol (`crates/ooaw-plugin-api`) deliberately, keeping it versioned.
+The core is split into a kernel and rules plugins (see `docs/en/develop/plugin-architecture.md`). The kernel (`crates/ooaw-core`) owns state, seeded dice, the turn sequencer, command routing, and transactions, and knows no game rule. Every game rule lives in a rules plugin compiled to WebAssembly and run by the kernel in a deterministic Wasmtime sandbox. The official NATO rules (`crates/plugins/nato-official`) are such a plugin, bundled into the kernel and always loaded. Implement or change rules in the plugin, not in the kernel; extend the kernel only for rule-independent services, and extend the plugin protocol (`crates/ooaw-plugin-api`) deliberately, keeping it versioned.
 
 ### Tauri IPC boundary
 
@@ -138,13 +138,13 @@ Keep random outcomes reproducible through an explicit seeded random-number sourc
   - `src/engine.rs`: `GameEngine`, turn sequencer, command routing, transactions, and snapshots.
   - `src/runtime.rs`: Wasmtime plugin host.
   - `src/bin/ooaw-engine.rs`: line-oriented JSON process adapter.
-- `plugins/nato-official/`: official NATO rules plugin (`ooaw-nato`).
+- `crates/plugins/nato-official/`: official NATO rules plugin (`ooaw-nato`).
   - `data/natoMap.json`: authoritative NATO scenario-map definition embedded in the plugin.
   - `src/model/`: units, scenario definitions, battle and air models, and scenario content.
   - `src/model/scenario_baltap.rs`: BALTAP 1983 setup and reinforcement schedule.
   - `src/rules.rs`, `src/plugin.rs`, and the other modules: phase and command rules.
   - `tests/`: rules tests run through the kernel and the WebAssembly plugin.
-- `plugins/examples/`: example third-party plugins used by the kernel's tests.
+- `crates/plugins/examples/`: example third-party plugins used by the kernel's tests.
 - `docs/`: durable design notes and decisions.
   - `docs/zh-CN/`: Chinese game-rule documentation.
   - `docs/en/`: matching English game-rule documentation.

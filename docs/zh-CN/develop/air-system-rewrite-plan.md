@@ -358,26 +358,26 @@ airBaseDamaged
 建议新增：
 
 ```text
-plugins/nato-official/src/model/air.rs
-plugins/nato-official/src/air_operations.rs
-plugins/nato-official/src/air_strikes.rs
-plugins/nato-official/data/natoAirForces.json
-plugins/nato-official/tests/air_operations.rs
+crates/plugins/nato-official/src/model/air.rs
+crates/plugins/nato-official/src/air_operations.rs
+crates/plugins/nato-official/src/air_strikes.rs
+crates/plugins/nato-official/data/natoAirForces.json
+crates/plugins/nato-official/tests/air_operations.rs
 ```
 
 需要修改：
 
 ```text
-plugins/nato-official/src/model/mod.rs
-plugins/nato-official/src/model/scenario.rs
-plugins/nato-official/src/model/scenario_campaign.rs
-plugins/nato-official/src/model/rules.rs
-plugins/nato-official/src/rules.rs
-plugins/nato-official/src/phase.rs
-plugins/nato-official/src/command.rs
-plugins/nato-official/src/event.rs
-plugins/nato-official/src/plugin.rs
-plugins/nato-official/src/setup.rs
+crates/plugins/nato-official/src/model/mod.rs
+crates/plugins/nato-official/src/model/scenario.rs
+crates/plugins/nato-official/src/model/scenario_campaign.rs
+crates/plugins/nato-official/src/model/rules.rs
+crates/plugins/nato-official/src/rules.rs
+crates/plugins/nato-official/src/phase.rs
+crates/plugins/nato-official/src/command.rs
+crates/plugins/nato-official/src/event.rs
+crates/plugins/nato-official/src/plugin.rs
+crates/plugins/nato-official/src/setup.rs
 src/gameApi.ts
 ```
 

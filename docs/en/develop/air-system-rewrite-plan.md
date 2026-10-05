@@ -160,11 +160,11 @@ Every random event carries the natural roll, modifier, modified roll, table colu
 Add:
 
 ```text
-plugins/nato-official/src/model/air.rs
-plugins/nato-official/src/air_operations.rs
-plugins/nato-official/src/air_strikes.rs
-plugins/nato-official/data/natoAirForces.json
-plugins/nato-official/tests/air_operations.rs
+crates/plugins/nato-official/src/model/air.rs
+crates/plugins/nato-official/src/air_operations.rs
+crates/plugins/nato-official/src/air_strikes.rs
+crates/plugins/nato-official/data/natoAirForces.json
+crates/plugins/nato-official/tests/air_operations.rs
 ```
 
 Modify the model exports, scenario builders, rules state, phase hooks, command/event enums, plugin manifest, debug setup, and `src/gameApi.ts`. Before removing the old `strikes.rs`, move its generic ground disruption, step-loss, and recovery helpers into `casualties.rs` or the appropriate ground modules.

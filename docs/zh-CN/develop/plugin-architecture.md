@@ -7,9 +7,9 @@
 已实现：
 
 - 带 Wasmtime 宿主的内核（`crates/ooaw-core`）、共享协议 crate（`crates/ooaw-plugin-api`）和 Rust 插件 SDK（`crates/ooaw-plugin-sdk`）。
-- 官方 NATO 规则（`plugins/nato-official`，包名 `ooaw-nato`）。它在构建时编译为 WebAssembly 并内嵌进内核；桌面应用、`ooaw-engine` 进程和所有测试都以 WebAssembly 插件的形式运行它。
+- 官方 NATO 规则（`crates/plugins/nato-official`，包名 `ooaw-nato`）。它在构建时编译为 WebAssembly 并内嵌进内核；桌面应用、`ooaw-engine` 进程和所有测试都以 WebAssembly 插件的形式运行它。
 - 官方战斗与空中打击规则中的过滤器（具名扩展点）。
-- 一个示例第三方插件（`plugins/examples/night-fighting`），内核测试会把它与官方规则一起加载。
+- 一个示例第三方插件（`crates/plugins/examples/night-fighting`），内核测试会把它与官方规则一起加载。
 
 尚未实现：在桌面应用中加载第三方插件、保存与回放游戏，以及本文末尾列出的其他计划工作。
 
@@ -129,7 +129,7 @@ NATO 插件保存一份基线，记录上次上报的状态。每次可修改状
 
 过滤器是具名的扩展点。需要某个值的插件先自己算出它，再依次交给参与该过滤器的其他插件；每个插件可以返回调整后的值。若没有其他插件参与，就直接跳过调用。调用前，发起方会先发送尚未上报的变更，使其他插件看到当前状态。过滤器是只读的。
 
-官方规则提供以下过滤器（`plugins/nato-official/src/filters.rs`）：
+官方规则提供以下过滤器（`crates/plugins/nato-official/src/filters.rs`）：
 
 | 过滤器 | 输入 | 值 |
 | --- | --- | --- |
@@ -141,11 +141,11 @@ NATO 插件保存一份基线，记录上次上报的状态。每次可修改状
 
 战斗预览与实际结算使用同样的过滤器，因此预览总与战斗一致。其他插件添加的强度修正或列移带有该插件自己的名称，例如 `example.nightFighting`；战斗计划界面按原样显示这个名称。
 
-示例插件 `plugins/examples/night-fighting` 为每场战斗追加一个 −1 列移。它只参与 `nato.combat.columnShifts`，声明自己为 `stateless`，并且像其他语言编写的插件一样直接使用 JSON，而不依赖 `ooaw-nato` 的类型。`crates/ooaw-core/tests/plugins.rs` 检查它同时影响预览和实际结算。
+示例插件 `crates/plugins/examples/night-fighting` 为每场战斗追加一个 −1 列移。它只参与 `nato.combat.columnShifts`，声明自己为 `stateless`，并且像其他语言编写的插件一样直接使用 JSON，而不依赖 `ooaw-nato` 的类型。`crates/ooaw-core/tests/plugins.rs` 检查它同时影响预览和实际结算。
 
 ## 用 Rust 编写插件
 
-下面是省略函数体的提纲；`plugins/examples/night-fighting/src/lib.rs` 是一个完整的插件。
+下面是省略函数体的提纲；`crates/plugins/examples/night-fighting/src/lib.rs` 是一个完整的插件。
 
 ```rust
 use ooaw_plugin_sdk::{export_plugin, Attachment, RulesPlugin};
@@ -179,7 +179,7 @@ rustup target add wasm32-unknown-unknown
 
 ## 测试
 
-- `plugins/nato-official/tests/rules.rs` 和 `campaign_scenarios.rs`：NATO 规则测试集，全部经过内核与 WebAssembly 插件运行。`tests/common/mod.rs` 中的测试辅助模块通过带类型的 NATO 模型读取状态，并用 `GameEngine::edit_state` 修改状态；由内核控制开关的 `debug.checkSupply` 命令可按需执行补给检查。
+- `crates/plugins/nato-official/tests/rules.rs` 和 `campaign_scenarios.rs`：NATO 规则测试集，全部经过内核与 WebAssembly 插件运行。`tests/common/mod.rs` 中的测试辅助模块通过带类型的 NATO 模型读取状态，并用 `GameEngine::edit_state` 修改状态；由内核控制开关的 `debug.checkSupply` 命令可按需执行补给检查。
 - `crates/ooaw-core/tests/kernel.rs`：路由、事务、只读查询、调试命令开关和直接编辑。
 - `crates/ooaw-core/tests/plugins.rs`：受保护沙箱中的第三方过滤器插件。
 - `crates/ooaw-core/tests/engine_black_box.rs` 和 `campaign_scenarios.rs`：`ooaw-engine` JSON 进程。

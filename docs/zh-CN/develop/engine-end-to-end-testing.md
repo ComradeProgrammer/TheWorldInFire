@@ -17,7 +17,7 @@
 
 ## 从自定义局面开始
 
-`newGame` 可以带一个可选的 `setup`，让测试从任意局面开始。内核先创建剧本，然后不断结束阶段直到到达 `start`（途中所有阶段照常结算，包括增援和补给），再把 setup 交给拥有该剧本的插件铺设其余内容。NATO 规则的格式是 `plugins/nato-official/src/setup.rs` 中的 `GameSetup`。所有字段都是可选的：
+`newGame` 可以带一个可选的 `setup`，让测试从任意局面开始。内核先创建剧本，然后不断结束阶段直到到达 `start`（途中所有阶段照常结算，包括增援和补给），再把 setup 交给拥有该剧本的插件铺设其余内容。NATO 规则的格式是 `crates/plugins/nato-official/src/setup.rs` 中的 `GameSetup`。所有字段都是可选的：
 
 | 字段 | 作用 |
 | --- | --- |

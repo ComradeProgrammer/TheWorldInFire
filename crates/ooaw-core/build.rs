@@ -27,8 +27,8 @@ fn main() {
     for input in [
         "Cargo.toml",
         "Cargo.lock",
-        "plugins/nato-official",
-        "plugins/examples",
+        "crates/plugins/nato-official",
+        "crates/plugins/examples",
         "crates/ooaw-plugin-api",
         "crates/ooaw-plugin-sdk",
     ] {

@@ -13,7 +13,7 @@
 
 ## 数据与已实现行为
 
-`plugins/nato-official/data/natoCampaigns.json` 是构建时内嵌的结构化数据。单位的攻击、防御、移动、战力面、兵种、国籍和隶属取自 2026 年 1 月 1 日在线更新剧本手册 §44 的战斗序列；开局位置和增援取自 VASSAL 2.4.1 对应的六个标准预设，不包括 Alternate NATO 版本。西德 9/3Pz 的位置按手册 §37.3/40.3 勘误改为 2716。
+`crates/plugins/nato-official/data/natoCampaigns.json` 是构建时内嵌的结构化数据。单位的攻击、防御、移动、战力面、兵种、国籍和隶属取自 2026 年 1 月 1 日在线更新剧本手册 §44 的战斗序列；开局位置和增援取自 VASSAL 2.4.1 对应的六个标准预设，不包括 Alternate NATO 版本。西德 9/3Pz 的位置按手册 §37.3/40.3 勘误改为 2716。
 
 `tools/import_nato_campaigns.py` 可从本地 `internet/` 参考资料重新生成数据，需要 Python 与 pypdf。它只读输入；运行时、构建和测试均不依赖 `internet/`。1988 年的苏军 6G 与 90GT 按 §44.2 交换所属前线；英军升级、加拿大增援和美国 81 旅的年份变化使用各年份的实际数据。剧本文本和模组中的 1988 年苏军 83 空中突击旅也已纳入。
 

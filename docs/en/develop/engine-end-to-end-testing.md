@@ -35,7 +35,7 @@ and checks the next turn's Pre-Battle supply reports.
 
 ## Starting from a custom situation
 
-`newGame` accepts an optional `setup` so a test can begin from any situation. The kernel creates the scenario and ends phases until it reaches `start` (running every phase on the way, including reinforcements and supply). It then passes the setup to the plugin that owns the scenario, which lays out the rest. For the NATO rules the format is `GameSetup` in `plugins/nato-official/src/setup.rs`. Every field is optional:
+`newGame` accepts an optional `setup` so a test can begin from any situation. The kernel creates the scenario and ends phases until it reaches `start` (running every phase on the way, including reinforcements and supply). It then passes the setup to the plugin that owns the scenario, which lays out the rest. For the NATO rules the format is `GameSetup` in `crates/plugins/nato-official/src/setup.rs`. Every field is optional:
 
 | Field | Effect |
 | --- | --- |

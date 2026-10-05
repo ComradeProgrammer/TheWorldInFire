@@ -4,16 +4,16 @@ members = [
     "crates/ooaw-plugin-api",
     "crates/ooaw-plugin-sdk",
     "crates/ooaw-core",
-    "plugins/nato-official",
-    "plugins/examples/night-fighting",
+    "crates/plugins/nato-official",
+    "crates/plugins/examples/night-fighting",
     "src-tauri",
 ]
 default-members = [
     "crates/ooaw-plugin-api",
     "crates/ooaw-plugin-sdk",
     "crates/ooaw-core",
-    "plugins/nato-official",
-    "plugins/examples/night-fighting",
+    "crates/plugins/nato-official",
+    "crates/plugins/examples/night-fighting",
 ]
 
 [workspace.dependencies]

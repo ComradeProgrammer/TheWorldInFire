@@ -2,7 +2,7 @@
 
 ## Turn order
 
-`standard_turn_sequence` in `plugins/nato-official/src/model/scenario.rs` builds every scenario's sequence: opening joint phases; WP and NATO Pre-Battle and Battle Planning; automatic `jointAirOperations`; then WP and NATO Offensive Strike, Combat, Reserve, and Post-Battle. The kernel just walks this list; the rules make the alternation work:
+`standard_turn_sequence` in `crates/plugins/nato-official/src/model/scenario.rs` builds every scenario's sequence: opening joint phases; WP and NATO Pre-Battle and Battle Planning; automatic `jointAirOperations`; then WP and NATO Offensive Strike, Combat, Reserve, and Post-Battle. The kernel just walks this list; the rules make the alternation work:
 
 - **Per-side battle plans.** The rules state keeps one plan per side in `battlePlans`. A side's Battle Planning replaces its own plan, which then serves its own Strike, Combat (WP marked objectives), and Reserve Phases while the other side plays in between. `Rules::active_plan` is the acting side's plan.
 - **Side-owned Breakthrough Markers.** Each `breakthroughMarkers` entry is `{ sideId, hexId }`. Only the owner may make an advance-only attack into it or use its Breakthrough Zone, and only the owner's Reserve Phase removes it. The `breakthroughMarkerPlaced` and `breakthroughMarkersRemoved` events carry `sideId`.
@@ -113,7 +113,7 @@ Not verified or not implemented:
 Living rules (1 Jan 2026) errata applied: rail capacity counts only Entrained units (13.3); Entraining units flip to Entrained at the start of Battle Planning only while capacity allows, in unit-ID order (a player choice of which units flip is not yet offered); air transport may not start in an EZOC (16.1.1); BALTAP Airlift Commands are WP 3 and NATO 1, each carrying one step per turn (3.8, 36.2). Other 1-1-26 changes (OMG/Reserve eligibility in 12.6, WP battle commitment in 25.1.1.1) concern systems that are not implemented.
 - Stacking is checked after each order rather than only at the end of the phase (9.1.1 allows passing through).
 
-Hexside data: `allSea`, `causeway`, `majorRiver`, `minorRiver`, and `danishFerry` in `plugins/nato-official/data/natoMap.json` were derived by the local, uncommitted tool `tmp/map-extract/water_hexsides.py`. A hexside is All-Sea when the sea colour covers a band across at least 85% of its length and no traced river runs along it. The river kind comes from the traced river polylines. The ferry is set from rule 12.8. Only one traced causeway (the Little Belt bridge) exists, and it crosses a hexside that is not All-Sea; the Afsluitdijk and other causeways are not yet traced.
+Hexside data: `allSea`, `causeway`, `majorRiver`, `minorRiver`, and `danishFerry` in `crates/plugins/nato-official/data/natoMap.json` were derived by the local, uncommitted tool `tmp/map-extract/water_hexsides.py`. A hexside is All-Sea when the sea colour covers a band across at least 85% of its length and no traced river runs along it. The river kind comes from the traced river polylines. The ferry is set from rule 12.8. Only one traced causeway (the Little Belt bridge) exists, and it crosses a hexside that is not All-Sea; the Afsluitdijk and other causeways are not yet traced.
 
 Every planning order can be reversed during the same plan: `setResupplyTarget` with `selected: false` removes that resupply target, `setAttackTarget` with `selected: false` removes an objective, `undoUnitMovement` reverses a unit's latest movement leg, `detrainUnit` cancels an entrainment order given in this plan, and `undoDetrainUnit` restores the Entrained marker of a unit detrained in this plan. `undoDetrainUnit` is rejected if the unit has since used non-rail movement or if rail capacity is no longer available.
 
@@ -214,7 +214,7 @@ Reinforcement Boxes are replaced by one entry hex per Reinforcement Sector: the 
 
 ## Core module layout
 
-The game is split into a kernel and rules plugins; see [plugin-architecture.md](plugin-architecture.md). The kernel (`crates/ooaw-core`) owns the state, the dice, the turn sequencer, and command routing. Every rule described in this document lives in the official NATO rules plugin (`plugins/nato-official`, package `ooaw-nato`), which is compiled to WebAssembly and bundled into the kernel.
+The game is split into a kernel and rules plugins; see [plugin-architecture.md](plugin-architecture.md). The kernel (`crates/ooaw-core`) owns the state, the dice, the turn sequencer, and command routing. Every rule described in this document lives in the official NATO rules plugin (`crates/plugins/nato-official`, package `ooaw-nato`), which is compiled to WebAssembly and bundled into the kernel.
 
 ```text
 crates/ooaw-plugin-api/src/   shared model and kernel/plugin protocol
@@ -239,7 +239,7 @@ crates/ooaw-core/src/         kernel
 ├─ dice.rs       seeded, reproducible dice
 └─ bin/ooaw-engine.rs   JSON process adapter
 
-plugins/nato-official/src/    official NATO rules plugin
+crates/plugins/nato-official/src/    official NATO rules plugin
 ├─ plugin.rs     manifest, scenarios, and call routing
 ├─ rules.rs      Rules: scenario, state mirror, change reporting, commands
 ├─ filters.rs    extension points other plugins may take part in
@@ -258,7 +258,7 @@ plugins/nato-official/src/    official NATO rules plugin
 └─ model/        units, scenarios, battle and air models, embedded map loader
 ```
 
-`plugins/nato-official/src/model/` contains the NATO game-content models; the shared map, phase, side, and identifier models come from `ooaw-plugin-api`. `model/nato_map.rs` loads the embedded map from `plugins/nato-official/data/natoMap.json`. `model/unit.rs` defines the typed NATO unit (printed attack, defense, and movement per step, and HQ, movement, and combat supply), which serializes to the kernel's generic unit with `supply`, `trainStatus`, and `disruption` as markers. `src/planning.rs` implements battle-planning commands and `src/movement.rs` authoritative movement rules and pathfinding.
+`crates/plugins/nato-official/src/model/` contains the NATO game-content models; the shared map, phase, side, and identifier models come from `ooaw-plugin-api`. `model/nato_map.rs` loads the embedded map from `crates/plugins/nato-official/data/natoMap.json`. `model/unit.rs` defines the typed NATO unit (printed attack, defense, and movement per step, and HQ, movement, and combat supply), which serializes to the kernel's generic unit with `supply`, `trainStatus`, and `disruption` as markers. `src/planning.rs` implements battle-planning commands and `src/movement.rs` authoritative movement rules and pathfinding.
 
 `model/scenario_baltap.rs` contains BALTAP 1983 scenario data. It defines 44 units: 27 on turn one, followed by 11, 2, 2, 1, and 1 on turns two through six. Of the turn-one units, 17 enter map hexes and 10 enter the Strategic Reserve. Later reinforcements enter the Strategic Reserve.
 
@@ -266,7 +266,7 @@ Counters do not depend on image assets. The rules supply game information throug
 
 The frontend calls `new_game` and `submit_game_command` through `src/gameApi.ts`. Joint Status is automatic (it has no player decisions yet), so `GameEngine::new` resolves the scenario's leading automatic phases (Joint Status, Joint Reinforcement with the opening deployment, and both sides' Pre-Battle) before returning. Play opens on WP Battle Planning at revision 0 with the opening forces on the map; the events of that automatic opening are not returned. After each command the frontend redraws its unit layer and battle-plan overlay from the returned snapshot and focuses the camera on arriving reinforcements. Counters are drawn from PixiJS rectangles, lines, ellipses, and text; no counter images from the reference game are loaded.
 
-The NATO rules' tests (`plugins/nato-official/tests/`) run every command and query through the kernel and the WebAssembly plugin. Their harness (`tests/common/mod.rs`) reads the kernel state through the typed NATO model and edits it directly to lay out positions; `debug.checkSupply` runs a supply check on demand and is accepted only when a game enables debug commands.
+The NATO rules' tests (`crates/plugins/nato-official/tests/`) run every command and query through the kernel and the WebAssembly plugin. Their harness (`tests/common/mod.rs`) reads the kernel state through the typed NATO model and edits it directly to lay out positions; `debug.checkSupply` runs a supply check on demand and is accepted only when a game enables debug commands.
 
 ## Current IPC
 

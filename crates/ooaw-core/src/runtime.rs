@@ -35,7 +35,7 @@ const CALL_DEADLINE_TICKS: u64 = 100;
 /// Maximum linear memory of one plugin instance.
 const MEMORY_LIMIT: usize = 512 << 20;
 
-/// The official NATO rules plugin, built from `plugins/nato-official` by this
+/// The official NATO rules plugin, built from `crates/plugins/nato-official` by this
 /// crate's build script.
 static OFFICIAL_PLUGIN_WASM: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ooaw_nato.wasm"));
 
