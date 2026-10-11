@@ -3,6 +3,7 @@ import {
   activeBattlePlan,
   fetchAirMissionOptions,
   fetchAirPlanningOptions,
+  fetchArtilleryStrikeOptions,
   fetchCombatOptions,
   fetchAttackTargetOptions,
   fetchMovementOptions,
@@ -11,6 +12,7 @@ import {
   type GameCommand,
   type AirMissionOptionsResponse,
   type AirPlanningOptionsResponse,
+  type ArtilleryStrikeOptionsResponse,
   type CombatOptionsResponse,
   type UnitState,
   type GameSnapshot,
@@ -174,6 +176,7 @@ function App({ game }: { game: NewGameResponse }) {
   const [selectedAirBaseId, setSelectedAirBaseId] = useState<string | null>(null);
   const [selectedAirCommandUnitId, setSelectedAirCommandUnitId] = useState<string | null>(null);
   const [airQueryBusy, setAirQueryBusy] = useState(false);
+  const [artilleryOptions, setArtilleryOptions] = useState<ArtilleryStrikeOptionsResponse | null>(null);
   const [combatOptions, setCombatOptions] = useState<CombatOptionsResponse | null>(null);
   const [combatLog, setCombatLog] = useState<CombatLogEntry[]>([]);
   const [battleHexId, setBattleHexId] = useState<string | null>(null);
@@ -372,6 +375,31 @@ function App({ game }: { game: NewGameResponse }) {
 
   const strikePhase = snapshot?.turn.currentStep?.phaseId === "offensiveStrike";
 
+  const selectedArtilleryUnit = useMemo(() => {
+    if (!snapshot) return null;
+    const step = snapshot?.turn.currentStep;
+    if (step?.phaseId !== "offensiveStrike" || step.actor.type !== "side") return null;
+    const unit = snapshot.units.find((candidate) => candidate.id === selectedUnitId);
+    return unit && unit.sideId === step.actor.sideId && unit.traits.includes("artillery") ? unit : null;
+  }, [selectedUnitId, snapshot]);
+
+  useEffect(() => {
+    setArtilleryOptions(null);
+    if (!selectedArtilleryUnit || revision === undefined) return;
+    let active = true;
+    fetchArtilleryStrikeOptions(selectedArtilleryUnit.id).then(
+      (response) => {
+        if (active && response.revision === revision) setArtilleryOptions(response);
+      },
+      (error: unknown) => {
+        if (active) setCommandNotice(errorMessage(error));
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [revision, selectedArtilleryUnit]);
+
   useEffect(() => {
     if (!snapshot) return;
     setRoster((current) => {
@@ -434,14 +462,14 @@ function App({ game }: { game: NewGameResponse }) {
 
   useEffect(() => {
     const overlay: StrikeOverlay = {
-      targets: [],
+      targets: artilleryOptions?.targets.map((target) => ({ hexId: target.hexId, tacticalAllowed: true })) ?? [],
       missions: [],
       zones: snapshot?.airInterdictionZones ?? [],
       breakthroughs: snapshot?.breakthroughMarkers.map((marker) => marker.hexId) ?? [],
     };
     strikeOverlayRef.current = overlay;
     rendererRef.current?.setStrikeOverlay(overlay);
-  }, [snapshot]);
+  }, [artilleryOptions, snapshot]);
 
   useEffect(() => {
     const airUnits = snapshot?.airUnits ?? [];
@@ -644,6 +672,7 @@ function App({ game }: { game: NewGameResponse }) {
           cities={snapshot.cities}
           movement={{ mode: movementMode, status: movementStatus, onModeChange: setModeChoice }}
           strike={null}
+          artillery={artilleryOptions?.revision === snapshot.revision ? artilleryOptions : null}
           air={selectedAirBaseId && selectedAirCommandUnitId ? {
             gameTurn: snapshot.turn.gameTurn,
             phaseId: snapshot.turn.currentStep?.phaseId,

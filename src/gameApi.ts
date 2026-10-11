@@ -54,6 +54,8 @@ export interface GameSnapshot {
   combat: CombatState | null;
   /** Marked units and their movement during the current Reserve Phase. */
   reserve: ReserveState | null;
+  /** Artillery divisions that have fired during the current game turn. */
+  artilleryFiredUnitIds: string[];
   pendingDecision: { kind: string } | null;
 }
 
@@ -241,6 +243,18 @@ export interface StrikeTargetHex {
   tacticalAllowed: boolean;
   strikesRemaining: number;
   units: StrikeTargetUnit[];
+}
+
+export interface ArtilleryStrikeTarget {
+  hexId: string;
+  units: { unitId: string; steps: number; headquarters: boolean }[];
+}
+
+export interface ArtilleryStrikeOptionsResponse {
+  revision: number;
+  artilleryUnitId: string;
+  unavailable: RuleRejection | null;
+  targets: ArtilleryStrikeTarget[];
 }
 
 export interface CombatResult {
@@ -468,6 +482,7 @@ export type GameCommand =
   | { type: "planAirInterdiction"; hexId: string; airPoint: AirPointKind }
   | { type: "cancelAirMission"; missionId: number }
   | { type: "resolveAirStrikes" }
+  | { type: "resolveArtilleryStrike"; artilleryUnitId: string; hexId: string; unitIds: string[] }
   | { type: "resolveBattle"; hexId: string; unitIds: string[]; supportingHqId: string | null }
   | { type: "advanceAfterCombat"; unitIds: string[] };
 
@@ -499,6 +514,7 @@ export type GameEvent =
   | { type: "airMissionPlanned"; sideId: string; mission: AirMission }
   | { type: "airMissionCancelled"; sideId: string; missionId: number }
   | { type: "airStrikeResolved"; sideId: string; airUnitId?: string; missionId: number; hexId: string; unitIds: string[]; resolution: StrikeResolution }
+  | { type: "artilleryStrikeResolved"; sideId: string; artilleryUnitId: string; hexId: string; unitIds: string[]; resolution: StrikeResolution }
   | { type: "airInterdictionZonePlaced"; sideId: string; hexId: string }
   | { type: "airInterdictionZonesRemoved"; sideId: string; hexIds: string[] }
   | { type: "unitSupplyChanged"; unitId: string; supply: UnitState["supply"] }
@@ -582,6 +598,12 @@ export async function fetchReserveOptions(): Promise<ReserveOptionsResponse> {
 /** Read-only preview of the phasing side's Air Strike Segment choices. */
 export async function fetchAirStrikeOptions(): Promise<AirStrikeOptionsResponse> {
   const { revision, result } = await rulesQuery<Omit<AirStrikeOptionsResponse, "revision">>("airStrikeOptions");
+  return { revision, ...result };
+}
+
+/** Adjacent Strike Table targets for one artillery division. */
+export async function fetchArtilleryStrikeOptions(unitId: string): Promise<ArtilleryStrikeOptionsResponse> {
+  const { revision, result } = await rulesQuery<Omit<ArtilleryStrikeOptionsResponse, "revision">>("artilleryStrikeOptions", { unitId });
   return { revision, ...result };
 }
 

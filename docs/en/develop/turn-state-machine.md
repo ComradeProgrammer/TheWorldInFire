@@ -447,6 +447,8 @@ During the Offensive Strike Phase the frontend fetches `airStrikeOptions` once p
 - Strike and Interdict buttons for Tactical and Operational points, enabled only where the core allows them;
 - each committed mission with an Undo button, replaced by its dice result once resolved.
 
+Selecting one of the acting side's own artillery divisions in this phase fetches `artilleryStrikeOptions` for that unit once per revision. The unit view then shows an Artillery Strike section with a target-hex selector, target checkboxes limited client-side to two steps and HQ-alone (the core re-validates), and a Fire Artillery button that submits `resolveArtilleryStrike`; otherwise it shows the core's `unavailable` message. The map outlines the division's legal target hexes, and the Combat Log reports each `artilleryStrikeResolved` roll.
+
 While missions are pending, the top-bar action reads "Resolve Air Strikes" (`resolveAirStrikes`), then "End Phase". The map outlines strikeable hexes (red where Tactical points may be used, grey otherwise) and draws crosshairs for committed strikes, a purple seven-hex area for Air Interdiction Zones (lighter while pending), and stars for Breakthrough Markers. Counters show a D or S badge when Disrupted or Suppressed. The Battle Plan pane lists air missions and their results. The Combat Log is built on the client from strike events (die roll, modifier, result, step losses, eliminations, Disruption, Breakthroughs, interdiction); it is presentation only.
 
 During the Combat Phase the frontend fetches `combatOptions` once per revision. The map outlines attackable hexes: red for mandatory WP objectives, orange for optional ones. Hexes already fought over get a small cross.

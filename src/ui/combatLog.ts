@@ -80,6 +80,14 @@ export function describeCombatEvents(
         });
         break;
       }
+      case "artilleryStrikeResolved": {
+        const { dieRoll, modifier, modifiedRoll, result } = event.resolution;
+        lines.push({
+          tone: "roll",
+          text: `${name(event.artilleryUnitId)} artillery strike on ${event.hexId} (${event.unitIds.map(name).join(", ")}): rolled ${dieRoll} ${signed(modifier)} = ${modifiedRoll} → ${RESULT_LABELS[result]}`,
+        });
+        break;
+      }
       case "airCombatRoundResolved":
         lines.push({ tone: "roll", text: `Air combat round ${event.pairing.round}: ${pairingText(event.pairing)}` });
         break;

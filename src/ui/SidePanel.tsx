@@ -1,7 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type {
   AirPoints,
   Airspace,
+  ArtilleryStrikeOptionsResponse,
   BattlePlan,
   CityControlState,
   CombatObjective,
@@ -243,11 +244,79 @@ function ReserveActions({ unit, reserve, busy, movement, onCommand }: {
   );
 }
 
-function UnitDetails({ unit, plan, reserve, reserveOption, activeSideId, phaseId, busy, movement, onBack, onCommand }: {
+function ArtilleryActions({ unit, options, units, busy, onCommand }: {
   unit: UnitState;
+  options: ArtilleryStrikeOptionsResponse | null;
+  units: UnitState[];
+  busy: boolean;
+  onCommand(command: GameCommand): void;
+}) {
+  const [hexId, setHexId] = useState("");
+  const [unitIds, setUnitIds] = useState<string[]>([]);
+  useEffect(() => {
+    setHexId(options?.targets[0]?.hexId ?? "");
+    setUnitIds([]);
+  }, [options?.artilleryUnitId, options?.revision]);
+  if (!options) {
+    return <section className="unit-actions"><h3>Artillery strike</h3><p className="movement-hint">Checking adjacent targets…</p></section>;
+  }
+  if (options.unavailable) {
+    return <section className="unit-actions"><h3>Artillery strike</h3><p className="movement-hint warn">{options.unavailable.message}</p></section>;
+  }
+  const target = options.targets.find((candidate) => candidate.hexId === hexId) ?? options.targets[0];
+  if (!target) {
+    return <section className="unit-actions"><h3>Artillery strike</h3><p className="movement-hint">No adjacent enemy target is available.</p></section>;
+  }
+  const selected = target.units.filter((candidate) => unitIds.includes(candidate.unitId));
+  const selectedSteps = selected.reduce((sum, candidate) => sum + candidate.steps, 0);
+  const hasHq = selected.some((candidate) => candidate.headquarters);
+  return (
+    <section className="unit-actions artillery-actions">
+      <h3>Artillery strike</h3>
+      <label className="artillery-target-select">
+        Target hex
+        <select value={target.hexId} disabled={busy} onChange={(event) => { setHexId(event.currentTarget.value); setUnitIds([]); }}>
+          {options.targets.map((candidate) => <option key={candidate.hexId} value={candidate.hexId}>{candidate.hexId}</option>)}
+        </select>
+      </label>
+      <div className="artillery-target-units">
+        {target.units.map((candidate) => {
+          const checked = unitIds.includes(candidate.unitId);
+          const targetUnit = units.find((item) => item.id === candidate.unitId);
+          const conflicts = !checked && (selectedSteps + candidate.steps > 2 || hasHq || (candidate.headquarters && unitIds.length > 0));
+          return (
+            <label key={candidate.unitId}>
+              <input
+                type="checkbox"
+                checked={checked}
+                disabled={busy || conflicts}
+                onChange={() => setUnitIds((current) => checked ? current.filter((id) => id !== candidate.unitId) : [...current, candidate.unitId])}
+              />
+              {targetUnit?.name ?? candidate.unitId} · {candidate.steps} {candidate.steps === 1 ? "step" : "steps"}
+            </label>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        className="attack-button"
+        disabled={busy || unitIds.length === 0}
+        onClick={() => onCommand({ type: "resolveArtilleryStrike", artilleryUnitId: unit.id, hexId: target.hexId, unitIds })}
+      >
+        Fire artillery
+      </button>
+      <p className="movement-hint">One adjacent strike of up to two enemy steps. The first selected unit takes any step loss.</p>
+    </section>
+  );
+}
+
+function UnitDetails({ unit, units, plan, reserve, reserveOption, artillery, activeSideId, phaseId, busy, movement, onBack, onCommand }: {
+  unit: UnitState;
+  units: UnitState[];
   plan: BattlePlan | null;
   reserve: ReserveState | null;
   reserveOption: RuleRejection | null | undefined;
+  artillery: ArtilleryStrikeOptionsResponse | null;
   activeSideId?: string;
   phaseId?: string;
   busy: boolean;
@@ -264,6 +333,8 @@ function UnitDetails({ unit, plan, reserve, reserveOption, activeSideId, phaseId
     actions = <PlanningActions unit={unit} plan={plan} reserveOption={reserveOption} busy={busy} movement={movement} onCommand={onCommand} />;
   } else if (phaseId === "reserve" && reserve && own) {
     actions = <ReserveActions unit={unit} reserve={reserve} busy={busy} movement={movement} onCommand={onCommand} />;
+  } else if (phaseId === "offensiveStrike" && own && unit.traits.includes("artillery")) {
+    actions = <ArtilleryActions unit={unit} units={units} options={artillery} busy={busy} onCommand={onCommand} />;
   } else {
     actions = <p className="readonly-note">This unit has no available actions in the current phase.</p>;
   }
@@ -370,6 +441,8 @@ export interface SidePanelProps {
   movement: MovementControl;
   /** Offensive Strike Phase context; present only during that phase. */
   strike: StrikeContext | null;
+  /** Strike choices for the selected artillery division. */
+  artillery: ArtilleryStrikeOptionsResponse | null;
   /** Named-aircraft command shown only while an airbase installation is selected. */
   air: AirOperationsContext | null;
   /** Combat Phase context; present only during that phase. */
@@ -432,9 +505,11 @@ export function SidePanel(props: SidePanelProps) {
           <ControlHeader canEndPhase={props.canEndPhase} label={props.phaseActionLabel} busy={props.phaseActionBusy} onEndPhase={props.onEndPhase} onOpenSettings={props.onOpenSettings} />
           <UnitDetails
             unit={selectedUnit}
+            units={props.units}
             plan={props.battlePlan}
             reserve={props.reserve}
             reserveOption={props.reserveOptions.get(selectedUnit.id)}
+            artillery={props.artillery}
             activeSideId={activeSideId}
             phaseId={phaseId}
             busy={props.commandBusy}
