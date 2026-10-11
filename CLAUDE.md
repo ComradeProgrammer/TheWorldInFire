@@ -37,7 +37,7 @@ Known reference material includes:
 
 Game rules must eventually live in a UI-independent Rust core. Treat that core as the authoritative game state and rules implementation. It should be deterministic, testable without a window, serializable, and usable later by a local client, multiplayer server, AI, or replay tool.
 
-The core is split into a kernel and rules plugins (see `docs/en/develop/plugin-architecture.md`). The kernel (`crates/ooaw-core`) owns state, seeded dice, the turn sequencer, command routing, and transactions, and knows no game rule. Every game rule lives in a rules plugin compiled to WebAssembly and run by the kernel in a deterministic Wasmtime sandbox. The official NATO rules (`crates/plugins/nato-official`) are such a plugin, bundled into the kernel and always loaded. Implement or change rules in the plugin, not in the kernel; extend the kernel only for rule-independent services, and extend the plugin protocol (`crates/ooaw-plugin-api`) deliberately, keeping it versioned.
+The core is split into a kernel and rules plugins (see `docs/en/develop/plugin-architecture.md`). The kernel (`crates/ooaw-core`) owns state, seeded dice, the turn sequencer, command routing, and transactions, and knows no game rule. Every game rule lives in a rules plugin, written in Rust against the `RulesPlugin` trait, compiled to WebAssembly, and run by the kernel in a deterministic Wasmtime sandbox. The official NATO rules (`crates/plugins/nato-official`) are such a plugin, bundled into the kernel and always loaded. Implement or change rules in the plugin, not in the kernel; extend the kernel only for rule-independent services, and extend the plugin contract (`RulesPlugin` and the types in `crates/ooaw-plugin-api`) deliberately, bumping `ABI_VERSION` when the functions in `abi.rs` change.
 
 ### Tauri IPC boundary
 
@@ -131,8 +131,10 @@ Keep random outcomes reproducible through an explicit seeded random-number sourc
 - `node_modules/`: generated npm dependencies; do not edit.
 - `Cargo.toml`: Cargo workspace root for every Rust crate, including `src-tauri`.
 - `target/`: generated Rust build artifacts for the workspace (`target/wasm-plugins/` holds the plugin builds); do not edit.
-- `crates/ooaw-plugin-api/`: shared game model (identifiers, map, phases, generic units) and the kernel/plugin protocol.
-- `crates/ooaw-plugin-sdk/`: support for writing rules plugins in Rust.
+- `crates/ooaw-plugin-api/`: shared game model (identifiers, map, phases, generic units) and the plugin contract. Plugins are Rust-only.
+  - `src/sdk/`: the `RulesPlugin` trait (the kernel/plugin contract), `export_plugin!`, host functions, and mirror diffing.
+  - `src/abi.rs`: the `extern "C"` functions between the kernel and a plugin, one export per `RulesPlugin` method.
+  - `src/protocol.rs`: types in the trait's signatures that the kernel also uses (manifest, attachment, scenario setup, changes).
 - `crates/ooaw-core/`: UI-independent game kernel.
   - `build.rs`: builds the rules plugins for `wasm32-unknown-unknown` and embeds the official one.
   - `src/engine.rs`: `GameEngine`, turn sequencer, command routing, transactions, and snapshots.

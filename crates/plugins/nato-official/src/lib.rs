@@ -42,4 +42,4 @@ pub use rules::{Rules, RulesState};
 pub use setup::{GameSetup, SetupAirBase, SetupAirUnit, SetupCity, SetupStart, SetupUnit};
 pub use strikes::strike_table;
 
-ooaw_plugin_sdk::export_plugin!(NatoPlugin);
+ooaw_plugin_api::export_plugin!(NatoPlugin);

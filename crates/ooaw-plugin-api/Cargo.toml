@@ -2,8 +2,9 @@
 name = "ooaw-plugin-api"
 version = "0.1.0"
 edition = "2021"
-description = "Shared game model and kernel/plugin protocol for OOAW rules plugins"
+description = "Shared game model, kernel/plugin interface, and Rust SDK for OOAW rules plugins"
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+rmp-serde = { workspace = true }

@@ -1,6 +1,6 @@
 //! The game's dice, which belong to the kernel.
 
-use ooaw_plugin_sdk::host;
+use ooaw_plugin_api::sdk::host;
 
 /// Handle to the kernel's seeded dice.
 ///

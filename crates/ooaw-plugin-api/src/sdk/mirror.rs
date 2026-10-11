@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::api::protocol::Change;
-use crate::api::serde_json::{self, Map, Value};
-use crate::api::{HexId, PendingDecision, RuleError, SideId, Unit, UnitId};
+use crate::protocol::Change;
+use crate::serde_json::{self, Map, Value};
+use crate::{HexId, PendingDecision, RuleError, SideId, Unit, UnitId};
 
 fn encode<T: Serialize>(value: &T) -> Result<Value, RuleError> {
     serde_json::to_value(value).map_err(|error| RuleError::protocol(error.to_string()))
@@ -117,7 +117,7 @@ pub fn decision_change(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::serde_json::json;
+    use crate::serde_json::json;
 
     fn unit(id: &str, hex: &str, supply: &str) -> Value {
         json!({

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use ooaw_plugin_api::protocol::{
-    PluginCall, ScenarioRequest, ScenarioSetup, DEBUG_COMMAND_PREFIX, END_PHASE_COMMAND,
+    Attachment, ScenarioRequest, ScenarioSetup, DEBUG_COMMAND_PREFIX, END_PHASE_COMMAND,
 };
 use ooaw_plugin_api::serde_json::{self, Value};
 use ooaw_plugin_api::{
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use wasmtime::Store;
 
 use crate::dice::Dice;
-use crate::runtime::{dispatch, new_store, official_plugin, HostData, PluginModule, Sandbox, Slot};
+use crate::runtime::{self, new_store, official_plugin, HostData, PluginModule, Sandbox, Slot};
 use crate::state::{check_unit, KernelState};
 
 /// Version of the serialized snapshot contract.
@@ -244,18 +244,7 @@ impl GameEngine {
         data.filters = filters;
         let mut store = new_store(data);
 
-        let response = dispatch(
-            &mut store,
-            owner,
-            PluginCall::CreateGame {
-                game_id: game_id.clone(),
-                scenario: scenario.clone(),
-            },
-        )?;
-        let setup_value = response.result?;
-        let content: ScenarioSetup = serde_json::from_value(setup_value).map_err(|error| {
-            RuleError::protocol(format!("Malformed scenario from plugin: {error}"))
-        })?;
+        let content = runtime::create_game(&mut store, owner, &game_id, &scenario)?;
         let ScenarioSetup {
             scenario: summary,
             map,
@@ -283,7 +272,7 @@ impl GameEngine {
             data.hexes = hexes;
             data.invalidate();
             for (index, slot) in data.slots.iter_mut().enumerate() {
-                slot.attach = Some(PluginCall::Attach {
+                slot.attach = Some(Attachment {
                     game_id: game_id.clone(),
                     scenario: scenario.clone(),
                     summary: summary.clone(),
@@ -294,8 +283,8 @@ impl GameEngine {
         }
         for index in 0..store.data().slots.len() {
             if index != owner {
-                let attach = store.data().slots[index].attach.clone().expect("set above");
-                dispatch(&mut store, index, attach)?.result?;
+                let attachment = store.data().slots[index].attach.clone().expect("set above");
+                runtime::attach(&mut store, index, &attachment)?;
             }
         }
 
@@ -353,12 +342,7 @@ impl GameEngine {
                 self.end_phase()?;
             }
         }
-        let response = dispatch(
-            &mut self.store,
-            self.owner,
-            PluginCall::ApplySetup { setup },
-        )?;
-        response.result?;
+        runtime::apply_setup(&mut self.store, self.owner, &setup)?;
         Ok(())
     }
 
@@ -477,8 +461,7 @@ impl GameEngine {
             self.end_phase()
         } else {
             match self.registry.commands.get(&kind).copied() {
-                Some(slot) => dispatch(&mut self.store, slot, PluginCall::Command { command })
-                    .and_then(|response| response.result.map(|_| response.events)),
+                Some(slot) => runtime::command(&mut self.store, slot, &command),
                 None => Err(RuleError::new(
                     "unknownCommand",
                     format!("No rules plugin handles the command {kind}"),
@@ -519,16 +502,9 @@ impl GameEngine {
             )
         })?;
         self.store.data_mut().read_only = true;
-        let response = dispatch(
-            &mut self.store,
-            slot,
-            PluginCall::Query {
-                name: name.to_owned(),
-                input,
-            },
-        );
+        let result = runtime::query(&mut self.store, slot, name, &input);
         self.store.data_mut().read_only = false;
-        response?.result
+        result
     }
 
     /// Accepts `debug.*` commands, which rules plugins may provide for tests
@@ -661,15 +637,7 @@ impl GameEngine {
         let Some(slot) = self.registry.phases.get(&step.phase_id.0).copied() else {
             return Ok(());
         };
-        let phase = step.clone();
-        let call = if starting {
-            PluginCall::PhaseStarted { phase }
-        } else {
-            PluginCall::PhaseEnding { phase }
-        };
-        let response = dispatch(&mut self.store, slot, call)?;
-        response.result?;
-        events.extend(response.events);
+        events.extend(runtime::phase_hook(&mut self.store, slot, step, starting)?);
         Ok(())
     }
 }

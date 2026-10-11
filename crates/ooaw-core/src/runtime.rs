@@ -9,12 +9,13 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Once, OnceLock};
 use std::time::Duration;
 
+use ooaw_plugin_api::abi::{self, exports, imports, ABI_VERSION};
 use ooaw_plugin_api::protocol::{
-    DispatchRequest, DispatchResponse, HostRequest, HostResponse, PluginCall, PluginManifest,
-    ABI_VERSION,
+    Attachment, Change, PluginManifest, ScenarioRequest, ScenarioSetup,
 };
-use ooaw_plugin_api::serde_json::{self, Value};
-use ooaw_plugin_api::{GameStatus, HexId, RuleError};
+use ooaw_plugin_api::serde_json::Value;
+use ooaw_plugin_api::{GameId, GameStatus, HexId, PhaseDefinition, RuleError};
+use serde::de::DeserializeOwned;
 use wasmtime::{
     AsContextMut, Caller, Config, Engine, Extern, Linker, Memory, Module, Store, StoreContextMut,
     StoreLimits, StoreLimitsBuilder, TypedFunc,
@@ -192,7 +193,7 @@ fn read_manifest(sandbox: Sandbox, module: &Module) -> Result<PluginManifest, Ru
         .instantiate(&mut store, module)
         .map_err(|error| load_error(format!("Cannot instantiate plugin: {error}")))?;
     let version = instance
-        .get_typed_func::<(), u32>(&mut store, "ooaw_abi_version")
+        .get_typed_func::<(), u32>(&mut store, exports::VERSION)
         .and_then(|func| func.call(&mut store, ()))
         .map_err(|error| load_error(format!("Plugin exports no ABI version: {error}")))?;
     if version != ABI_VERSION {
@@ -201,19 +202,13 @@ fn read_manifest(sandbox: Sandbox, module: &Module) -> Result<PluginManifest, Ru
         )));
     }
     let exports = Exports::of(&instance, &mut store).map_err(load_error)?;
-    let request: DispatchRequest = DispatchRequest {
-        turn: None,
-        sync: None,
-        active_filters: Vec::new(),
-        call: PluginCall::Manifest,
-    };
-    let bytes = serde_json::to_vec(&request).map_err(|error| load_error(error.to_string()))?;
-    let raw = invoke(&mut store.as_context_mut(), &exports, &bytes)
+    let raw = exports
+        .manifest
+        .call(&mut store, ())
+        .and_then(|packed| read_result(&mut store.as_context_mut(), &exports, packed))
         .map_err(|error| load_error(format!("Plugin failed to describe itself: {error}")))?;
-    let response: DispatchResponse = serde_json::from_slice(&raw)
-        .map_err(|error| load_error(format!("Malformed manifest response: {error}")))?;
-    let manifest: PluginManifest = serde_json::from_value(response.result?)
-        .map_err(|error| load_error(format!("Malformed manifest: {error}")))?;
+    let manifest: PluginManifest = abi::decode(&raw)
+        .map_err(|error| load_error(format!("Malformed manifest: {}", error.message)))?;
     if manifest.abi_version != ABI_VERSION {
         return Err(load_error(format!(
             "Plugin {} declares ABI version {}, but the kernel supports {ABI_VERSION}",
@@ -236,35 +231,94 @@ pub fn official_plugin() -> Result<Arc<PluginModule>, RuleError> {
         .clone()
 }
 
-/// Exports of one plugin instance.
+/// An export that takes one encoded argument and returns an encoded result.
+type MethodFunc = TypedFunc<(u32, u32), u64>;
+
+/// Exports of one plugin instance; see [`exports`] for their signatures.
 #[derive(Clone)]
 struct Exports {
     memory: Memory,
     alloc: TypedFunc<u32, u32>,
     free: TypedFunc<(u32, u32), ()>,
-    dispatch: TypedFunc<(u32, u32), u64>,
+    manifest: TypedFunc<(), u64>,
+    set_turn: TypedFunc<(u32, u32, u32), ()>,
+    sync: MethodFunc,
+    take_changes: TypedFunc<(), u64>,
+    create_game: MethodFunc,
+    attach: MethodFunc,
+    apply_setup: MethodFunc,
+    phase_started: MethodFunc,
+    phase_ending: MethodFunc,
+    command: MethodFunc,
+    query: MethodFunc,
+    filter: MethodFunc,
 }
 
 impl Exports {
     fn of(instance: &wasmtime::Instance, mut store: impl AsContextMut) -> Result<Self, String> {
+        let mut store = store.as_context_mut();
         let memory = instance
-            .get_memory(&mut store, "memory")
+            .get_memory(&mut store, exports::MEMORY)
             .ok_or("Plugin exports no memory")?;
-        let alloc = instance
-            .get_typed_func(&mut store, "ooaw_alloc")
-            .map_err(|error| error.to_string())?;
-        let free = instance
-            .get_typed_func(&mut store, "ooaw_free")
-            .map_err(|error| error.to_string())?;
-        let dispatch = instance
-            .get_typed_func(&mut store, "ooaw_dispatch")
-            .map_err(|error| error.to_string())?;
+        macro_rules! func {
+            ($name:expr) => {
+                instance
+                    .get_typed_func(&mut store, $name)
+                    .map_err(|error| format!("Plugin export {}: {error}", $name))?
+            };
+        }
         Ok(Self {
             memory,
-            alloc,
-            free,
-            dispatch,
+            alloc: func!(exports::ALLOC),
+            free: func!(exports::FREE),
+            manifest: func!(exports::MANIFEST),
+            set_turn: func!(exports::SET_TURN),
+            sync: func!(exports::SYNC),
+            take_changes: func!(exports::TAKE_CHANGES),
+            create_game: func!(exports::CREATE_GAME),
+            attach: func!(exports::ATTACH),
+            apply_setup: func!(exports::APPLY_SETUP),
+            phase_started: func!(exports::PHASE_STARTED),
+            phase_ending: func!(exports::PHASE_ENDING),
+            command: func!(exports::COMMAND),
+            query: func!(exports::QUERY),
+            filter: func!(exports::FILTER),
         })
+    }
+
+    fn method(&self, method: Method) -> &MethodFunc {
+        match method {
+            Method::CreateGame => &self.create_game,
+            Method::Attach => &self.attach,
+            Method::ApplySetup => &self.apply_setup,
+            Method::PhaseStarted => &self.phase_started,
+            Method::PhaseEnding => &self.phase_ending,
+            Method::Command => &self.command,
+            Method::Query => &self.query,
+            Method::Filter => &self.filter,
+        }
+    }
+}
+
+/// A [`RulesPlugin`](ooaw_plugin_api::sdk::RulesPlugin) method the kernel calls
+/// with an encoded argument.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Method {
+    CreateGame,
+    Attach,
+    ApplySetup,
+    PhaseStarted,
+    PhaseEnding,
+    Command,
+    Query,
+    Filter,
+}
+
+impl Method {
+    /// Whether the call starts the plugin's mirror afresh, so it needs no
+    /// sync before and reports no changes after.
+    fn resets_mirror(self) -> bool {
+        matches!(self, Self::CreateGame | Self::Attach)
     }
 }
 
@@ -276,8 +330,8 @@ pub(crate) struct Slot {
     exports: Option<Exports>,
     /// Kernel state generation the instance's mirror matches, if any.
     synced: Option<u64>,
-    /// Call that attaches a fresh instance to the game.
-    pub(crate) attach: Option<PluginCall>,
+    /// The game a fresh instance is attached to.
+    pub(crate) attach: Option<Attachment>,
 }
 
 impl Slot {
@@ -312,7 +366,7 @@ pub(crate) struct HostData {
     pub(crate) read_only: bool,
     /// Plugins currently handling a call, outermost first.
     stack: Vec<usize>,
-    /// Response to the last `host_call`, waiting for `host_read`.
+    /// Result of the last `filter` import, waiting for `host_read`.
     response: Vec<u8>,
     /// Resource limits applied to every instance.
     limits: StoreLimits,
@@ -361,16 +415,11 @@ impl HostData {
         self.generation += 1;
     }
 
-    /// Filters some plugin other than `slot` takes part in.
-    fn active_filters_for(&self, slot: usize) -> Vec<String> {
-        let mut names: Vec<String> = self
-            .filters
-            .iter()
-            .filter(|(_, providers)| providers.iter().any(|provider| *provider != slot))
-            .map(|(name, _)| name.clone())
-            .collect();
-        names.sort();
-        names
+    /// Whether a plugin other than `slot` takes part in filter `name`.
+    fn filter_active_for(&self, slot: usize, name: &str) -> bool {
+        self.filters
+            .get(name)
+            .is_some_and(|providers| providers.iter().any(|provider| *provider != slot))
     }
 }
 
@@ -384,7 +433,7 @@ pub(crate) fn new_store(data: HostData) -> Store<HostData> {
     store
 }
 
-/// The linker providing the `ooaw` imports in a sandbox.
+/// The linker providing the [`imports`] in a sandbox.
 fn linker(sandbox: Sandbox) -> &'static Linker<HostData> {
     static TRUSTED: OnceLock<Linker<HostData>> = OnceLock::new();
     static GUARDED: OnceLock<Linker<HostData>> = OnceLock::new();
@@ -396,8 +445,8 @@ fn linker(sandbox: Sandbox) -> &'static Linker<HostData> {
         let mut linker = Linker::new(engine(sandbox));
         linker
             .func_wrap(
-                "ooaw",
-                "roll",
+                imports::MODULE,
+                imports::ROLL,
                 |mut caller: Caller<'_, HostData>, sides: u32| -> wasmtime::Result<u32> {
                     let data = caller.data_mut();
                     if data.read_only {
@@ -414,19 +463,31 @@ fn linker(sandbox: Sandbox) -> &'static Linker<HostData> {
             .expect("unique import");
         linker
             .func_wrap(
-                "ooaw",
-                "host_call",
+                imports::MODULE,
+                imports::FILTER_ACTIVE,
+                |mut caller: Caller<'_, HostData>, ptr: u32, len: u32| -> wasmtime::Result<u32> {
+                    let name = read_text(&mut caller, ptr, len)?;
+                    let data = caller.data();
+                    let slot = *data
+                        .stack
+                        .last()
+                        .ok_or_else(|| wasmtime::format_err!("filter_active outside a call"))?;
+                    Ok(u32::from(data.filter_active_for(slot, &name)))
+                },
+            )
+            .expect("unique import");
+        linker
+            .func_wrap(
+                imports::MODULE,
+                imports::FILTER,
                 |mut caller: Caller<'_, HostData>, ptr: u32, len: u32| -> wasmtime::Result<u32> {
                     let memory = caller_memory(&mut caller)?;
                     let mut bytes = vec![0; len as usize];
                     memory.read(&caller, ptr as usize, &mut bytes)?;
-                    let response: HostResponse = match serde_json::from_slice(&bytes) {
-                        Ok(request) => host_request(&mut caller, request),
-                        Err(error) => Err(RuleError::protocol(format!(
-                            "Malformed host request: {error}"
-                        ))),
-                    };
-                    let encoded = serde_json::to_vec(&response)?;
+                    let result = abi::decode(&bytes).and_then(|(name, input, value, changes)| {
+                        run_filter(&mut caller, name, input, value, changes)
+                    });
+                    let encoded = abi::encode(&result)?;
                     let len = encoded.len() as u32;
                     caller.data_mut().response = encoded;
                     Ok(len)
@@ -435,12 +496,26 @@ fn linker(sandbox: Sandbox) -> &'static Linker<HostData> {
             .expect("unique import");
         linker
             .func_wrap(
-                "ooaw",
-                "host_read",
+                imports::MODULE,
+                imports::HOST_READ,
                 |mut caller: Caller<'_, HostData>, ptr: u32| -> wasmtime::Result<()> {
                     let memory = caller_memory(&mut caller)?;
                     let bytes = std::mem::take(&mut caller.data_mut().response);
                     memory.write(&mut caller, ptr as usize, &bytes)?;
+                    Ok(())
+                },
+            )
+            .expect("unique import");
+        linker
+            .func_wrap(
+                imports::MODULE,
+                imports::LOG,
+                |mut caller: Caller<'_, HostData>, ptr: u32, len: u32| -> wasmtime::Result<()> {
+                    let message = read_text(&mut caller, ptr, len)?;
+                    let data = caller.data();
+                    if let Some(&slot) = data.stack.last() {
+                        eprintln!("[{}] {message}", data.slots[slot].plugin.manifest.id);
+                    }
                     Ok(())
                 },
             )
@@ -451,78 +526,60 @@ fn linker(sandbox: Sandbox) -> &'static Linker<HostData> {
 
 fn caller_memory(caller: &mut Caller<'_, HostData>) -> wasmtime::Result<Memory> {
     caller
-        .get_export("memory")
+        .get_export(exports::MEMORY)
         .and_then(Extern::into_memory)
         .ok_or_else(|| wasmtime::format_err!("plugin exports no memory"))
 }
 
-/// Handles one plugin-to-kernel request.
-fn host_request(caller: &mut Caller<'_, HostData>, request: HostRequest) -> HostResponse {
+/// Reads UTF-8 text a plugin passed to an import.
+fn read_text(caller: &mut Caller<'_, HostData>, ptr: u32, len: u32) -> wasmtime::Result<String> {
+    let memory = caller_memory(caller)?;
+    let mut bytes = vec![0; len as usize];
+    memory.read(&*caller, ptr as usize, &mut bytes)?;
+    Ok(String::from_utf8(bytes)?)
+}
+
+/// Runs a filter for the calling plugin through every other plugin taking
+/// part in it, after applying the caller's pending changes.
+fn run_filter(
+    caller: &mut Caller<'_, HostData>,
+    name: String,
+    input: Value,
+    mut value: Value,
+    changes: Vec<Change>,
+) -> Result<Value, RuleError> {
     let Some(&slot) = caller.data().stack.last() else {
-        return Err(RuleError::protocol("Host request outside a plugin call"));
+        return Err(RuleError::protocol("Filter outside a plugin call"));
     };
-    match request {
-        HostRequest::Log { message } => {
-            eprintln!(
-                "[{}] {message}",
-                caller.data().slots[slot].plugin.manifest.id
-            );
-            Ok(Value::Null)
-        }
-        HostRequest::Filter {
-            name,
-            input,
-            mut value,
-            changes,
-        } => {
-            if !changes.is_empty() {
-                apply_changes(caller.data_mut(), slot, changes)?;
+    if !changes.is_empty() {
+        apply_changes(caller.data_mut(), slot, changes)?;
+    }
+    let providers: Vec<usize> = caller
+        .data()
+        .filters
+        .get(&name)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|provider| *provider != slot)
+        .collect();
+    let was_read_only = std::mem::replace(&mut caller.data_mut().read_only, true);
+    let mut result = Ok(());
+    for provider in providers {
+        match filter(&mut *caller, provider, &name, &input, &value) {
+            Ok(next) => value = next,
+            Err(error) => {
+                result = Err(error);
+                break;
             }
-            let providers: Vec<usize> = caller
-                .data()
-                .filters
-                .get(&name)
-                .into_iter()
-                .flatten()
-                .copied()
-                .filter(|provider| *provider != slot)
-                .collect();
-            let was_read_only = std::mem::replace(&mut caller.data_mut().read_only, true);
-            let mut result = Ok(());
-            for provider in providers {
-                let call = PluginCall::Filter {
-                    name: name.clone(),
-                    input: input.clone(),
-                    value,
-                };
-                match dispatch(&mut *caller, provider, call) {
-                    Ok(response) => match response.result {
-                        Ok(next) => value = next,
-                        Err(error) => {
-                            result = Err(error);
-                            value = Value::Null;
-                            break;
-                        }
-                    },
-                    Err(error) => {
-                        result = Err(error);
-                        value = Value::Null;
-                        break;
-                    }
-                }
-            }
-            caller.data_mut().read_only = was_read_only;
-            result.map(|()| value)
         }
     }
+    caller.data_mut().read_only = was_read_only;
+    result.map(|()| value)
 }
 
 /// Applies a plugin's changes and records that its mirror now matches the state.
-fn apply_changes(
-    data: &mut HostData,
-    slot: usize,
-    changes: Vec<ooaw_plugin_api::protocol::Change>,
-) -> Result<(), RuleError> {
+fn apply_changes(data: &mut HostData, slot: usize, changes: Vec<Change>) -> Result<(), RuleError> {
     if changes.is_empty() {
         return Ok(());
     }
@@ -548,87 +605,219 @@ fn apply_changes(
     result
 }
 
-/// Sends one call to a plugin, synchronising its mirror first if needed, and
-/// applies the changes it reports. Returns the plugin's response; a rejected
-/// call is `Ok` with an `Err` result and no changes applied.
+/// `RulesPlugin::create_game` on the plugin of `slot`.
+pub(crate) fn create_game(
+    ctx: impl AsContextMut<Data = HostData>,
+    slot: usize,
+    game_id: &GameId,
+    scenario: &ScenarioRequest,
+) -> Result<ScenarioSetup, RuleError> {
+    call(ctx, slot, Method::CreateGame, &(game_id, scenario))
+}
+
+/// `RulesPlugin::attach` on the plugin of `slot`.
+pub(crate) fn attach(
+    ctx: impl AsContextMut<Data = HostData>,
+    slot: usize,
+    attachment: &Attachment,
+) -> Result<(), RuleError> {
+    call(ctx, slot, Method::Attach, attachment)
+}
+
+/// `RulesPlugin::apply_setup` on the plugin of `slot`; returns its events.
+pub(crate) fn apply_setup(
+    ctx: impl AsContextMut<Data = HostData>,
+    slot: usize,
+    setup: &Value,
+) -> Result<Vec<Value>, RuleError> {
+    call(ctx, slot, Method::ApplySetup, setup)
+}
+
+/// `RulesPlugin::phase_started` or `phase_ending` on the plugin of `slot`;
+/// returns its events.
+pub(crate) fn phase_hook(
+    ctx: impl AsContextMut<Data = HostData>,
+    slot: usize,
+    phase: &PhaseDefinition,
+    starting: bool,
+) -> Result<Vec<Value>, RuleError> {
+    let method = if starting {
+        Method::PhaseStarted
+    } else {
+        Method::PhaseEnding
+    };
+    call(ctx, slot, method, phase)
+}
+
+/// `RulesPlugin::command` on the plugin of `slot`; returns its events.
+pub(crate) fn command(
+    ctx: impl AsContextMut<Data = HostData>,
+    slot: usize,
+    command: &Value,
+) -> Result<Vec<Value>, RuleError> {
+    call(ctx, slot, Method::Command, command)
+}
+
+/// `RulesPlugin::query` on the plugin of `slot`.
+pub(crate) fn query(
+    ctx: impl AsContextMut<Data = HostData>,
+    slot: usize,
+    name: &str,
+    input: &Value,
+) -> Result<Value, RuleError> {
+    call(ctx, slot, Method::Query, &(name, input))
+}
+
+/// `RulesPlugin::filter` on the plugin of `slot`.
+fn filter(
+    ctx: impl AsContextMut<Data = HostData>,
+    slot: usize,
+    name: &str,
+    input: &Value,
+    value: &Value,
+) -> Result<Value, RuleError> {
+    call(ctx, slot, Method::Filter, &(name, input, value))
+}
+
+/// Calls one method of the plugin of `slot`, synchronising its mirror first if
+/// needed, and applies the changes it reports. A rejection is the plugin's
+/// error; no changes are applied.
 ///
 /// # Errors
 ///
-/// Returns `pluginFault` if the plugin traps or answers malformed data (the
-/// instance is then replaced before its next call), `reentrantPluginCall` for
-/// a call into a plugin already handling one, and the error of any change
-/// that fails the kernel's consistency checks.
-pub(crate) fn dispatch(
+/// Returns the plugin's rejection; `pluginFault` if the plugin traps or
+/// answers malformed data (the instance is then replaced before its next
+/// call); `reentrantPluginCall` for a call into a plugin already handling one;
+/// and the error of any change that fails the kernel's consistency checks.
+fn call<A: serde::Serialize + ?Sized, R: DeserializeOwned>(
     mut ctx: impl AsContextMut<Data = HostData>,
     slot: usize,
-    call: PluginCall,
-) -> Result<DispatchResponse, RuleError> {
+    method: Method,
+    args: &A,
+) -> Result<R, RuleError> {
     let mut ctx = ctx.as_context_mut();
-    let plugin_id = ctx.data().slots[slot].plugin.manifest.id.clone();
     if ctx.data().stack.contains(&slot) {
         return Err(RuleError::new(
             "reentrantPluginCall",
-            format!("Plugin {plugin_id} is already handling a call"),
+            format!(
+                "Plugin {} is already handling a call",
+                ctx.data().slots[slot].plugin.manifest.id
+            ),
         ));
     }
+    let args = abi::encode(args)?;
     let exports = ensure_instance(&mut ctx, slot)?;
     if ctx.data().stack.is_empty() && ctx.data().sandbox == Sandbox::Guarded {
         ctx.set_epoch_deadline(CALL_DEADLINE_TICKS);
     }
-    let resets_mirror = matches!(
-        call,
-        PluginCall::Manifest | PluginCall::CreateGame { .. } | PluginCall::Attach { .. }
-    );
+    ctx.data_mut().stack.push(slot);
+    let result = run(&mut ctx, slot, &exports, method, &args);
+    ctx.data_mut().stack.pop();
+    result
+}
+
+/// The calls that make up one method call: turn, sync if stale, the method,
+/// and its changes.
+fn run<R: DeserializeOwned>(
+    ctx: &mut StoreContextMut<'_, HostData>,
+    slot: usize,
+    exports: &Exports,
+    method: Method,
+    args: &[u8],
+) -> Result<R, RuleError> {
+    let stateless = ctx.data().slots[slot].plugin.manifest.stateless;
+
+    let turn = ctx.data().state.turn();
+    let completed = u32::from(turn.status == GameStatus::Completed);
+    exports
+        .set_turn
+        .call(
+            &mut *ctx,
+            (u32::from(turn.game_turn), turn.step_index as u32, completed),
+        )
+        .map_err(|error| faulted(ctx, slot, error))?;
+
     let data = ctx.data();
-    let stale = data.slots[slot].synced != Some(data.generation)
-        && !data.slots[slot].plugin.manifest.stateless;
-    let request = DispatchRequest {
-        turn: Some(data.state.turn()),
-        sync: (stale && !resets_mirror).then(|| data.state.mirror()),
-        active_filters: data.active_filters_for(slot),
-        call,
-    };
-    let bytes = serde_json::to_vec(&request)
-        .map_err(|error| RuleError::protocol(format!("Unserializable request: {error}")))?;
-    if request.sync.is_some() {
-        let generation = ctx.data().generation;
+    if !method.resets_mirror() && !stateless && data.slots[slot].synced != Some(data.generation) {
+        let generation = data.generation;
+        let state = abi::encode(&data.state.mirror())?;
+        let synced: Result<(), RuleError> = call_method(ctx, slot, exports, &exports.sync, &state)?;
+        if let Err(error) = synced {
+            ctx.data_mut().slots[slot].synced = None;
+            return Err(error);
+        }
         ctx.data_mut().slots[slot].synced = Some(generation);
     }
 
-    ctx.data_mut().stack.push(slot);
-    let raw = invoke(&mut ctx, &exports, &bytes);
-    ctx.data_mut().stack.pop();
-    let response = raw
-        .map_err(|error| fault(&plugin_id, error))
-        .and_then(|raw| {
-            serde_json::from_slice::<DispatchResponse>(&raw).map_err(|error| {
-                RuleError::new(
-                    "pluginFault",
-                    format!("Plugin {plugin_id} sent a malformed response: {error}"),
-                )
-            })
-        });
-    let mut response = match response {
-        Ok(response) => response,
+    let result: Result<R, RuleError> =
+        call_method(ctx, slot, exports, exports.method(method), args)?;
+    let value = match result {
+        Ok(value) => value,
         Err(error) => {
-            let slot = &mut ctx.data_mut().slots[slot];
-            slot.exports = None;
-            slot.synced = None;
+            // A rejected call may leave the plugin's mirror half-changed.
+            ctx.data_mut().slots[slot].synced = None;
             return Err(error);
         }
     };
-
-    let data = ctx.data_mut();
-    if resets_mirror {
-        data.slots[slot].synced = None;
-    } else if response.result.is_err() {
-        // A rejected call may leave the plugin's mirror half-changed.
-        data.slots[slot].synced = None;
-    } else {
-        let changes = std::mem::take(&mut response.changes);
-        apply_changes(data, slot, changes)?;
+    if method.resets_mirror() {
+        ctx.data_mut().slots[slot].synced = None;
+    } else if !stateless {
+        let changes: Result<Vec<Change>, RuleError> = exports
+            .take_changes
+            .call(&mut *ctx, ())
+            .and_then(|packed| read_result(ctx, exports, packed))
+            .map_err(|error| faulted(ctx, slot, error))
+            .and_then(|raw| decode_result(ctx, slot, &raw))?;
+        match changes {
+            Ok(changes) => apply_changes(ctx.data_mut(), slot, changes)?,
+            Err(error) => {
+                ctx.data_mut().slots[slot].synced = None;
+                return Err(error);
+            }
+        }
     }
-    Ok(response)
+    Ok(value)
+}
+
+/// Calls an export that takes one encoded argument and decodes its result.
+/// The outer error is a fault; the inner result is the plugin's answer.
+fn call_method<R: DeserializeOwned>(
+    ctx: &mut StoreContextMut<'_, HostData>,
+    slot: usize,
+    exports: &Exports,
+    func: &MethodFunc,
+    args: &[u8],
+) -> Result<Result<R, RuleError>, RuleError> {
+    let raw = invoke(ctx, exports, func, args).map_err(|error| faulted(ctx, slot, error))?;
+    decode_result(ctx, slot, &raw)
+}
+
+/// Decodes a plugin's result, treating malformed bytes as a fault.
+fn decode_result<R: DeserializeOwned>(
+    ctx: &mut StoreContextMut<'_, HostData>,
+    slot: usize,
+    raw: &[u8],
+) -> Result<Result<R, RuleError>, RuleError> {
+    abi::decode(raw).map_err(|error| {
+        faulted(
+            ctx,
+            slot,
+            format!("sent a malformed result: {}", error.message),
+        )
+    })
+}
+
+/// Records that the plugin of `slot` faulted: its instance is replaced before
+/// its next call.
+fn faulted(
+    ctx: &mut StoreContextMut<'_, HostData>,
+    slot: usize,
+    error: impl std::fmt::Display,
+) -> RuleError {
+    let slot = &mut ctx.data_mut().slots[slot];
+    slot.exports = None;
+    slot.synced = None;
+    fault(&slot.plugin.manifest.id, error)
 }
 
 /// Instantiates the plugin of `slot` if it has no live instance, attaching the
@@ -653,30 +842,37 @@ fn ensure_instance(
         slot.exports = Some(exports.clone());
         slot.synced = None;
     }
-    if let Some(attach) = ctx.data().slots[slot].attach.clone() {
-        let response = dispatch(&mut *ctx, slot, attach)?;
-        response.result?;
+    if let Some(attachment) = ctx.data().slots[slot].attach.clone() {
+        attach(&mut *ctx, slot, &attachment)?;
     }
     Ok(exports)
 }
 
-/// Writes a request into the plugin, runs `ooaw_dispatch`, and reads the response.
+/// Writes an argument into the plugin, calls `func`, and reads the result.
 fn invoke(
     ctx: &mut StoreContextMut<'_, HostData>,
     exports: &Exports,
-    request: &[u8],
+    func: &MethodFunc,
+    args: &[u8],
 ) -> wasmtime::Result<Vec<u8>> {
-    let len = u32::try_from(request.len())?;
+    let len = u32::try_from(args.len())?;
     let ptr = exports.alloc.call(&mut *ctx, len)?;
-    exports.memory.write(&mut *ctx, ptr as usize, request)?;
-    let packed = exports.dispatch.call(&mut *ctx, (ptr, len))?;
-    let (out_ptr, out_len) = ((packed >> 32) as u32, packed as u32);
-    let mut response = vec![0; out_len as usize];
-    exports
-        .memory
-        .read(&*ctx, out_ptr as usize, &mut response)?;
-    exports.free.call(&mut *ctx, (out_ptr, out_len))?;
-    Ok(response)
+    exports.memory.write(&mut *ctx, ptr as usize, args)?;
+    let packed = func.call(&mut *ctx, (ptr, len))?;
+    read_result(ctx, exports, packed)
+}
+
+/// Copies the result buffer `(ptr << 32) | len` out of the plugin and frees it.
+fn read_result(
+    ctx: &mut StoreContextMut<'_, HostData>,
+    exports: &Exports,
+    packed: u64,
+) -> wasmtime::Result<Vec<u8>> {
+    let (ptr, len) = ((packed >> 32) as u32, packed as u32);
+    let mut result = vec![0; len as usize];
+    exports.memory.read(&*ctx, ptr as usize, &mut result)?;
+    exports.free.call(&mut *ctx, (ptr, len))?;
+    Ok(result)
 }
 
 fn fault(plugin_id: &str, error: impl std::fmt::Display) -> RuleError {

@@ -11,7 +11,6 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 ooaw-plugin-api = { workspace = true }
-ooaw-plugin-sdk = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

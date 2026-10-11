@@ -8,10 +8,11 @@
 //! It deliberately uses plain JSON rather than the `ooaw-nato` crate's types,
 //! to show the contract a plugin in any language would follow.
 
-use ooaw_plugin_sdk::api::protocol::{Change, PluginManifest, ABI_VERSION};
-use ooaw_plugin_sdk::api::serde_json::{json, Value};
-use ooaw_plugin_sdk::api::{RuleError, TurnPosition};
-use ooaw_plugin_sdk::{export_plugin, Attachment, RulesPlugin};
+use ooaw_plugin_api::export_plugin;
+use ooaw_plugin_api::protocol::{Change, PluginManifest};
+use ooaw_plugin_api::sdk::{Attachment, RulesPlugin};
+use ooaw_plugin_api::serde_json::{json, Value};
+use ooaw_plugin_api::{RuleError, TurnPosition, ABI_VERSION};
 
 /// Plugin identifier.
 pub const PLUGIN_ID: &str = "example.nightFighting";

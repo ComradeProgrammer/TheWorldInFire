@@ -1,38 +1,14 @@
-//! Messages exchanged between the kernel and rules plugins.
-//!
-//! # Binary interface (ABI version 1)
-//!
-//! A rules plugin is a core WebAssembly module with no WASI imports. Every
-//! message is UTF-8 JSON. The module exports:
-//!
-//! - `memory`: its linear memory.
-//! - `ooaw_abi_version() -> i32`: returns [`ABI_VERSION`].
-//! - `ooaw_alloc(len: i32) -> i32`: allocates `len` bytes for the kernel to write a request into.
-//! - `ooaw_free(ptr: i32, len: i32)`: frees a buffer from `ooaw_alloc` or a response.
-//! - `ooaw_dispatch(ptr: i32, len: i32) -> i64`: handles the [`DispatchRequest`]
-//!   at `ptr` and frees it, then returns `(response_ptr << 32) | response_len`
-//!   for a [`DispatchResponse`] the kernel frees with `ooaw_free`.
-//!
-//! It may import from module `ooaw`:
-//!
-//! - `roll(sides: i32) -> i32`: the next value, `1..=sides`, of the game's
-//!   seeded dice. Traps during queries and filters, which must not consume dice.
-//! - `host_call(ptr: i32, len: i32) -> i32`: sends a [`HostRequest`] and returns
-//!   the byte length of its JSON [`HostResponse`].
-//! - `host_read(ptr: i32)`: copies that pending response into guest memory.
-//!
-//! The kernel never re-enters a plugin that is already handling a call.
+//! Types in the signatures of [`RulesPlugin`](crate::sdk::RulesPlugin) that the
+//! kernel also uses: what a plugin provides, the scenarios it builds, and the
+//! changes it makes to the game state.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::{
-    GameId, GameState, HexId, MapDefinition, PendingDecision, PhaseDefinition, RuleError,
-    ScenarioSummary, SideId, TurnPosition, Unit, UnitId,
+    GameId, GameState, HexId, MapDefinition, PendingDecision, PhaseDefinition, ScenarioSummary,
+    SideId, Unit, UnitId,
 };
-
-/// Version of the binary interface described in this module.
-pub const ABI_VERSION: u32 = 1;
 
 /// Command type handled by the kernel itself rather than by a plugin.
 pub const END_PHASE_COMMAND: &str = "endPhase";
@@ -54,7 +30,7 @@ pub const RESERVED_STATE_KEYS: [&str; 9] = [
     "pendingDecision",
 ];
 
-/// What a plugin provides, returned by [`PluginCall::Manifest`].
+/// What a plugin provides, returned by [`RulesPlugin::manifest`](crate::sdk::RulesPlugin::manifest).
 ///
 /// When several loaded plugins claim the same phase, command, or query, the one
 /// loaded last handles it. Every plugin that lists a filter takes part in it.
@@ -67,7 +43,7 @@ pub struct PluginManifest {
     pub name: String,
     /// Plugin release version.
     pub version: String,
-    /// [`ABI_VERSION`] the plugin was built against.
+    /// [`ABI_VERSION`](crate::ABI_VERSION) the plugin was built against.
     pub abi_version: u32,
     /// Whether the plugin keeps no mirror of the game state. The kernel then
     /// never sends it the state, and it may report no changes.
@@ -82,7 +58,7 @@ pub struct PluginManifest {
     /// Read-only queries the plugin answers.
     #[serde(default)]
     pub queries: Vec<String>,
-    /// Filters the plugin takes part in (see [`PluginCall::Filter`]).
+    /// Filters the plugin takes part in (see [`RulesPlugin::filter`](crate::sdk::RulesPlugin::filter)).
     #[serde(default)]
     pub filters: Vec<String>,
     /// Scenarios the plugin can create.
@@ -111,7 +87,23 @@ impl From<&str> for ScenarioRequest {
     }
 }
 
-/// Static content and opening state returned by [`PluginCall::CreateGame`].
+/// The game a plugin is attached to by [`RulesPlugin::attach`](crate::sdk::RulesPlugin::attach).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Attachment {
+    /// Game identifier.
+    pub game_id: GameId,
+    /// Scenario the game was created from.
+    pub scenario: ScenarioRequest,
+    /// Client-facing scenario metadata.
+    pub summary: ScenarioSummary,
+    /// Turn sequence of the game.
+    pub turn_sequence: Vec<PhaseDefinition>,
+    /// The map, present when the plugin does not own the scenario.
+    pub map: Option<Box<MapDefinition>>,
+}
+
+/// Static content and opening state returned by [`RulesPlugin::create_game`](crate::sdk::RulesPlugin::create_game).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScenarioSetup {
@@ -123,115 +115,6 @@ pub struct ScenarioSetup {
     pub turn_sequence: Vec<PhaseDefinition>,
     /// State before the first phase starts.
     pub state: GameState,
-}
-
-/// One kernel-to-plugin message.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DispatchRequest<S = GameState> {
-    /// Current turn position; absent outside a game.
-    #[serde(default)]
-    pub turn: Option<TurnPosition>,
-    /// Complete mutable state, present when the plugin's cached copy is stale.
-    #[serde(default)]
-    pub sync: Option<S>,
-    /// Filters that another plugin takes part in. A plugin may skip
-    /// [`HostRequest::Filter`] for any filter not listed.
-    #[serde(default)]
-    pub active_filters: Vec<String>,
-    /// Operation to perform.
-    pub call: PluginCall,
-}
-
-/// Operation requested from a plugin.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(
-    tag = "call",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum PluginCall {
-    /// Returns the [`PluginManifest`]. Called once, outside any game.
-    Manifest,
-    /// Builds a scenario the plugin owns and returns its [`ScenarioSetup`].
-    /// The plugin is attached to the new game afterwards.
-    CreateGame {
-        /// New game's identifier.
-        game_id: GameId,
-        /// Scenario to build.
-        scenario: ScenarioRequest,
-    },
-    /// Attaches a fresh plugin instance to an existing game, for example after
-    /// loading a save or recovering from a fault. Returns nothing.
-    Attach {
-        /// Game identifier.
-        game_id: GameId,
-        /// Scenario the game was created from.
-        scenario: ScenarioRequest,
-        /// Client-facing scenario metadata.
-        summary: ScenarioSummary,
-        /// Turn sequence of the game.
-        turn_sequence: Vec<PhaseDefinition>,
-        /// The game's map, sent to plugins that do not own the scenario.
-        #[serde(default)]
-        map: Option<Box<MapDefinition>>,
-    },
-    /// Lays out a custom starting situation in the owning plugin's format.
-    /// Sent to the scenario owner after the kernel reaches the setup's start step.
-    ApplySetup {
-        /// Setup document.
-        setup: Value,
-    },
-    /// A phase the plugin handles has become current.
-    PhaseStarted {
-        /// The phase.
-        phase: PhaseDefinition,
-    },
-    /// A phase the plugin handles is about to end. Rejecting keeps the phase current.
-    PhaseEnding {
-        /// The phase.
-        phase: PhaseDefinition,
-    },
-    /// Executes a player command whose `type` the plugin declared.
-    Command {
-        /// Command object, including its `type` tag.
-        command: Value,
-    },
-    /// Answers a read-only query. Changes and dice rolls are rejected.
-    Query {
-        /// Query name.
-        name: String,
-        /// Query input.
-        input: Value,
-    },
-    /// Takes part in a filter: returns `value`, possibly adjusted. Changes and
-    /// dice rolls are rejected.
-    ///
-    /// A filter is a named extension point. The plugin that needs the value
-    /// computes a base value itself, then the kernel passes it through every
-    /// other plugin listing the filter, in load order.
-    Filter {
-        /// Filter name.
-        name: String,
-        /// Context the caller supplied.
-        input: Value,
-        /// Value produced so far.
-        value: Value,
-    },
-}
-
-/// A plugin's reply to one [`DispatchRequest`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DispatchResponse {
-    /// Call result: `{"Ok": value}` or `{"Err": {"code", "message"}}`.
-    pub result: Result<Value, RuleError>,
-    /// State changes made by the call, which the kernel applies when the call succeeds.
-    #[serde(default)]
-    pub changes: Vec<Change>,
-    /// Domain events, each a JSON object with a `type` tag, in order.
-    #[serde(default)]
-    pub events: Vec<Value>,
 }
 
 /// One change to the kernel's mutable state.
@@ -280,36 +163,3 @@ pub enum Change {
         decision: Option<PendingDecision>,
     },
 }
-
-/// One plugin-to-kernel request made during a call.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(
-    tag = "request",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum HostRequest {
-    /// Runs a filter through the other plugins taking part in it.
-    ///
-    /// `changes` are the caller's changes so far in this call. The kernel
-    /// applies them first so that other plugins see the current state.
-    Filter {
-        /// Filter name.
-        name: String,
-        /// Context for the other plugins.
-        input: Value,
-        /// Value the caller computed.
-        value: Value,
-        /// Caller's changes not yet sent.
-        #[serde(default)]
-        changes: Vec<Change>,
-    },
-    /// Writes a diagnostic message to the kernel's log.
-    Log {
-        /// Message text.
-        message: String,
-    },
-}
-
-/// The kernel's reply to a [`HostRequest`].
-pub type HostResponse = Result<Value, RuleError>;

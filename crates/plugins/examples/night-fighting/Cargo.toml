@@ -9,5 +9,5 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-ooaw-plugin-sdk = { workspace = true }
+ooaw-plugin-api = { workspace = true }
 serde_json = { workspace = true }

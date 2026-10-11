@@ -2,11 +2,11 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 
 use ooaw_plugin_api::protocol::{Change, ScenarioSetup};
+use ooaw_plugin_api::sdk::{host, mirror};
 use ooaw_plugin_api::serde_json::{self, Value};
 use ooaw_plugin_api::{
     GameState, GameStatus, PendingDecision, ScenarioSummary, TurnPosition, Unit,
 };
-use ooaw_plugin_sdk::{host, mirror};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 

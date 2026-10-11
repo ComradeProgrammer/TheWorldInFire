@@ -30,7 +30,6 @@ fn main() {
         "crates/plugins/nato-official",
         "crates/plugins/examples",
         "crates/ooaw-plugin-api",
-        "crates/ooaw-plugin-sdk",
     ] {
         println!("cargo:rerun-if-changed={}", root.join(input).display());
     }

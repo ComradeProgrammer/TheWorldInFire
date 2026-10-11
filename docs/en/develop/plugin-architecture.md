@@ -6,7 +6,7 @@ Game rules are pluggable. A small kernel owns the game's state and turn structur
 
 Implemented:
 
-- The kernel (`crates/ooaw-core`) with a Wasmtime host, the shared protocol crate (`crates/ooaw-plugin-api`), and the Rust plugin SDK (`crates/ooaw-plugin-sdk`).
+- The kernel (`crates/ooaw-core`) with a Wasmtime host, and the shared plugin interface crate (`crates/ooaw-plugin-api`), which also contains the Rust plugin SDK.
 - The official NATO rules (`crates/plugins/nato-official`, package `ooaw-nato`). They are compiled to WebAssembly at build time, embedded in the kernel, and run as a WebAssembly plugin in the desktop app, the `ooaw-engine` process, and every test.
 - Filters (named extension points) in the official combat and air-strike rules.
 - An example third-party plugin (`crates/plugins/examples/night-fighting`) that the kernel's tests load alongside the official rules.
@@ -21,7 +21,7 @@ Not yet implemented: loading third-party plugins in the desktop app, saving or r
 │ command routing · all-or-nothing commands · snapshots │
 │ plugin registry · Wasmtime sandbox                    │
 └───────────▲──────────────────────────────┬───────────┘
-            │ imports: roll, host_call     │ exports: ooaw_dispatch
+            │ imports: roll, filter, log   │ exports: one per RulesPlugin method
 ┌───────────┴──────────────────────────────▼───────────┐
 │ rules plugins (WebAssembly)                          │
 │ ooaw-nato (official, bundled) · third-party plugins   │
@@ -43,8 +43,7 @@ A rules plugin owns everything else: scenarios and their content, phase behaviou
 
 | Crate | Role |
 | --- | --- |
-| `ooaw-plugin-api` | Shared vocabulary: identifiers, map, phases, sides, generic units, and the `protocol` module (ABI, calls, changes, manifest). Builds natively and for `wasm32`. |
-| `ooaw-plugin-sdk` | Writing plugins in Rust: the `RulesPlugin` trait, the `export_plugin!` macro, host functions (`host::roll`, `host::filter`, `host::log`), and `mirror` helpers that compute changes. |
+| `ooaw-plugin-api` | The shared model (identifiers, map, phases, sides, generic units, game state) and the plugin contract. `sdk` holds the `RulesPlugin` trait, the `export_plugin!` macro, host functions (`sdk::host::roll`, `filter`, `log`), and `sdk::mirror` helpers that compute changes; `protocol` holds the types in the trait's signatures that the kernel also uses (manifest, attachment, scenario setup, changes). `abi` declares the `extern "C"` functions between the kernel and a plugin. Builds natively and for `wasm32`. |
 | `ooaw-core` | The kernel: `GameEngine`, the Wasmtime runtime, the bundled official plugin, and the `ooaw-engine` binary. |
 | `ooaw-nato` | The official NATO rules. As `cdylib` it is the WebAssembly plugin; as `rlib` it is a typed model for tests and for plugins that extend these rules. |
 | `ooaw-example-night-fighting` | Example third-party plugin, built with the kernel for its tests. |
@@ -63,27 +62,44 @@ Plugins run in Wasmtime, compiled once per process with Cranelift, with no WASI 
 
 All plugin instances of one game share one Wasmtime store. The store's data holds the kernel state, so while one plugin is running, the kernel can apply its changes and call the other plugins that take part in a filter.
 
-## Binary interface (ABI version 1)
+## Plugin contract (ABI version 3)
 
-Every message is UTF-8 JSON. A plugin is a core WebAssembly module that exports:
+Plugins are written in Rust. The contract between the kernel and a plugin is the `RulesPlugin` trait in `ooaw-plugin-api`, together with the types in its signatures. A plugin implements the trait and invokes `export_plugin!` once. No other language is supported.
 
-| Export | Purpose |
-| --- | --- |
-| `memory` | Linear memory. |
-| `ooaw_abi_version() -> i32` | Returns 1. |
-| `ooaw_alloc(len) -> ptr` | Buffer for the kernel to write a request into. |
-| `ooaw_free(ptr, len)` | Frees a request buffer or a response. |
-| `ooaw_dispatch(ptr, len) -> i64` | Handles one `DispatchRequest`; returns `(response_ptr << 32) \| response_len` for a `DispatchResponse`. |
+The binary interface is a set of `extern "C"` functions declared in `crates/ooaw-plugin-api/src/abi.rs`, each with a name constant and a function-pointer signature. The plugin's exports mirror the trait's methods one for one; `export_plugin!` generates them from the plugin's implementation and checks each against its signature at compile time. The plugin's imports are the kernel's services, wrapped by `sdk::host` and checked the same way. The kernel looks every function up by its name.
 
-It may import from module `ooaw`:
+WebAssembly functions take and return only numbers, so other values live in the plugin's linear memory and pass as a pointer and a byte length. Text (a filter name, a log message) is UTF-8. Every other value is MessagePack, written by `abi::encode` and read by `abi::decode` on both sides; several arguments travel as one tuple. A function that returns a value returns `(ptr << 32) | len`, and the kernel frees the buffer with `ooaw_free`. A fallible method returns a `Result<T, RuleError>`, so a rule rejection crosses as data rather than as a trap. MessagePack is binary but self-describing, so it carries the internally tagged enums, flattened unit markers, and open-ended values (commands, events, markers, rules state) of the contract; a unit test in `abi` round-trips such values.
 
-| Import | Purpose |
-| --- | --- |
-| `roll(sides) -> i32` | Next value, `1..=sides`, of the game's dice. Traps during queries and filters. |
-| `host_call(ptr, len) -> i32` | Sends a `HostRequest` (`filter` or `log`); returns the response length. |
-| `host_read(ptr)` | Copies that response into guest memory. |
+| Export | Trait method | Argument → result |
+| --- | --- | --- |
+| `memory` | — | Linear memory. |
+| `ooaw_abi_version() -> i32` | — | Returns `ABI_VERSION`, now 3. |
+| `ooaw_alloc(len) -> ptr` | — | Buffer for the kernel to write an argument into. |
+| `ooaw_free(ptr, len)` | — | Frees a result buffer. |
+| `ooaw_manifest() -> i64` | `manifest` | → `PluginManifest` |
+| `ooaw_set_turn(game_turn, step_index, completed)` | `set_turn` | Plain numbers; no result. |
+| `ooaw_sync(ptr, len) -> i64` | `sync` | `GameState` → `Result<()>` |
+| `ooaw_take_changes() -> i64` | `take_changes` | → `Result<Vec<Change>>` |
+| `ooaw_create_game(ptr, len) -> i64` | `create_game` | `(GameId, ScenarioRequest)` → `Result<ScenarioSetup>` |
+| `ooaw_attach(ptr, len) -> i64` | `attach` | `Attachment` → `Result<()>` |
+| `ooaw_apply_setup(ptr, len) -> i64` | `apply_setup` | setup → `Result<Vec<event>>` |
+| `ooaw_phase_started(ptr, len) -> i64` | `phase_started` | `PhaseDefinition` → `Result<Vec<event>>` |
+| `ooaw_phase_ending(ptr, len) -> i64` | `phase_ending` | `PhaseDefinition` → `Result<Vec<event>>` |
+| `ooaw_command(ptr, len) -> i64` | `command` | command → `Result<Vec<event>>` |
+| `ooaw_query(ptr, len) -> i64` | `query` | `(name, input)` → `Result<value>` |
+| `ooaw_filter(ptr, len) -> i64` | `filter` | `(name, input, value)` → `Result<value>` |
 
-The exact message types are in `crates/ooaw-plugin-api/src/protocol.rs`. JSON keeps the protocol easy to follow from any language while the game model is still changing. A typed WIT interface can replace it once the model settles.
+| Import (module `ooaw`) | SDK function | Purpose |
+| --- | --- | --- |
+| `roll(sides) -> i32` | `host::roll` | Next value, `1..=sides`, of the game's dice. Traps during queries and filters. |
+| `filter_active(ptr, len) -> i32` | `host::filter_active` | 1 when another plugin takes part in the named filter. |
+| `filter(ptr, len) -> i32` | `host::filter` | Takes `(name, input, value, changes)`; returns the length of a `Result<value>`. |
+| `host_read(ptr)` | — | Copies the result of the last `filter` into plugin memory. |
+| `log(ptr, len)` | `host::log` | Writes a message to the kernel's log. |
+
+One kernel call to a plugin method is a short sequence of these calls: `ooaw_set_turn`; `ooaw_sync` if the plugin's mirror is stale; the method; and, after a successful method that may change state, `ooaw_take_changes`. `create_game` and `attach` start the mirror afresh, so they need no sync and report no changes. A stateless plugin is never synced or asked for changes.
+
+`ABI_VERSION` changes whenever these functions or how they pass values change. The kernel rejects a plugin built against another version, so a plugin must be built with a matching `ooaw-plugin-api`. Version 1 passed JSON envelopes through a single `ooaw_dispatch` export; version 2 the same envelopes in MessagePack.
 
 ## Calls and routing
 
@@ -93,13 +109,13 @@ A plugin describes itself in a `PluginManifest`: identifier, version, ABI versio
 - a phase, command, or query is handled by the last plugin declaring it;
 - every plugin listing a filter takes part in it, in load order.
 
-| Call | Purpose | May change state |
+| Method | Purpose | May change state |
 | --- | --- | --- |
 | `manifest` | Describe the plugin. | no |
-| `createGame` | Build a scenario: summary, map, turn sequence, opening state. | no |
+| `create_game` | Build a scenario: summary, map, turn sequence, opening state. | no |
 | `attach` | Serve an existing game (other plugins, or a replaced instance). | no |
-| `applySetup` | Lay out a custom starting situation in the plugin's format. | yes |
-| `phaseStarted`, `phaseEnding` | Phase work; rejecting `phaseEnding` keeps the phase current. | yes |
+| `apply_setup` | Lay out a custom starting situation in the plugin's format. | yes |
+| `phase_started`, `phase_ending` | Phase work; rejecting `phase_ending` keeps the phase current. | yes |
 | `command` | Execute a player command. | yes |
 | `query` | Answer a read-only preview. | no |
 | `filter` | Adjust a value at an extension point. | no |
@@ -108,7 +124,7 @@ Read-only calls that report changes or roll dice fail with `readOnlyViolation` o
 
 ## State mirroring and changes
 
-Each plugin keeps a mirror of the mutable state it uses, so the kernel does not resend the whole state with every call. The kernel tracks a generation number and the generation each plugin's mirror matches. A request carries the full `GameState` (units, city control, pending decision, rules entries) only when the mirror is stale: on the first call, after a rollback, after a direct edit, or after another plugin changed state. The turn position travels with every call.
+Each plugin keeps a mirror of the mutable state it uses, so the kernel does not resend the whole state with every call. The kernel tracks a generation number and the generation each plugin's mirror matches. The kernel sends the full `GameState` (units, city control, pending decision, rules entries) through `sync` only when the mirror is stale: on the first call, after a rollback, after a direct edit, or after another plugin changed state. It sends the turn position through `set_turn` before every call.
 
 A plugin changes its mirror directly, then reports the difference as `Change`s:
 
@@ -141,14 +157,15 @@ The official rules expose (`crates/plugins/nato-official/src/filters.rs`):
 
 Battle previews use the same filters as resolution, so a preview always matches the battle. A strength modifier or column shift added by another plugin carries the plugin's own name, such as `example.nightFighting`. The battle planner shows such a name as written.
 
-The example plugin `crates/plugins/examples/night-fighting` appends a −1 shift to every battle. It takes part in `nato.combat.columnShifts` only, declares itself `stateless`, and uses plain JSON rather than the `ooaw-nato` types, as a plugin in another language would. `crates/ooaw-core/tests/plugins.rs` checks that it shifts both the preview and the resolved battle.
+The example plugin `crates/plugins/examples/night-fighting` appends a −1 shift to every battle. It takes part in `nato.combat.columnShifts` only, declares itself `stateless`, and works on generic `Value`s rather than the `ooaw-nato` types, as a plugin that does not depend on the official rules crate would. `crates/ooaw-core/tests/plugins.rs` checks that it shifts both the preview and the resolved battle.
 
 ## Writing a plugin in Rust
 
 An outline, with bodies elided; `crates/plugins/examples/night-fighting/src/lib.rs` is a complete plugin.
 
 ```rust
-use ooaw_plugin_sdk::{export_plugin, Attachment, RulesPlugin};
+use ooaw_plugin_api::export_plugin;
+use ooaw_plugin_api::sdk::{Attachment, RulesPlugin};
 
 #[derive(Default)]
 struct MyRules { /* mirror and baseline */ }
@@ -183,11 +200,11 @@ The official module is about 2 MB, including the embedded map and campaign data.
 - `crates/ooaw-core/tests/kernel.rs`: routing, transactions, read-only queries, debug-command gating, and direct edits.
 - `crates/ooaw-core/tests/plugins.rs`: a third-party filter plugin in the guarded sandbox.
 - `crates/ooaw-core/tests/engine_black_box.rs` and `campaign_scenarios.rs`: the `ooaw-engine` JSON process.
-- Unit tests for change diffing (`ooaw-plugin-sdk`) and change checks (`ooaw-core`).
+- Unit tests for change diffing (`ooaw-plugin-api::sdk::mirror`) and change checks (`ooaw-core`).
 
 ## Performance
 
-The following release-build timings per call were measured on the development machine against the pre-split native engine.
+The following release-build timings per call were measured on the development machine against the pre-split native engine, with the JSON messages of ABI version 1. They have not been re-measured with MessagePack.
 
 | Operation | Native engine | Plugin, trusted sandbox | Plugin, guarded sandbox |
 | --- | --- | --- | --- |

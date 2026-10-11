@@ -217,20 +217,20 @@ Reinforcement Boxes are replaced by one entry hex per Reinforcement Sector: the 
 The game is split into a kernel and rules plugins; see [plugin-architecture.md](plugin-architecture.md). The kernel (`crates/ooaw-core`) owns the state, the dice, the turn sequencer, and command routing. Every rule described in this document lives in the official NATO rules plugin (`crates/plugins/nato-official`, package `ooaw-nato`), which is compiled to WebAssembly and bundled into the kernel.
 
 ```text
-crates/ooaw-plugin-api/src/   shared model and kernel/plugin protocol
-├─ protocol.rs   ABI, plugin calls, changes, host requests, manifest
+crates/ooaw-plugin-api/src/   shared model and kernel/plugin interface
+├─ abi.rs        extern "C" functions between kernel and plugin
+├─ protocol.rs   manifest, attachment, scenario setup, and changes
 ├─ map.rs        map, terrain, city, grid, and hexside models
 ├─ unit.rs       generic unit (identity, steps, location, markers)
 ├─ game.rs       turn state, city control, scenario summary, mirrored state
 ├─ phase.rs      phase identifiers, execution, and actors
 ├─ side.rs       side identifiers and definitions
 ├─ ids.rs        stable identifiers
-└─ error.rs      rule errors
-
-crates/ooaw-plugin-sdk/src/   guest-side support for Rust plugins
-├─ lib.rs        RulesPlugin trait and export_plugin! macro
-├─ host.rs       dice, filters, and logging through the kernel's imports
-└─ mirror.rs     changes between a plugin's baseline and its mirror
+├─ error.rs      rule errors
+└─ sdk/          support for writing plugins in Rust
+   ├─ mod.rs     RulesPlugin trait and export_plugin! macro
+   ├─ host.rs    dice, filters, and logging through the kernel's imports
+   └─ mirror.rs  changes between a plugin's baseline and its mirror
 
 crates/ooaw-core/src/         kernel
 ├─ engine.rs     GameEngine: sequencer, routing, transactions, snapshots

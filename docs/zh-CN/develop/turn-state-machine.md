@@ -217,20 +217,20 @@ jointStatus
 游戏拆分为内核与规则插件，详见 [plugin-architecture.md](plugin-architecture.md)。内核（`crates/ooaw-core`）负责状态、骰子、回合流程和命令路由。本文描述的所有规则都位于官方 NATO 规则插件（`crates/plugins/nato-official`，包名 `ooaw-nato`）中；该插件编译为 WebAssembly 并打包进内核。
 
 ```text
-crates/ooaw-plugin-api/src/   共享模型与内核/插件协议
-├─ protocol.rs   ABI、插件调用、状态变更、宿主请求与清单
+crates/ooaw-plugin-api/src/   共享模型与内核/插件接口
+├─ abi.rs        内核与插件之间的 extern "C" 函数
+├─ protocol.rs   清单、挂接信息、场景设置与状态变更
 ├─ map.rs        地图、地形、城市、网格和六角边模型
 ├─ unit.rs       通用单位（身份、战力面、位置与标记）
 ├─ game.rs       回合状态、城市控制、场景摘要与镜像状态
 ├─ phase.rs      阶段标识、执行方式与行动方
 ├─ side.rs       阵营标识与定义
 ├─ ids.rs        稳定标识
-└─ error.rs      规则错误
-
-crates/ooaw-plugin-sdk/src/   用 Rust 编写插件的客户端支持
-├─ lib.rs        RulesPlugin trait 与 export_plugin! 宏
-├─ host.rs       通过内核导入函数使用骰子、过滤器和日志
-└─ mirror.rs     计算插件基线与镜像之间的状态变更
+├─ error.rs      规则错误
+└─ sdk/          用 Rust 编写插件的支持
+   ├─ mod.rs     RulesPlugin trait 与 export_plugin! 宏
+   ├─ host.rs    通过内核导入函数使用骰子、过滤器和日志
+   └─ mirror.rs  计算插件基线与镜像之间的状态变更
 
 crates/ooaw-core/src/         内核
 ├─ engine.rs     GameEngine：回合流程、路由、事务与快照

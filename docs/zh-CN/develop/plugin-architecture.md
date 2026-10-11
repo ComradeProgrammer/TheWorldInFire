@@ -6,7 +6,7 @@
 
 已实现：
 
-- 带 Wasmtime 宿主的内核（`crates/ooaw-core`）、共享协议 crate（`crates/ooaw-plugin-api`）和 Rust 插件 SDK（`crates/ooaw-plugin-sdk`）。
+- 带 Wasmtime 宿主的内核（`crates/ooaw-core`）、以及共享插件接口 crate（`crates/ooaw-plugin-api`），其中也包含 Rust 插件 SDK。
 - 官方 NATO 规则（`crates/plugins/nato-official`，包名 `ooaw-nato`）。它在构建时编译为 WebAssembly 并内嵌进内核；桌面应用、`ooaw-engine` 进程和所有测试都以 WebAssembly 插件的形式运行它。
 - 官方战斗与空中打击规则中的过滤器（具名扩展点）。
 - 一个示例第三方插件（`crates/plugins/examples/night-fighting`），内核测试会把它与官方规则一起加载。
@@ -21,7 +21,7 @@
 │ 命令路由 · 全有或全无的命令执行 · 快照            │
 │ 插件注册表 · Wasmtime 沙箱                         │
 └───────────▲───────────────────────────┬────────────┘
-            │ 导入：roll、host_call     │ 导出：ooaw_dispatch
+            │ 导入：roll、filter、log   │ 导出：每个 RulesPlugin 方法一个
 ┌───────────┴───────────────────────────▼────────────┐
 │ 规则插件（WebAssembly）                            │
 │ ooaw-nato（官方，内置）· 第三方插件                │
@@ -43,8 +43,7 @@
 
 | Crate | 作用 |
 | --- | --- |
-| `ooaw-plugin-api` | 共享词汇：标识、地图、阶段、阵营、通用单位，以及 `protocol` 模块（ABI、调用、状态变更、清单）。可原生编译，也可编译为 `wasm32`。 |
-| `ooaw-plugin-sdk` | 用 Rust 编写插件：`RulesPlugin` trait、`export_plugin!` 宏、宿主函数（`host::roll`、`host::filter`、`host::log`），以及计算状态变更的 `mirror` 辅助函数。 |
+| `ooaw-plugin-api` | 共享模型（标识、地图、阶段、阵营、通用单位、游戏状态）与插件契约。`sdk` 包含 `RulesPlugin` trait、`export_plugin!` 宏、宿主函数（`sdk::host::roll`、`filter`、`log`），以及计算状态变更的 `sdk::mirror` 辅助函数；`protocol` 包含 trait 签名中内核也会用到的类型（清单、挂接信息、场景设置、状态变更）。`abi` 声明内核与插件之间的 `extern "C"` 函数。可原生编译，也可编译为 `wasm32`。 |
 | `ooaw-core` | 内核：`GameEngine`、Wasmtime 运行时、内置官方插件，以及 `ooaw-engine` 可执行文件。 |
 | `ooaw-nato` | 官方 NATO 规则。作为 `cdylib` 是 WebAssembly 插件；作为 `rlib` 是供测试和扩展这些规则的插件使用的类型模型。 |
 | `ooaw-example-night-fighting` | 示例第三方插件，与内核一起构建，供内核测试使用。 |
@@ -63,27 +62,44 @@
 
 同一局游戏的所有插件实例共享一个 Wasmtime store。store 的数据保存内核状态，因此在一个插件运行期间，内核可以应用它的变更，并调用参与过滤器的其他插件。
 
-## 二进制接口（ABI 版本 1）
+## 插件契约（ABI 版本 3）
 
-所有消息都是 UTF-8 JSON。插件是一个 WebAssembly 核心模块，导出：
+插件只能用 Rust 编写。内核与插件之间的契约是 `ooaw-plugin-api` 中的 `RulesPlugin` trait 及其签名中的类型。插件实现该 trait 并调用一次 `export_plugin!`。不支持其他语言。
 
-| 导出 | 作用 |
-| --- | --- |
-| `memory` | 线性内存。 |
-| `ooaw_abi_version() -> i32` | 返回 1。 |
-| `ooaw_alloc(len) -> ptr` | 供内核写入请求的缓冲区。 |
-| `ooaw_free(ptr, len)` | 释放请求缓冲区或响应。 |
-| `ooaw_dispatch(ptr, len) -> i64` | 处理一个 `DispatchRequest`，返回 `DispatchResponse` 的 `(response_ptr << 32) \| response_len`。 |
+二进制接口是一组 `extern "C"` 函数，声明在 `crates/ooaw-plugin-api/src/abi.rs` 中，每个函数都有一个名称常量和一个函数指针签名。插件的导出与 trait 方法一一对应；`export_plugin!` 根据插件的实现生成这些导出，并在编译期逐一按签名检查。插件的导入是内核提供的服务，由 `sdk::host` 封装，也以同样方式检查。内核按名称查找每个函数。
 
-插件可以从 `ooaw` 模块导入：
+WebAssembly 函数只能接收和返回数字，因此其他值存放在插件的线性内存中，以指针和字节长度传递。文本（过滤器名、日志消息）使用 UTF-8。其他所有值使用 MessagePack，两侧都由 `abi::encode` 写入、由 `abi::decode` 读取；多个参数作为一个元组传递。返回值的函数返回 `(ptr << 32) | len`，内核用 `ooaw_free` 释放该缓冲区。可能失败的方法返回 `Result<T, RuleError>`，因此规则拒绝作为数据而不是陷阱跨越边界。MessagePack 是二进制格式，但带有自描述信息，因此能承载契约中的内部标记枚举、展平的单位标记字段，以及开放式的值（命令、事件、标记、规则状态）；`abi` 中的单元测试会对这类值做往返编码检查。
 
-| 导入 | 作用 |
-| --- | --- |
-| `roll(sides) -> i32` | 游戏骰子的下一个值，范围 `1..=sides`。在查询和过滤器中调用会触发陷阱。 |
-| `host_call(ptr, len) -> i32` | 发送一个 `HostRequest`（`filter` 或 `log`），返回响应长度。 |
-| `host_read(ptr)` | 把该响应复制进插件内存。 |
+| 导出 | trait 方法 | 参数 → 结果 |
+| --- | --- | --- |
+| `memory` | — | 线性内存。 |
+| `ooaw_abi_version() -> i32` | — | 返回 `ABI_VERSION`，当前为 3。 |
+| `ooaw_alloc(len) -> ptr` | — | 供内核写入参数的缓冲区。 |
+| `ooaw_free(ptr, len)` | — | 释放结果缓冲区。 |
+| `ooaw_manifest() -> i64` | `manifest` | → `PluginManifest` |
+| `ooaw_set_turn(game_turn, step_index, completed)` | `set_turn` | 只传数字；无结果。 |
+| `ooaw_sync(ptr, len) -> i64` | `sync` | `GameState` → `Result<()>` |
+| `ooaw_take_changes() -> i64` | `take_changes` | → `Result<Vec<Change>>` |
+| `ooaw_create_game(ptr, len) -> i64` | `create_game` | `(GameId, ScenarioRequest)` → `Result<ScenarioSetup>` |
+| `ooaw_attach(ptr, len) -> i64` | `attach` | `Attachment` → `Result<()>` |
+| `ooaw_apply_setup(ptr, len) -> i64` | `apply_setup` | setup → `Result<Vec<event>>` |
+| `ooaw_phase_started(ptr, len) -> i64` | `phase_started` | `PhaseDefinition` → `Result<Vec<event>>` |
+| `ooaw_phase_ending(ptr, len) -> i64` | `phase_ending` | `PhaseDefinition` → `Result<Vec<event>>` |
+| `ooaw_command(ptr, len) -> i64` | `command` | command → `Result<Vec<event>>` |
+| `ooaw_query(ptr, len) -> i64` | `query` | `(name, input)` → `Result<value>` |
+| `ooaw_filter(ptr, len) -> i64` | `filter` | `(name, input, value)` → `Result<value>` |
 
-具体消息类型见 `crates/ooaw-plugin-api/src/protocol.rs`。在游戏模型仍在变化时，JSON 让任何语言都能方便地遵循这个协议；模型稳定后可以改用带类型的 WIT 接口。
+| 导入（模块 `ooaw`） | SDK 函数 | 作用 |
+| --- | --- | --- |
+| `roll(sides) -> i32` | `host::roll` | 游戏骰子的下一个值，范围 `1..=sides`。在查询和过滤器中调用会触发陷阱。 |
+| `filter_active(ptr, len) -> i32` | `host::filter_active` | 有其他插件参与该名称的过滤器时返回 1。 |
+| `filter(ptr, len) -> i32` | `host::filter` | 接收 `(name, input, value, changes)`，返回 `Result<value>` 的长度。 |
+| `host_read(ptr)` | — | 把上一次 `filter` 的结果复制进插件内存。 |
+| `log(ptr, len)` | `host::log` | 把一条消息写入内核日志。 |
+
+内核对一个插件方法的一次调用由一小串调用组成：`ooaw_set_turn`；镜像过期时调用 `ooaw_sync`；方法本身；可能修改状态的方法成功后再调用 `ooaw_take_changes`。`create_game` 和 `attach` 会重新开始镜像，因此不需要同步，也不上报变更。无状态插件既不会被同步，也不会被要求上报变更。
+
+这些函数或其传值方式一旦变化，`ABI_VERSION` 就随之改变。内核会拒绝按其他版本构建的插件，因此插件必须使用匹配版本的 `ooaw-plugin-api` 构建。版本 1 通过单一的 `ooaw_dispatch` 导出传递 JSON 封装消息；版本 2 以 MessagePack 传递同样的封装消息。
 
 ## 调用与路由
 
@@ -93,13 +109,13 @@
 - 阶段、命令或查询由最后一个声明它的插件处理；
 - 列出某个过滤器的每个插件都会按加载顺序参与该过滤器。
 
-| 调用 | 作用 | 能否修改状态 |
+| 方法 | 作用 | 能否修改状态 |
 | --- | --- | --- |
 | `manifest` | 描述插件。 | 否 |
-| `createGame` | 构建场景：摘要、地图、回合流程和开局状态。 | 否 |
+| `create_game` | 构建场景：摘要、地图、回合流程和开局状态。 | 否 |
 | `attach` | 为已有游戏服务（其他插件，或替换后的实例）。 | 否 |
-| `applySetup` | 按插件自己的格式铺设自定义起始局面。 | 是 |
-| `phaseStarted`、`phaseEnding` | 阶段处理；拒绝 `phaseEnding` 会让阶段保持不变。 | 是 |
+| `apply_setup` | 按插件自己的格式铺设自定义起始局面。 | 是 |
+| `phase_started`、`phase_ending` | 阶段处理；拒绝 `phase_ending` 会让阶段保持不变。 | 是 |
 | `command` | 执行玩家命令。 | 是 |
 | `query` | 回答只读预览。 | 否 |
 | `filter` | 在扩展点调整一个值。 | 否 |
@@ -108,7 +124,7 @@
 
 ## 状态镜像与变更
 
-每个插件都保存自己需要的可变状态的镜像，因此内核不必每次调用都重新发送完整状态。内核维护一个代号（generation），并记录每个插件镜像对应的代号。只有镜像过期时，请求才会携带完整的 `GameState`（单位、城市控制、待决事项和规则状态条目）：首次调用、回滚之后、直接编辑之后，或其他插件修改状态之后。回合位置随每次调用一起发送。
+每个插件都保存自己需要的可变状态的镜像，因此内核不必每次调用都重新发送完整状态。内核维护一个代号（generation），并记录每个插件镜像对应的代号。只有镜像过期时，内核才通过 `sync` 发送完整的 `GameState`（单位、城市控制、待决事项和规则状态条目）：首次调用、回滚之后、直接编辑之后，或其他插件修改状态之后。每次调用前，内核都通过 `set_turn` 发送回合位置。
 
 插件直接修改镜像，然后把差异作为 `Change` 上报：
 
@@ -141,14 +157,15 @@ NATO 插件保存一份基线，记录上次上报的状态。每次可修改状
 
 战斗预览与实际结算使用同样的过滤器，因此预览总与战斗一致。其他插件添加的强度修正或列移带有该插件自己的名称，例如 `example.nightFighting`；战斗计划界面按原样显示这个名称。
 
-示例插件 `crates/plugins/examples/night-fighting` 为每场战斗追加一个 −1 列移。它只参与 `nato.combat.columnShifts`，声明自己为 `stateless`，并且像其他语言编写的插件一样直接使用 JSON，而不依赖 `ooaw-nato` 的类型。`crates/ooaw-core/tests/plugins.rs` 检查它同时影响预览和实际结算。
+示例插件 `crates/plugins/examples/night-fighting` 为每场战斗追加一个 −1 列移。它只参与 `nato.combat.columnShifts`，声明自己为 `stateless`，并且像不依赖官方规则 crate 的插件那样使用通用的 `Value`，而不依赖 `ooaw-nato` 的类型。`crates/ooaw-core/tests/plugins.rs` 检查它同时影响预览和实际结算。
 
 ## 用 Rust 编写插件
 
 下面是省略函数体的提纲；`crates/plugins/examples/night-fighting/src/lib.rs` 是一个完整的插件。
 
 ```rust
-use ooaw_plugin_sdk::{export_plugin, Attachment, RulesPlugin};
+use ooaw_plugin_api::export_plugin;
+use ooaw_plugin_api::sdk::{Attachment, RulesPlugin};
 
 #[derive(Default)]
 struct MyRules { /* 镜像与基线 */ }
@@ -183,11 +200,11 @@ rustup target add wasm32-unknown-unknown
 - `crates/ooaw-core/tests/kernel.rs`：路由、事务、只读查询、调试命令开关和直接编辑。
 - `crates/ooaw-core/tests/plugins.rs`：受保护沙箱中的第三方过滤器插件。
 - `crates/ooaw-core/tests/engine_black_box.rs` 和 `campaign_scenarios.rs`：`ooaw-engine` JSON 进程。
-- 变更比较（`ooaw-plugin-sdk`）和变更检查（`ooaw-core`）的单元测试。
+- 变更比较（`ooaw-plugin-api::sdk::mirror`）和变更检查（`ooaw-core`）的单元测试。
 
 ## 性能
 
-下表是在开发机上测得的 release 构建单次调用耗时，并与拆分前的原生引擎对比。
+下表是在开发机上测得的 release 构建单次调用耗时，并与拆分前的原生引擎对比；测量时使用的是 ABI 版本 1 的 JSON 消息，尚未用 MessagePack 重新测量。
 
 | 操作 | 原生引擎 | 插件，受信任沙箱 | 插件，受保护沙箱 |
 | --- | --- | --- | --- |

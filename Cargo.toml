@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
     "crates/ooaw-plugin-api",
-    "crates/ooaw-plugin-sdk",
     "crates/ooaw-core",
     "crates/plugins/nato-official",
     "crates/plugins/examples/night-fighting",
@@ -10,7 +9,6 @@ members = [
 ]
 default-members = [
     "crates/ooaw-plugin-api",
-    "crates/ooaw-plugin-sdk",
     "crates/ooaw-core",
     "crates/plugins/nato-official",
     "crates/plugins/examples/night-fighting",
@@ -19,8 +17,8 @@ default-members = [
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+rmp-serde = "1.3"
 ooaw-plugin-api = { path = "crates/ooaw-plugin-api" }
-ooaw-plugin-sdk = { path = "crates/ooaw-plugin-sdk" }
 ooaw-core = { path = "crates/ooaw-core" }
 
 # Wasmtime compiles plugins with Cranelift at load time. Unoptimised Cranelift

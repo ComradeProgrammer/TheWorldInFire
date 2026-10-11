@@ -1,11 +1,9 @@
 //! The plugin entry point: manifest, scenarios, and call routing.
 
-use ooaw_plugin_api::protocol::{
-    Change, PluginManifest, ScenarioRequest, ScenarioSetup, ABI_VERSION,
-};
+use ooaw_plugin_api::protocol::{Change, PluginManifest, ScenarioRequest, ScenarioSetup};
+use ooaw_plugin_api::sdk::{Attachment, RulesPlugin};
 use ooaw_plugin_api::serde_json::Value;
-use ooaw_plugin_api::{GameId, PhaseDefinition, TurnPosition};
-use ooaw_plugin_sdk::{Attachment, RulesPlugin};
+use ooaw_plugin_api::{GameId, PhaseDefinition, TurnPosition, ABI_VERSION};
 use serde::Deserialize;
 
 use crate::command::GameCommand;
