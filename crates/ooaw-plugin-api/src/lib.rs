@@ -15,6 +15,7 @@
 #![deny(missing_docs)]
 
 pub mod abi;
+mod command;
 mod error;
 mod game;
 mod ids;
@@ -26,12 +27,15 @@ mod side;
 mod unit;
 
 pub use abi::ABI_VERSION;
+pub use command::{AirMissionAssignment, AirPointKind, GameCommand, MovementMode};
 pub use error::RuleError;
 pub use game::{
     CityControlState, GameState, GameStatus, PendingDecision, ScenarioSummary, TurnPosition,
     TurnState,
 };
-pub use ids::{FormationId, GameId, HexId, NationId, UnitId, UnitTraitId, UnitTypeId};
+pub use ids::{
+    AirBaseId, AirUnitId, FormationId, GameId, HexId, NationId, UnitId, UnitTraitId, UnitTypeId,
+};
 pub use map::{
     Causeway, CityKind, CityOutline, CommandLine, CommandZone, HexsideFeature, LabelKind, LineKind,
     MapCity, MapDefinition, MapGrid, MapHex, MapHexside, MapLabel, MapLine, MapSymbol,

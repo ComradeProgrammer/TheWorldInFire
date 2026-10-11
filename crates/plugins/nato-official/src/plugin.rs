@@ -3,10 +3,9 @@
 use ooaw_plugin_api::protocol::{Change, PluginManifest, ScenarioRequest, ScenarioSetup};
 use ooaw_plugin_api::sdk::{Attachment, RulesPlugin};
 use ooaw_plugin_api::serde_json::Value;
-use ooaw_plugin_api::{GameId, PhaseDefinition, TurnPosition, ABI_VERSION};
+use ooaw_plugin_api::{GameCommand, GameId, PhaseDefinition, TurnPosition, ABI_VERSION};
 use serde::Deserialize;
 
-use crate::command::GameCommand;
 use crate::error::RuleError;
 use crate::event::GameEvent;
 use crate::model::{
@@ -30,23 +29,6 @@ const PHASES: [&str; 9] = [
     "combat",
     "reserve",
     "postBattle",
-];
-
-/// Command `type` tags the NATO rules execute.
-const COMMANDS: [&str; 13] = [
-    "setResupplyTarget",
-    "setAttackTarget",
-    "moveUnit",
-    "setReserve",
-    "undoUnitMovement",
-    "entrainUnit",
-    "detrainUnit",
-    "undoDetrainUnit",
-    "planAirSortie",
-    "cancelAirSortie",
-    "resolveBattle",
-    "advanceAfterCombat",
-    "debug.checkSupply",
 ];
 
 /// Read-only queries the NATO rules answer.
@@ -150,7 +132,6 @@ impl RulesPlugin for NatoPlugin {
             abi_version: ABI_VERSION,
             stateless: false,
             phases: PHASES.iter().map(|name| (*name).to_owned()).collect(),
-            commands: COMMANDS.iter().map(|name| (*name).to_owned()).collect(),
             queries: QUERIES.iter().map(|name| (*name).to_owned()).collect(),
             filters: Vec::new(),
             scenarios: list_scenarios(),
@@ -207,9 +188,7 @@ impl RulesPlugin for NatoPlugin {
         events(self.rules_mut()?.phase_ending(&phase.phase_id.0)?)
     }
 
-    fn command(&mut self, command: Value) -> Result<Vec<Value>, RuleError> {
-        let command: GameCommand = serde_json::from_value(command)
-            .map_err(|error| RuleError::new("invalidCommand", error.to_string()))?;
+    fn command(&mut self, command: GameCommand) -> Result<Vec<Value>, RuleError> {
         events(self.rules_mut()?.execute(command)?)
     }
 

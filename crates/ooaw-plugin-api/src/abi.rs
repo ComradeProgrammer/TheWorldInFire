@@ -35,7 +35,7 @@ use crate::RuleError;
 
 /// Version of the functions in this module and of how they pass values. The
 /// kernel rejects a plugin built against another version.
-pub const ABI_VERSION: u32 = 3;
+pub const ABI_VERSION: u32 = 4;
 
 /// Encodes a value passed across the boundary.
 ///
@@ -141,16 +141,17 @@ pub mod imports {
     /// Signature of [`ROLL`].
     pub type Roll = unsafe extern "C" fn(sides: u32) -> u32;
 
-    /// Returns 1 when another plugin takes part in the filter named by the
-    /// UTF-8 text at `ptr`, otherwise 0.
+    /// Returns whether another plugin takes part in the named filter. The
+    /// single-plugin kernel always returns 0; this import remains for ABI
+    /// compatibility.
     pub const FILTER_ACTIVE: &str = "filter_active";
     /// Signature of [`FILTER_ACTIVE`].
     pub type FilterActive = unsafe extern "C" fn(ptr: u32, len: u32) -> u32;
 
-    /// Passes a value through every other plugin taking part in a filter.
-    /// Takes `(name, input, value, changes)`, where `changes` are the caller's
-    /// changes not yet reported, which the kernel applies first. Returns the
-    /// byte length of a `Result<value>` that [`HOST_READ`] then copies.
+    /// Compatibility import for the former multi-plugin filter mechanism.
+    /// Takes `(name, input, value, changes)`, applies pending changes, and
+    /// returns `value` unchanged. Returns the byte length of a `Result<value>`
+    /// that [`HOST_READ`] then copies.
     pub const FILTER: &str = "filter";
     /// Signature of [`FILTER`].
     pub type Filter = unsafe extern "C" fn(ptr: u32, len: u32) -> u32;

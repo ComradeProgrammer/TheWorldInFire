@@ -20,6 +20,8 @@ pub use dice::Dice;
 pub use engine::{list_scenarios, CommandOutcome, GameEngine, GameSnapshot, PROTOCOL_VERSION};
 pub use ooaw_plugin_api as api;
 pub use ooaw_plugin_api::protocol::ScenarioRequest;
-pub use ooaw_plugin_api::{GameId, MapDefinition, PhaseDefinition, RuleError, ScenarioSummary};
+pub use ooaw_plugin_api::{
+    GameCommand, GameId, MapDefinition, PhaseDefinition, RuleError, ScenarioSummary,
+};
 pub use runtime::{official_plugin, PluginModule};
 pub use state::KernelState;

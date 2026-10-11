@@ -374,7 +374,7 @@ crates/plugins/nato-official/src/model/scenario_campaign.rs
 crates/plugins/nato-official/src/model/rules.rs
 crates/plugins/nato-official/src/rules.rs
 crates/plugins/nato-official/src/phase.rs
-crates/plugins/nato-official/src/command.rs
+crates/ooaw-plugin-api/src/command.rs
 crates/plugins/nato-official/src/event.rs
 crates/plugins/nato-official/src/plugin.rs
 crates/plugins/nato-official/src/setup.rs

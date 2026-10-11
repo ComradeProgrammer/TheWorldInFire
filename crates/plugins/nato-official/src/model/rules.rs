@@ -150,24 +150,6 @@ impl BattlePlanningRules {
     }
 }
 
-/// Mode used for an authoritative unit movement order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum MovementMode {
-    /// Normal ground movement using the printed movement allowance.
-    Tactical,
-    /// Road-column movement using twice the printed movement allowance.
-    March,
-    /// Movement by rail after the unit has finished entraining.
-    Rail,
-    /// Movement by an Airlift Command from a city to a friendly-controlled city.
-    AirTransport,
-    /// An Airborne unit dropped by an Airlift Command onto Clear or Marsh terrain.
-    Paradrop,
-    /// Movement by a Sealift Command from a port to a friendly-controlled port.
-    SeaTransport,
-}
-
 /// Persistent status of a unit using rail transport.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

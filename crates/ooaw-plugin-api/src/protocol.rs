@@ -10,12 +10,6 @@ use crate::{
     SideId, Unit, UnitId,
 };
 
-/// Command type handled by the kernel itself rather than by a plugin.
-pub const END_PHASE_COMMAND: &str = "endPhase";
-
-/// Prefix of commands the kernel accepts only when debug commands are enabled.
-pub const DEBUG_COMMAND_PREFIX: &str = "debug.";
-
 /// Top-level snapshot fields owned by the kernel; plugins may not use them as
 /// rules-state keys.
 pub const RESERVED_STATE_KEYS: [&str; 9] = [
@@ -32,8 +26,11 @@ pub const RESERVED_STATE_KEYS: [&str; 9] = [
 
 /// What a plugin provides, returned by [`RulesPlugin::manifest`](crate::sdk::RulesPlugin::manifest).
 ///
-/// When several loaded plugins claim the same phase, command, or query, the one
-/// loaded last handles it. Every plugin that lists a filter takes part in it.
+/// A game loads exactly one plugin, whose manifest declares every phase, query,
+/// and scenario it provides. Commands use the fixed shared
+/// [`GameCommand`](crate::GameCommand) enum and need no manifest registration.
+/// Filter declarations remain in the ABI for compatibility but are inactive in
+/// the single-plugin kernel.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginManifest {
@@ -52,13 +49,11 @@ pub struct PluginManifest {
     /// Phase types (`PhaseDefinition::phase_id`) whose start and end the plugin handles.
     #[serde(default)]
     pub phases: Vec<String>,
-    /// Command `type` tags the plugin executes.
-    #[serde(default)]
-    pub commands: Vec<String>,
     /// Read-only queries the plugin answers.
     #[serde(default)]
     pub queries: Vec<String>,
-    /// Filters the plugin takes part in (see [`RulesPlugin::filter`](crate::sdk::RulesPlugin::filter)).
+    /// Filters declared by the plugin. Retained for ABI compatibility; the
+    /// single-plugin kernel does not dispatch filters.
     #[serde(default)]
     pub filters: Vec<String>,
     /// Scenarios the plugin can create.
@@ -131,7 +126,7 @@ pub enum Change {
         unit: Unit,
     },
     /// Replaces top-level fields of an existing unit. Fields not listed keep
-    /// their values, including markers other plugins own.
+    /// their values.
     UpdateUnit {
         /// Unit.
         unit_id: UnitId,

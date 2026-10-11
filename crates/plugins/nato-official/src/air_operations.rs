@@ -31,6 +31,23 @@ struct BomberNode {
     target: HexId,
 }
 
+fn mission_target_hex<'a>(
+    mission: &'a AirMissionAssignment,
+    bases: &'a BTreeMap<AirBaseId, crate::model::AirBaseState>,
+) -> Option<&'a HexId> {
+    match mission {
+        AirMissionAssignment::AirSuperiority { center_hex_id }
+        | AirMissionAssignment::GroundStrike {
+            hex_id: center_hex_id,
+            ..
+        }
+        | AirMissionAssignment::EarlyWarning { center_hex_id } => Some(center_hex_id),
+        AirMissionAssignment::AirBaseStrike { air_base_id } => bases
+            .get(air_base_id)
+            .map(|base| &base.definition.anchor_hex_id),
+    }
+}
+
 /// Reads a modified d20 roll on the 1985 Air Combat Table.
 pub fn air_combat_table(column: i8, modified_roll: i8) -> AirCombatResult {
     let roll = modified_roll.clamp(1, 20);
@@ -509,7 +526,7 @@ impl Rules {
                 Some(BomberNode {
                     id: unit.definition.id.clone(),
                     side_id: unit.definition.side_id.clone(),
-                    target: sortie.mission.target_hex(&self.air_bases)?.clone(),
+                    target: mission_target_hex(&sortie.mission, &self.air_bases)?.clone(),
                 })
             })
             .collect();

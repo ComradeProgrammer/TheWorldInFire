@@ -254,11 +254,11 @@ crates/plugins/nato-official/src/    official NATO rules plugin
 ├─ airspace.rs   Airspace from each side's point of view
 ├─ cities.rs     city control
 ├─ setup.rs      custom starting situations (GameSetup) for tests
-├─ command.rs    commands, event.rs events, dice.rs the kernel's dice
+├─ event.rs      events; commands are shared by `ooaw-plugin-api`
 └─ model/        units, scenarios, battle and air models, embedded map loader
 ```
 
-`crates/plugins/nato-official/src/model/` contains the NATO game-content models; the shared map, phase, side, and identifier models come from `ooaw-plugin-api`. `model/nato_map.rs` loads the embedded map from `crates/plugins/nato-official/data/natoMap.json`. `model/unit.rs` defines the typed NATO unit (printed attack, defense, and movement per step, and HQ, movement, and combat supply), which serializes to the kernel's generic unit with `supply`, `trainStatus`, and `disruption` as markers. `src/planning.rs` implements battle-planning commands and `src/movement.rs` authoritative movement rules and pathfinding.
+`crates/plugins/nato-official/src/model/` contains the NATO game-content models; the fixed `GameCommand` enum and the shared map, phase, side, and identifier models come from `ooaw-plugin-api`. `model/nato_map.rs` loads the embedded map from `crates/plugins/nato-official/data/natoMap.json`. `model/unit.rs` defines the typed NATO unit (printed attack, defense, and movement per step, and HQ, movement, and combat supply), which serializes to the kernel's generic unit with `supply`, `trainStatus`, and `disruption` as markers. `src/planning.rs` implements battle-planning commands and `src/movement.rs` authoritative movement rules and pathfinding.
 
 `model/scenario_baltap.rs` contains BALTAP 1983 scenario data. It defines 44 units: 27 on turn one, followed by 11, 2, 2, 1, and 1 on turns two through six. Of the turn-one units, 17 enter map hexes and 10 enter the Strategic Reserve. Later reinforcements enter the Strategic Reserve.
 

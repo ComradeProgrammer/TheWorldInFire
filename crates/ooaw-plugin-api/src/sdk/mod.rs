@@ -21,7 +21,7 @@ pub mod __private;
 pub use crate::protocol::Attachment;
 use crate::protocol::{Change, PluginManifest, ScenarioRequest, ScenarioSetup};
 use crate::serde_json::Value;
-use crate::{GameId, PhaseDefinition, RuleError, TurnPosition};
+use crate::{GameCommand, GameId, PhaseDefinition, RuleError, TurnPosition};
 
 /// Rules implemented by one plugin.
 ///
@@ -87,11 +87,11 @@ pub trait RulesPlugin: Default + 'static {
         Ok(Vec::new())
     }
 
-    /// Executes a player command declared in the manifest.
-    fn command(&mut self, command: Value) -> Result<Vec<Value>, RuleError> {
+    /// Executes one command from the shared, fixed command vocabulary.
+    fn command(&mut self, command: GameCommand) -> Result<Vec<Value>, RuleError> {
         let _ = command;
         Err(RuleError::new(
-            "unknownCommand",
+            "unsupportedCommand",
             "This plugin executes no commands",
         ))
     }
@@ -227,9 +227,12 @@ macro_rules! export_plugin {
 
             #[no_mangle]
             pub unsafe extern "C" fn ooaw_command(ptr: u32, len: u32) -> u64 {
-                glue::call(&PLUGIN, ptr, len, |plugin: &mut $plugin, command: Value| {
-                    plugin.command(command)
-                })
+                glue::call(
+                    &PLUGIN,
+                    ptr,
+                    len,
+                    |plugin: &mut $plugin, command: $crate::GameCommand| plugin.command(command),
+                )
             }
 
             #[no_mangle]

@@ -5,12 +5,11 @@ use ooaw_plugin_api::protocol::{Change, ScenarioSetup};
 use ooaw_plugin_api::sdk::{host, mirror};
 use ooaw_plugin_api::serde_json::{self, Value};
 use ooaw_plugin_api::{
-    GameState, GameStatus, PendingDecision, ScenarioSummary, TurnPosition, Unit,
+    GameCommand, GameState, GameStatus, PendingDecision, ScenarioSummary, TurnPosition, Unit,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::command::GameCommand;
 use crate::dice::Dice;
 use crate::error::RuleError;
 use crate::event::GameEvent;

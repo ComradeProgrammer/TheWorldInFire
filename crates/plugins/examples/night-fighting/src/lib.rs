@@ -33,7 +33,6 @@ impl RulesPlugin for NightFighting {
             abi_version: ABI_VERSION,
             stateless: true,
             phases: Vec::new(),
-            commands: Vec::new(),
             queries: Vec::new(),
             filters: vec![COLUMN_SHIFTS.to_owned()],
             scenarios: Vec::new(),

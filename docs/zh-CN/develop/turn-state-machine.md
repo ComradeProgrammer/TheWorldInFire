@@ -254,11 +254,11 @@ crates/plugins/nato-official/src/    官方 NATO 规则插件
 ├─ airspace.rs   各方视角的空域
 ├─ cities.rs     城市控制
 ├─ setup.rs      用于测试的自定义起始局面（GameSetup）
-├─ command.rs    命令；event.rs 事件；dice.rs 内核骰子的句柄
+├─ event.rs      事件；命令由 `ooaw-plugin-api` 共享
 └─ model/        单位、场景、战斗与空中模型，以及内嵌地图加载
 ```
 
-`crates/plugins/nato-official/src/model/` 保存 NATO 游戏内容模型；共享的地图、阶段、阵营和标识模型来自 `ooaw-plugin-api`。`model/nato_map.rs` 从 `crates/plugins/nato-official/data/natoMap.json` 加载内嵌地图。`model/unit.rs` 定义带类型的 NATO 单位（每个战力面印刷的攻击、防御和移动值，以及 HQ、移动和战斗补给），它序列化后就是内核的通用单位，其中 `supply`、`trainStatus` 和 `disruption` 作为标记字段。`src/planning.rs` 实现战斗计划命令，`src/movement.rs` 实现权威移动规则与寻路。
+`crates/plugins/nato-official/src/model/` 保存 NATO 游戏内容模型；固定的 `GameCommand` enum 以及共享的地图、阶段、阵营和标识模型来自 `ooaw-plugin-api`。`model/nato_map.rs` 从 `crates/plugins/nato-official/data/natoMap.json` 加载内嵌地图。`model/unit.rs` 定义带类型的 NATO 单位（每个战力面印刷的攻击、防御和移动值，以及 HQ、移动和战斗补给），它序列化后就是内核的通用单位，其中 `supply`、`trainStatus` 和 `disruption` 作为标记字段。`src/planning.rs` 实现战斗计划命令，`src/movement.rs` 实现权威移动规则与寻路。
 
 `model/scenario_baltap.rs` 保存 BALTAP 1983 的场景数据。场景共有 44 个单位：第一回合 27 个，第二至第六回合分别为 11、2、2、1、1 个。第一回合单位中，17 个进入地图格，10 个进入战略预备队。后续增援进入战略预备队。
 

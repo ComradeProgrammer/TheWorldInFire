@@ -16,6 +16,22 @@ pub struct UnitId(
     pub String,
 );
 
+/// Stable identifier for one air squadron counter.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AirUnitId(
+    /// String representation used by commands, events, and saves.
+    pub String,
+);
+
+/// Stable identifier for one off-map airbase.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AirBaseId(
+    /// String representation used by commands, events, and saves.
+    pub String,
+);
+
 /// Stable identifier for a unit's nationality.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]

@@ -10,7 +10,7 @@ use crate::serde_json::Value;
 use crate::RuleError;
 
 /// Whether another plugin takes part in the filter during the current call.
-/// When it does not, [`filter`] would return its value unchanged.
+/// The single-plugin kernel always returns false.
 pub fn filter_active(name: &str) -> bool {
     #[cfg(target_arch = "wasm32")]
     {
@@ -43,12 +43,11 @@ pub fn roll(sides: u32) -> u8 {
     }
 }
 
-/// Passes `value` through every other plugin taking part in filter `name`.
+/// Compatibility wrapper for the former multi-plugin filter mechanism.
 ///
-/// `changes` are the caller's changes not yet reported in this call; the
-/// kernel applies them first so the other plugins see current state. Callers
-/// normally check [`filter_active`] first and skip both the call and the
-/// change collection when it returns false.
+/// In the single-plugin kernel, `value` is returned unchanged. If supplied,
+/// `changes` are applied first. Callers normally check [`filter_active`] and
+/// skip the call because it always returns false.
 pub fn filter(
     name: &str,
     input: Value,

@@ -1,11 +1,9 @@
 //! WebAssembly plugin runtime.
 //!
 //! Plugins are compiled once per process with Cranelift and instantiated once
-//! per game. All instances of a game share one [`Store`], whose data holds the
-//! kernel's authoritative state, so a host import running for one plugin can
-//! apply its changes and call the other plugins taking part in a filter.
+//! per game. The game's [`Store`] data holds the kernel's authoritative state.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Once, OnceLock};
 use std::time::Duration;
 
@@ -14,7 +12,7 @@ use ooaw_plugin_api::protocol::{
     Attachment, Change, PluginManifest, ScenarioRequest, ScenarioSetup,
 };
 use ooaw_plugin_api::serde_json::Value;
-use ooaw_plugin_api::{GameId, GameStatus, HexId, PhaseDefinition, RuleError};
+use ooaw_plugin_api::{GameCommand, GameId, GameStatus, HexId, PhaseDefinition, RuleError};
 use serde::de::DeserializeOwned;
 use wasmtime::{
     AsContextMut, Caller, Config, Engine, Extern, Linker, Memory, Module, Store, StoreContextMut,
@@ -27,8 +25,8 @@ use crate::state::KernelState;
 /// Interval at which the guarded engine's epoch advances.
 const EPOCH_TICK: Duration = Duration::from_millis(100);
 
-/// Epoch ticks one top-level call into a guarded game, including the filters
-/// it runs, may take before it is stopped. Ordinary calls take milliseconds;
+/// Epoch ticks one call into a guarded game may take before it is stopped.
+/// Ordinary calls take milliseconds;
 /// the deadline only stops a plugin that never returns. Being wall-clock
 /// based, it never changes the result of a call that finishes.
 const CALL_DEADLINE_TICKS: u64 = 100;
@@ -251,7 +249,7 @@ struct Exports {
     phase_ending: MethodFunc,
     command: MethodFunc,
     query: MethodFunc,
-    filter: MethodFunc,
+    _filter: MethodFunc,
 }
 
 impl Exports {
@@ -282,7 +280,7 @@ impl Exports {
             phase_ending: func!(exports::PHASE_ENDING),
             command: func!(exports::COMMAND),
             query: func!(exports::QUERY),
-            filter: func!(exports::FILTER),
+            _filter: func!(exports::FILTER),
         })
     }
 
@@ -295,7 +293,6 @@ impl Exports {
             Method::PhaseEnding => &self.phase_ending,
             Method::Command => &self.command,
             Method::Query => &self.query,
-            Method::Filter => &self.filter,
         }
     }
 }
@@ -311,7 +308,6 @@ enum Method {
     PhaseEnding,
     Command,
     Query,
-    Filter,
 }
 
 impl Method {
@@ -354,18 +350,14 @@ pub(crate) struct HostData {
     /// The game's only dice.
     pub(crate) dice: Dice,
     /// Incremented whenever the state changes other than through a plugin's
-    /// own reported changes, invalidating every plugin's mirror.
+    /// own reported changes, invalidating the plugin's mirror.
     pub(crate) generation: u64,
     /// Hexes of the map, used to check plugin changes.
     pub(crate) hexes: HashSet<HexId>,
-    /// Loaded plugins in load order.
+    /// The game's single loaded plugin.
     pub(crate) slots: Vec<Slot>,
-    /// Filter name to taking-part plugins, in load order.
-    pub(crate) filters: HashMap<String, Vec<usize>>,
     /// Whether the current call may change state or roll dice.
     pub(crate) read_only: bool,
-    /// Plugins currently handling a call, outermost first.
-    stack: Vec<usize>,
     /// Result of the last `filter` import, waiting for `host_read`.
     response: Vec<u8>,
     /// Resource limits applied to every instance.
@@ -386,9 +378,7 @@ impl HostData {
             generation: 0,
             hexes,
             slots: Vec::new(),
-            filters: HashMap::new(),
             read_only: false,
-            stack: Vec::new(),
             response: Vec::new(),
             limits: StoreLimitsBuilder::new().memory_size(MEMORY_LIMIT).build(),
         }
@@ -410,16 +400,9 @@ impl HostData {
         data
     }
 
-    /// Marks every plugin mirror stale, after a rollback or a direct edit.
+    /// Marks the plugin mirror stale, after a rollback or a direct edit.
     pub(crate) fn invalidate(&mut self) {
         self.generation += 1;
-    }
-
-    /// Whether a plugin other than `slot` takes part in filter `name`.
-    fn filter_active_for(&self, slot: usize, name: &str) -> bool {
-        self.filters
-            .get(name)
-            .is_some_and(|providers| providers.iter().any(|provider| *provider != slot))
     }
 }
 
@@ -465,14 +448,10 @@ fn linker(sandbox: Sandbox) -> &'static Linker<HostData> {
             .func_wrap(
                 imports::MODULE,
                 imports::FILTER_ACTIVE,
-                |mut caller: Caller<'_, HostData>, ptr: u32, len: u32| -> wasmtime::Result<u32> {
-                    let name = read_text(&mut caller, ptr, len)?;
-                    let data = caller.data();
-                    let slot = *data
-                        .stack
-                        .last()
-                        .ok_or_else(|| wasmtime::format_err!("filter_active outside a call"))?;
-                    Ok(u32::from(data.filter_active_for(slot, &name)))
+                |_caller: Caller<'_, HostData>, _ptr: u32, _len: u32| -> u32 {
+                    // A game has exactly one rules plugin, so there can be no
+                    // other plugin taking part in a filter.
+                    0
                 },
             )
             .expect("unique import");
@@ -484,9 +463,14 @@ fn linker(sandbox: Sandbox) -> &'static Linker<HostData> {
                     let memory = caller_memory(&mut caller)?;
                     let mut bytes = vec![0; len as usize];
                     memory.read(&caller, ptr as usize, &mut bytes)?;
-                    let result = abi::decode(&bytes).and_then(|(name, input, value, changes)| {
-                        run_filter(&mut caller, name, input, value, changes)
-                    });
+                    let result = abi::decode(&bytes).and_then(
+                        |(_name, _input, value, changes): (String, Value, Value, Vec<Change>)| {
+                            if !changes.is_empty() {
+                                apply_changes(caller.data_mut(), 0, changes)?;
+                            }
+                            Ok(value)
+                        },
+                    );
                     let encoded = abi::encode(&result)?;
                     let len = encoded.len() as u32;
                     caller.data_mut().response = encoded;
@@ -513,8 +497,8 @@ fn linker(sandbox: Sandbox) -> &'static Linker<HostData> {
                 |mut caller: Caller<'_, HostData>, ptr: u32, len: u32| -> wasmtime::Result<()> {
                     let message = read_text(&mut caller, ptr, len)?;
                     let data = caller.data();
-                    if let Some(&slot) = data.stack.last() {
-                        eprintln!("[{}] {message}", data.slots[slot].plugin.manifest.id);
+                    if let Some(slot) = data.slots.first() {
+                        eprintln!("[{}] {message}", slot.plugin.manifest.id);
                     }
                     Ok(())
                 },
@@ -537,45 +521,6 @@ fn read_text(caller: &mut Caller<'_, HostData>, ptr: u32, len: u32) -> wasmtime:
     let mut bytes = vec![0; len as usize];
     memory.read(&*caller, ptr as usize, &mut bytes)?;
     Ok(String::from_utf8(bytes)?)
-}
-
-/// Runs a filter for the calling plugin through every other plugin taking
-/// part in it, after applying the caller's pending changes.
-fn run_filter(
-    caller: &mut Caller<'_, HostData>,
-    name: String,
-    input: Value,
-    mut value: Value,
-    changes: Vec<Change>,
-) -> Result<Value, RuleError> {
-    let Some(&slot) = caller.data().stack.last() else {
-        return Err(RuleError::protocol("Filter outside a plugin call"));
-    };
-    if !changes.is_empty() {
-        apply_changes(caller.data_mut(), slot, changes)?;
-    }
-    let providers: Vec<usize> = caller
-        .data()
-        .filters
-        .get(&name)
-        .into_iter()
-        .flatten()
-        .copied()
-        .filter(|provider| *provider != slot)
-        .collect();
-    let was_read_only = std::mem::replace(&mut caller.data_mut().read_only, true);
-    let mut result = Ok(());
-    for provider in providers {
-        match filter(&mut *caller, provider, &name, &input, &value) {
-            Ok(next) => value = next,
-            Err(error) => {
-                result = Err(error);
-                break;
-            }
-        }
-    }
-    caller.data_mut().read_only = was_read_only;
-    result.map(|()| value)
 }
 
 /// Applies a plugin's changes and records that its mirror now matches the state.
@@ -653,7 +598,7 @@ pub(crate) fn phase_hook(
 pub(crate) fn command(
     ctx: impl AsContextMut<Data = HostData>,
     slot: usize,
-    command: &Value,
+    command: &GameCommand,
 ) -> Result<Vec<Value>, RuleError> {
     call(ctx, slot, Method::Command, command)
 }
@@ -668,17 +613,6 @@ pub(crate) fn query(
     call(ctx, slot, Method::Query, &(name, input))
 }
 
-/// `RulesPlugin::filter` on the plugin of `slot`.
-fn filter(
-    ctx: impl AsContextMut<Data = HostData>,
-    slot: usize,
-    name: &str,
-    input: &Value,
-    value: &Value,
-) -> Result<Value, RuleError> {
-    call(ctx, slot, Method::Filter, &(name, input, value))
-}
-
 /// Calls one method of the plugin of `slot`, synchronising its mirror first if
 /// needed, and applies the changes it reports. A rejection is the plugin's
 /// error; no changes are applied.
@@ -687,8 +621,8 @@ fn filter(
 ///
 /// Returns the plugin's rejection; `pluginFault` if the plugin traps or
 /// answers malformed data (the instance is then replaced before its next
-/// call); `reentrantPluginCall` for a call into a plugin already handling one;
-/// and the error of any change that fails the kernel's consistency checks.
+/// call); and the error of any change that fails the kernel's consistency
+/// checks.
 fn call<A: serde::Serialize + ?Sized, R: DeserializeOwned>(
     mut ctx: impl AsContextMut<Data = HostData>,
     slot: usize,
@@ -696,24 +630,12 @@ fn call<A: serde::Serialize + ?Sized, R: DeserializeOwned>(
     args: &A,
 ) -> Result<R, RuleError> {
     let mut ctx = ctx.as_context_mut();
-    if ctx.data().stack.contains(&slot) {
-        return Err(RuleError::new(
-            "reentrantPluginCall",
-            format!(
-                "Plugin {} is already handling a call",
-                ctx.data().slots[slot].plugin.manifest.id
-            ),
-        ));
-    }
     let args = abi::encode(args)?;
     let exports = ensure_instance(&mut ctx, slot)?;
-    if ctx.data().stack.is_empty() && ctx.data().sandbox == Sandbox::Guarded {
+    if ctx.data().sandbox == Sandbox::Guarded {
         ctx.set_epoch_deadline(CALL_DEADLINE_TICKS);
     }
-    ctx.data_mut().stack.push(slot);
-    let result = run(&mut ctx, slot, &exports, method, &args);
-    ctx.data_mut().stack.pop();
-    result
+    run(&mut ctx, slot, &exports, method, &args)
 }
 
 /// The calls that make up one method call: turn, sync if stale, the method,

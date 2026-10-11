@@ -5,7 +5,7 @@
 
 use std::io::{self, BufRead, Write};
 
-use ooaw_core::{GameEngine, GameId, GameSnapshot, MapDefinition, ScenarioSummary};
+use ooaw_core::{GameCommand, GameEngine, GameId, GameSnapshot, MapDefinition, ScenarioSummary};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -31,8 +31,8 @@ enum EngineRequest {
     SubmitCommand {
         /// Revision the client last observed; must match the active game before execution.
         expected_revision: u64,
-        /// Command object, with a `type` tag, to validate and execute for the active game.
-        command: Value,
+        /// Command from the fixed shared vocabulary to validate and execute.
+        command: GameCommand,
     },
 }
 

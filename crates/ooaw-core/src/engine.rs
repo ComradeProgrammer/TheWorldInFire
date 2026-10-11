@@ -1,13 +1,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use ooaw_plugin_api::protocol::{
-    Attachment, ScenarioRequest, ScenarioSetup, DEBUG_COMMAND_PREFIX, END_PHASE_COMMAND,
-};
+use ooaw_plugin_api::protocol::{Attachment, ScenarioRequest, ScenarioSetup};
 use ooaw_plugin_api::serde_json::{self, Value};
 use ooaw_plugin_api::{
-    CityControlState, GameId, GameStatus, HexId, MapDefinition, PendingDecision, PhaseActor,
-    PhaseDefinition, PhaseExecution, PhaseId, RuleError, ScenarioSummary, SideId, TurnState, Unit,
+    CityControlState, GameCommand, GameId, GameStatus, HexId, MapDefinition, PendingDecision,
+    PhaseActor, PhaseDefinition, PhaseExecution, PhaseId, RuleError, ScenarioSummary, SideId,
+    TurnState, Unit,
 };
 use serde::{Deserialize, Serialize};
 use wasmtime::Store;
@@ -101,11 +100,10 @@ struct SetupStart {
     side_id: Option<SideId>,
 }
 
-/// Which plugin handles each phase, command, and query.
+/// Which plugin handles each phase and query.
 #[derive(Default)]
 struct Registry {
     phases: HashMap<String, usize>,
-    commands: HashMap<String, usize>,
     queries: HashMap<String, usize>,
 }
 
@@ -132,11 +130,11 @@ pub struct GameEngine {
     city_owners: BTreeMap<HexId, SideId>,
     /// Count of successfully executed commands.
     revision: u64,
-    /// Whether `debug.*` commands are accepted.
+    /// Whether debug commands are accepted.
     debug_commands: bool,
     /// Plugin that created the scenario.
     owner: usize,
-    /// Handlers by phase, command, and query.
+    /// Handlers by phase and query.
     registry: Registry,
     /// Plugin instances together with the authoritative state and dice.
     store: Store<HostData>,
@@ -180,11 +178,7 @@ impl GameEngine {
         )
     }
 
-    /// Creates a game with an explicit list of rules plugins, in load order.
-    ///
-    /// A later plugin overrides an earlier one's phases, commands, and queries,
-    /// and every plugin listing a filter takes part in it. The scenario comes
-    /// from the last plugin offering its ID.
+    /// Creates a game with exactly one rules plugin.
     ///
     /// # Errors
     ///
@@ -195,6 +189,12 @@ impl GameEngine {
         scenario: ScenarioRequest,
         setup: Option<Value>,
     ) -> Result<Self, RuleError> {
+        if plugins.len() != 1 {
+            return Err(RuleError::new(
+                "pluginCount",
+                "A game requires exactly one rules plugin",
+            ));
+        }
         let owner = plugins
             .iter()
             .rposition(|plugin| {
@@ -211,20 +211,13 @@ impl GameEngine {
                 )
             })?;
         let mut registry = Registry::default();
-        let mut filters: HashMap<String, Vec<usize>> = HashMap::new();
         for (index, plugin) in plugins.iter().enumerate() {
             let manifest = plugin.manifest();
             for phase in &manifest.phases {
                 registry.phases.insert(phase.clone(), index);
             }
-            for command in &manifest.commands {
-                registry.commands.insert(command.clone(), index);
-            }
             for query in &manifest.queries {
                 registry.queries.insert(query.clone(), index);
-            }
-            for filter in &manifest.filters {
-                filters.entry(filter.clone()).or_default().push(index);
             }
         }
 
@@ -241,7 +234,6 @@ impl GameEngine {
             HashSet::new(),
         );
         data.slots = plugins.into_iter().map(Slot::new).collect();
-        data.filters = filters;
         let mut store = new_store(data);
 
         let content = runtime::create_game(&mut store, owner, &game_id, &scenario)?;
@@ -402,7 +394,7 @@ impl GameEngine {
         &self.scenario_request
     }
 
-    /// Returns the loaded plugins' manifests in load order.
+    /// Returns the loaded plugin's manifest.
     pub fn plugins(&self) -> Vec<&ooaw_plugin_api::protocol::PluginManifest> {
         self.store
             .data()
@@ -424,29 +416,23 @@ impl GameEngine {
 
     /// Validates and executes a command against the authoritative game state.
     ///
-    /// The command is a JSON object with a `type` tag. `endPhase` is handled by
-    /// the kernel's turn sequencer; every other type goes to the plugin that
-    /// declared it. A successful command increments the revision once and
-    /// returns its ordered events and the resulting snapshot.
+    /// `EndPhase` is handled by the kernel's turn sequencer; every other shared
+    /// command goes to the game's sole rules plugin. A successful command
+    /// increments the revision once and returns its ordered events and the
+    /// resulting snapshot.
     ///
     /// # Errors
     ///
-    /// Returns `gameComplete` after the scenario ends, `unknownCommand` for a
-    /// type no plugin handles, or the handling plugin's rejection. A rejected
-    /// command leaves state, dice, and revision unchanged.
-    pub fn execute(&mut self, command: Value) -> Result<CommandOutcome, RuleError> {
+    /// Returns `gameComplete` after the scenario ends or the rules plugin's
+    /// rejection. A rejected command leaves state, dice, and revision unchanged.
+    pub fn execute(&mut self, command: GameCommand) -> Result<CommandOutcome, RuleError> {
         if self.store.data().state.status == GameStatus::Completed {
             return Err(RuleError::new(
                 "gameComplete",
                 "The game has already completed",
             ));
         }
-        let kind = command
-            .get("type")
-            .and_then(Value::as_str)
-            .ok_or_else(|| RuleError::new("invalidCommand", "A command needs a string type"))?
-            .to_owned();
-        if kind.starts_with(DEBUG_COMMAND_PREFIX) && !self.debug_commands {
+        if matches!(command, GameCommand::DebugCheckSupply { .. }) && !self.debug_commands {
             return Err(RuleError::new(
                 "debugCommandsDisabled",
                 "Debug commands are disabled in this game",
@@ -457,16 +443,9 @@ impl GameEngine {
             let data = self.store.data();
             (data.state.clone(), data.dice.clone())
         };
-        let result = if kind == END_PHASE_COMMAND {
-            self.end_phase()
-        } else {
-            match self.registry.commands.get(&kind).copied() {
-                Some(slot) => runtime::command(&mut self.store, slot, &command),
-                None => Err(RuleError::new(
-                    "unknownCommand",
-                    format!("No rules plugin handles the command {kind}"),
-                )),
-            }
+        let result = match command {
+            GameCommand::EndPhase => self.end_phase(),
+            command => runtime::command(&mut self.store, self.owner, &command),
         };
         match result {
             Ok(events) => {

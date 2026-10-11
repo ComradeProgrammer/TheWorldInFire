@@ -1,6 +1,6 @@
 //! Kernel behaviour with the bundled official rules plugin.
 
-use ooaw_core::{official_plugin, GameEngine, GameId};
+use ooaw_core::{official_plugin, GameCommand, GameEngine, GameId};
 use serde_json::{json, Value};
 
 fn new_game(scenario: &str) -> GameEngine {
@@ -17,10 +17,6 @@ fn the_official_plugin_describes_itself() {
     let manifest = plugin.manifest();
     assert_eq!(manifest.id, "ooaw.nato");
     assert!(manifest.phases.iter().any(|phase| phase == "combat"));
-    assert!(manifest
-        .commands
-        .iter()
-        .any(|command| command == "resolveBattle"));
     assert!(manifest
         .queries
         .iter()
@@ -51,7 +47,7 @@ fn a_new_game_opens_on_the_first_interactive_phase() {
 #[test]
 fn end_phase_runs_through_automatic_phases() {
     let mut game = new_game("nato-1983-standard");
-    let outcome = game.execute(json!({ "type": "endPhase" })).unwrap();
+    let outcome = game.execute(GameCommand::EndPhase).unwrap();
     assert_eq!(outcome.revision, 1);
     let types: Vec<&str> = outcome
         .events
@@ -68,7 +64,11 @@ fn a_rejected_command_changes_nothing() {
     let before = game.snapshot();
     let dice = game.dice().clone();
     let error = game
-        .execute(json!({ "type": "resolveBattle", "hexId": "2806", "unitIds": [] }))
+        .execute(GameCommand::ResolveBattle {
+            hex_id: ooaw_core::api::HexId("2806".to_owned()),
+            unit_ids: Vec::new(),
+            supporting_hq_id: None,
+        })
         .unwrap_err();
     assert_eq!(error.code, "wrongPhase");
     assert_eq!(game.snapshot(), before);
@@ -76,15 +76,11 @@ fn a_rejected_command_changes_nothing() {
 }
 
 #[test]
-fn unknown_and_debug_commands_are_refused() {
+fn debug_commands_are_refused_until_enabled() {
     let mut game = new_game("nato-1983-standard");
-    assert_eq!(
-        game.execute(json!({ "type": "launchMissiles" }))
-            .unwrap_err()
-            .code,
-        "unknownCommand"
-    );
-    let check = json!({ "type": "debug.checkSupply", "sideId": "nato" });
+    let check = GameCommand::DebugCheckSupply {
+        side_id: ooaw_core::api::SideId("nato".to_owned()),
+    };
     assert_eq!(
         game.execute(check.clone()).unwrap_err().code,
         "debugCommandsDisabled"

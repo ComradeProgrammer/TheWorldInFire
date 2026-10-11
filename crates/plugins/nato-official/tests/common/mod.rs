@@ -133,7 +133,7 @@ impl TestGame {
     }
 
     pub fn execute(&mut self, command: GameCommand) -> Result<CommandOutcome, RuleError> {
-        let outcome = self.engine.execute(encode(&command))?;
+        let outcome = self.engine.execute(command)?;
         Ok(CommandOutcome {
             revision: outcome.revision,
             events: outcome.events.into_iter().map(decode).collect(),

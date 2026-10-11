@@ -1,16 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{HexId, SideId, UnitId};
-
-/// Kind of Air Point a player chooses to spend (23.1).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum AirPointKind {
-    /// Short-range point; only for targets in friendly or contested Airspace.
-    Tactical,
-    /// Long-range point; any target on the map, and the only kind that may strike an HQ.
-    Operational,
-}
+use super::{AirPointKind, HexId, SideId, UnitId};
 
 /// Pool an Air Point was actually drawn from, so cancelling refunds it correctly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

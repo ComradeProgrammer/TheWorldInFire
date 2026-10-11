@@ -2,7 +2,8 @@ use std::sync::Mutex;
 
 use ooaw_core::api::serde_json::Value;
 use ooaw_core::{
-    GameEngine, GameId, GameSnapshot, MapDefinition, PhaseDefinition, RuleError, ScenarioSummary,
+    GameCommand, GameEngine, GameId, GameSnapshot, MapDefinition, PhaseDefinition, RuleError,
+    ScenarioSummary,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -40,8 +41,8 @@ impl From<RuleError> for ApiError {
 #[serde(rename_all = "camelCase")]
 struct CommandRequest {
     expected_revision: u64,
-    /// Command object with a `type` tag, executed by the kernel or a rules plugin.
-    command: Value,
+    /// Command from the fixed shared vocabulary, executed by the kernel or rules plugin.
+    command: GameCommand,
 }
 
 #[derive(Debug, Serialize)]

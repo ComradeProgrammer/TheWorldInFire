@@ -2,17 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{HexId, NationId, SideId, UnitId};
-
-/// Stable identifier of one air squadron counter.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct AirUnitId(pub String);
-
-/// Stable identifier of one off-map airbase.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct AirBaseId(pub String);
+use super::{AirBaseId, AirMissionAssignment, AirUnitId, HexId, NationId, SideId, UnitId};
 
 /// The mission family an air counter may perform.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,48 +101,6 @@ impl AirBaseState {
             self.definition.sortie_capacity.div_ceil(2)
         } else {
             self.definition.sortie_capacity
-        }
-    }
-}
-
-/// A mission committed during Battle Planning.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    tag = "type",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum AirMissionAssignment {
-    AirSuperiority {
-        center_hex_id: HexId,
-    },
-    GroundStrike {
-        hex_id: HexId,
-        unit_ids: Vec<UnitId>,
-    },
-    AirBaseStrike {
-        air_base_id: AirBaseId,
-    },
-    EarlyWarning {
-        center_hex_id: HexId,
-    },
-}
-
-impl AirMissionAssignment {
-    pub fn target_hex<'a>(
-        &'a self,
-        bases: &'a std::collections::BTreeMap<AirBaseId, AirBaseState>,
-    ) -> Option<&'a HexId> {
-        match self {
-            Self::AirSuperiority { center_hex_id }
-            | Self::GroundStrike {
-                hex_id: center_hex_id,
-                ..
-            }
-            | Self::EarlyWarning { center_hex_id } => Some(center_hex_id),
-            Self::AirBaseStrike { air_base_id } => bases
-                .get(air_base_id)
-                .map(|base| &base.definition.anchor_hex_id),
         }
     }
 }
