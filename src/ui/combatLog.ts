@@ -112,6 +112,12 @@ export function describeCombatEvents(
       case "airBaseDamaged":
         lines.push({ tone: "hit", text: `${baseName(event.airBaseId)} takes runway damage (${event.damage}/2)` });
         break;
+      case "reactionOffered":
+        lines.push({ tone: "info", text: `${sideLabel(event.pending.sideId)} may React into ${event.pending.hexId}` });
+        break;
+      case "unitReacted":
+        lines.push({ tone: "info", text: `${name(event.unitId)} Reacts from ${event.from} into ${event.to}` });
+        break;
       case "battleResolved": {
         const { report } = event;
         const attackers = report.attackingUnitIds.map(name).join(", ");

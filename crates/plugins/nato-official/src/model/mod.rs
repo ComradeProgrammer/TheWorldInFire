@@ -17,9 +17,9 @@ pub use air::{
     AirUnitPlanningOption, AirUnitState, AirUnitStep,
 };
 pub use combat::{
-    BattleOdds, BattleReport, BreakthroughMarker, ColumnShift, ColumnShiftReason, CombatObjective,
-    CombatOptions, CombatResult, CombatState, CounterattackRoll, PendingAdvance, StrengthModifier,
-    UnitStrength, ODDS_COLUMNS,
+    BattleOdds, BattleReport, BlockedReaction, BreakthroughMarker, ColumnShift, ColumnShiftReason,
+    CombatObjective, CombatOptions, CombatResult, CombatState, CounterattackRoll, PendingAdvance,
+    PendingReaction, ReactionBlock, StrengthModifier, UnitStrength, ODDS_COLUMNS,
 };
 pub use ooaw_plugin_api::{
     AirBaseId, AirMissionAssignment, AirPointKind, AirUnitId, Causeway, CityControlState, CityKind,

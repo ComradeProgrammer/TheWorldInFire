@@ -32,7 +32,7 @@ const PHASES: [&str; 9] = [
 ];
 
 /// Read-only queries the NATO rules answer.
-const QUERIES: [&str; 12] = [
+const QUERIES: [&str; 13] = [
     "movementModes",
     "movementOptions",
     "attackTargetOptions",
@@ -43,6 +43,7 @@ const QUERIES: [&str; 12] = [
     "airMissionOptions",
     "combatOptions",
     "battlePreview",
+    "reactionPreview",
     "enemyZoc",
     "airspace",
 ];
@@ -80,6 +81,13 @@ struct BattlePreviewInput {
     unit_ids: Vec<UnitId>,
     #[serde(default)]
     supporting_hq_id: Option<UnitId>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReactionPreviewInput {
+    #[serde(default)]
+    unit_id: Option<UnitId>,
 }
 
 #[derive(Deserialize)]
@@ -224,6 +232,10 @@ impl RulesPlugin for NatoPlugin {
                     &input.unit_ids,
                     input.supporting_hq_id.as_ref(),
                 )?)
+            }
+            "reactionPreview" => {
+                let input: ReactionPreviewInput = decode(input)?;
+                encode(&rules.reaction_preview(input.unit_id.as_ref())?)
             }
             "enemyZoc" => {
                 let input: SideInput = decode(input)?;

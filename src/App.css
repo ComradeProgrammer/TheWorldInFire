@@ -1697,6 +1697,28 @@ select {
   margin: 3px 0 0 auto;
 }
 
+/* The defender's Reaction decision takes the defending side's colour. */
+.battle-dialog.reaction.side-nato {
+  border-color: #3a5a86;
+}
+
+.battle-dialog.reaction.side-nato .battle-header h2 {
+  color: #8fbcf0;
+}
+
+.battle-dialog.reaction .dialog-kicker {
+  color: var(--text);
+}
+
+.reaction-arrow line {
+  stroke: #ffe39a;
+  stroke-linecap: round;
+}
+
+.reaction-arrow polygon {
+  fill: #ffe39a;
+}
+
 .battle-body {
   position: relative;
   flex: 1;

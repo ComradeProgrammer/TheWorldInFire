@@ -225,6 +225,11 @@ impl TestGame {
         )
     }
 
+    /// Odds of the battle awaiting Reaction if `unit_id` Reacts (or none does).
+    pub fn reaction_preview(&mut self, unit_id: Option<&UnitId>) -> Result<BattleOdds, RuleError> {
+        self.query("reactionPreview", json!({ "unitId": unit_id }))
+    }
+
     /// Whether `hex_id` lies in a zone of control of `side_id`'s enemies.
     pub fn hex_in_enemy_zoc(&mut self, side_id: &SideId, hex_id: &HexId) -> bool {
         let hexes: Vec<HexId> = self

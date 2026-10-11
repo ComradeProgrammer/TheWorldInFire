@@ -161,6 +161,9 @@ pub struct BattleReport {
     pub counterattacks: Vec<CounterattackRoll>,
     /// HQ that gave Offensive Support, if any.
     pub supporting_hq_id: Option<UnitId>,
+    /// Unit the Defender Reacted into the Objective hex, if any (25.1.2).
+    #[serde(default)]
+    pub reacting_unit_id: Option<UnitId>,
 }
 
 /// A Breakthrough Marker (25.9) and the side whose attack or Strike placed it.
@@ -189,6 +192,65 @@ pub struct PendingAdvance {
     pub conquers_free_city: bool,
 }
 
+/// A committed attack waiting for the Defender's Reaction decision (25.1.2).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingReaction {
+    /// Objective hex.
+    pub hex_id: HexId,
+    /// Defending side, which makes the decision.
+    pub side_id: SideId,
+    /// Committed attacking units.
+    pub attacking_unit_ids: Vec<UnitId>,
+    /// HQ committed for Offensive Support, if any.
+    pub supporting_hq_id: Option<UnitId>,
+    /// Adjacent defending units that may React into the Objective hex.
+    pub eligible_unit_ids: Vec<UnitId>,
+    /// Adjacent defending units that may not React, and why.
+    #[serde(default)]
+    pub blocked_units: Vec<BlockedReaction>,
+}
+
+/// An adjacent defending unit that may not React into the Objective hex.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockedReaction {
+    /// Defending unit.
+    pub unit_id: UnitId,
+    /// First rule that prevents its Reaction.
+    pub reason: ReactionBlock,
+}
+
+/// Why a unit may not React (25.1.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReactionBlock {
+    /// No unit may React into a Mountain hex.
+    MountainObjective,
+    /// The hex holds no defending unit and is not a Free City.
+    EmptyObjective,
+    /// HQs and artillery divisions are not Maneuver units.
+    NotManeuver,
+    /// The unit is Disrupted.
+    Disrupted,
+    /// The unit bears an Out of Supply marker.
+    OutOfSupply,
+    /// The unit is under a train marker.
+    Entrained,
+    /// The unit has already defended this phase.
+    Engaged,
+    /// A Causeway, Major River, Blocked, All-Sea, or Danish Ferry hexside lies between.
+    Hexside,
+    /// A Warsaw Pact unit never Reacts out of an enemy zone of control.
+    EnemyZoc,
+    /// A NATO unit may not leave an enemy zone of control without another Maneuver unit staying behind.
+    AloneInEnemyZoc,
+    /// NATO joins only a hex held by its own nationality.
+    Nationality,
+    /// Reacting would exceed the stacking limit.
+    Stacking,
+}
+
 /// Battles and restrictions of the current Combat Phase.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -207,6 +269,9 @@ pub struct CombatState {
     pub supporting_hq_ids: Vec<UnitId>,
     /// Advance decision the Attacker must make before the next battle.
     pub pending_advance: Option<PendingAdvance>,
+    /// Reaction decision the Defender must make before the battle is fought.
+    #[serde(default)]
+    pub pending_reaction: Option<PendingReaction>,
 }
 
 /// A hex the attacking side may attack now.

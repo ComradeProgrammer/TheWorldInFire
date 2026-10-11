@@ -8,8 +8,8 @@ use ooaw_core::{Dice, GameId};
 use ooaw_nato::{
     air_combat_table, find_scenario, list_scenarios, AirCombatResult, AirMissionAssignment,
     AirUnitId, AirUnitKind, Airspace, Disruption, GameCommand, GameEvent, HexId, MovementMode,
-    PhaseActor, PhaseExecution, ScenarioDefinition, SideId, StrikeColumn, StrikeResult,
-    SupplyStatus, TrainStatus, UnitId, UnitLocation, UnitState, UnitTraitId,
+    PhaseActor, PhaseExecution, ReactionBlock, RuleError, ScenarioDefinition, SideId, StrikeColumn,
+    StrikeResult, SupplyStatus, TrainStatus, UnitId, UnitLocation, UnitState, UnitTraitId,
 };
 
 /// Creates a fresh standard NATO scenario engine for unit tests.
@@ -39,7 +39,7 @@ fn new_game_starts_at_the_first_step_that_needs_a_player() {
     let step = snapshot.turn.current_step.unwrap();
 
     assert_eq!(snapshot.revision, 0);
-    assert_eq!(snapshot.protocol_version, 18);
+    assert_eq!(snapshot.protocol_version, 19);
     assert_eq!(snapshot.turn.game_turn, 1);
     // Joint Status, Joint Reinforcement, and Pre-Battle are automatic.
     assert_eq!(step.phase_id.0, "battlePlanning");
@@ -58,7 +58,7 @@ fn new_game_starts_at_the_first_step_that_needs_a_player() {
 fn snapshot_identifies_the_scenario_map_without_repeating_its_data() {
     let json = new_game().snapshot_json();
 
-    assert_eq!(json["protocolVersion"], 18);
+    assert_eq!(json["protocolVersion"], 19);
     assert_eq!(json["scenario"]["mapId"], "nato-central-europe");
     assert!(json.get("map").is_none());
 }
@@ -1791,7 +1791,9 @@ fn artillery_cannot_ground_attack_and_uses_normal_defense() {
     advance_to(&mut game, "warsawPact", "combat");
     assert!(game.combat_options().unwrap().objectives.is_empty());
     assert_eq!(
-        game.execute(battle("4010", &[SOVIET])).unwrap_err().code,
+        attack(&mut game, battle("4010", &[SOVIET]))
+            .unwrap_err()
+            .code,
         "invalidObjective"
     );
 
@@ -1842,6 +1844,23 @@ fn battle(hex: &str, units: &[&str]) -> GameCommand {
         unit_ids: units.iter().map(|id| UnitId((*id).to_owned())).collect(),
         supporting_hq_id: None,
     }
+}
+
+/// Commits an attack and, when the Defender is asked to React, declines, so
+/// the battle is fought; the outcome carries the events of both commands.
+fn attack(game: &mut TestGame, command: GameCommand) -> Result<CommandOutcome, RuleError> {
+    let committed = game.execute(command)?;
+    if committed
+        .snapshot
+        .combat
+        .as_ref()
+        .is_none_or(|combat| combat.pending_reaction.is_none())
+    {
+        return Ok(committed);
+    }
+    let mut fought = game.execute(GameCommand::ReactToBattle { unit_id: None })?;
+    fought.events.splice(0..0, committed.events);
+    Ok(fought)
 }
 
 /// Extracts the resolved battle report from a command outcome's events.
@@ -1919,7 +1938,7 @@ fn a_marked_objective_must_be_attacked_and_odds_follow_the_rules() {
 fn a_destroyed_defender_lets_the_attacker_advance_and_leaves_a_breakthrough() {
     let mut game = baltap_combat(&[(SOVIET, "4009"), (GERMAN, "4010")], "4010");
     game.set_dice(dice_rolling(6)); // 3:1, roll 6: -/D1R1
-    let outcome = game.execute(battle("4010", &[SOVIET])).unwrap();
+    let outcome = attack(&mut game, battle("4010", &[SOVIET])).unwrap();
     assert_eq!(report(&outcome).result.unwrap().code, "-/D1R1");
     assert!(outcome
         .snapshot
@@ -1931,7 +1950,9 @@ fn a_destroyed_defender_lets_the_attacker_advance_and_leaves_a_breakthrough() {
     );
     // Another battle may not start before the advance decision.
     assert_eq!(
-        game.execute(battle("4010", &[SOVIET])).unwrap_err().code,
+        attack(&mut game, battle("4010", &[SOVIET]))
+            .unwrap_err()
+            .code,
         "advancePending"
     );
     let outcome = game
@@ -1963,7 +1984,7 @@ fn a_destroyed_defender_lets_the_attacker_advance_and_leaves_a_breakthrough() {
 fn attacker_losses_and_defender_retreats_are_applied() {
     let mut game = baltap_combat(&[(SOVIET, "4009"), (GERMAN, "4010")], "4010");
     game.set_dice(dice_rolling(2)); // 3:1, roll 2: A1/R1
-    let outcome = game.execute(battle("4010", &[SOVIET])).unwrap();
+    let outcome = attack(&mut game, battle("4010", &[SOVIET])).unwrap();
     assert_eq!(report(&outcome).result.unwrap().code, "A1/R1");
     let unit = |id: &str| {
         outcome
@@ -1998,7 +2019,7 @@ fn attacker_losses_and_defender_retreats_are_applied() {
 fn a_counterattack_result_rolls_for_each_eligible_defending_step() {
     let mut game = baltap_combat(&[(SOVIET, "4009"), (GERMAN, "4010")], "4010");
     game.set_dice(dice_rolling(5)); // 3:1, roll 5: -/CAD1R1
-    let outcome = game.execute(battle("4010", &[SOVIET])).unwrap();
+    let outcome = attack(&mut game, battle("4010", &[SOVIET])).unwrap();
     let report = report(&outcome);
     assert_eq!(report.result.unwrap().code, "-/CAD1R1");
     assert_eq!(report.counterattacks.len(), 1);
@@ -2026,7 +2047,7 @@ fn an_undefended_free_city_is_conquered_by_advancing() {
         )
         .unwrap();
     assert_eq!(odds.city_defense, 1);
-    let outcome = game.execute(battle("2214", &[SOVIET])).unwrap();
+    let outcome = attack(&mut game, battle("2214", &[SOVIET])).unwrap();
     // Every result at these odds inflicts a step loss, which breaks the city's defense.
     assert!(
         outcome
@@ -2093,9 +2114,11 @@ fn surrounded_defenders_suffer_concentric_or_flank_shifts() {
 fn units_and_hexes_fight_only_once_per_combat_phase() {
     let mut game = baltap_combat(&[(SOVIET, "4009"), (GERMAN, "4010")], "4010");
     game.set_dice(dice_rolling(1)); // 3:1, roll 1: A1/-
-    game.execute(battle("4010", &[SOVIET])).unwrap();
+    attack(&mut game, battle("4010", &[SOVIET])).unwrap();
     assert_eq!(
-        game.execute(battle("4010", &[SOVIET])).unwrap_err().code,
+        attack(&mut game, battle("4010", &[SOVIET]))
+            .unwrap_err()
+            .code,
         "invalidObjective"
     );
     assert!(game
@@ -2106,7 +2129,189 @@ fn units_and_hexes_fight_only_once_per_combat_phase() {
     game.execute(GameCommand::EndPhase).unwrap();
 }
 
-// ------------------------------------------------------------------ offensive support
+// ------------------------------------------------------------------ reaction
+
+/// The Defender's Reaction decision for a unit, or `None` to decline.
+fn react(unit: Option<&str>) -> GameCommand {
+    GameCommand::ReactToBattle {
+        unit_id: unit.map(|id| UnitId(id.to_owned())),
+    }
+}
+
+/// Units the pending Reaction decision allows to React.
+fn reaction_candidates(game: &TestGame) -> Vec<String> {
+    game.snapshot()
+        .combat
+        .and_then(|combat| combat.pending_reaction)
+        .map(|pending| {
+            pending
+                .eligible_unit_ids
+                .into_iter()
+                .map(|id| id.0)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Verifies a committed attack waits for the Defender, whose Reacting unit then defends.
+#[test]
+fn the_defender_may_react_an_adjacent_unit_into_the_objective() {
+    let mut game = baltap_combat(
+        &[(SOVIET, "4009"), (GERMAN, "4010"), (PZG_17, "4011")],
+        "4010",
+    );
+    let outcome = game.execute(battle("4010", &[SOVIET])).unwrap();
+    assert!(outcome
+        .events
+        .iter()
+        .all(|event| !matches!(event, GameEvent::BattleResolved { .. })));
+    assert!(outcome
+        .events
+        .iter()
+        .any(|event| matches!(event, GameEvent::ReactionOffered { .. })));
+    assert_eq!(
+        outcome.snapshot.pending_decision.unwrap().kind,
+        "defenderReaction"
+    );
+    assert_eq!(reaction_candidates(&game), vec![PZG_17.to_owned()]);
+    // The battle must be fought before anything else happens.
+    assert_eq!(
+        game.execute(GameCommand::EndPhase).unwrap_err().code,
+        "reactionPending"
+    );
+    assert_eq!(
+        game.execute(GameCommand::AdvanceAfterCombat { unit_ids: vec![] })
+            .unwrap_err()
+            .code,
+        "noAdvancePending"
+    );
+
+    // The preview shows the Defender what the Reaction is worth.
+    let alone = game.reaction_preview(None).unwrap();
+    let reinforced = game
+        .reaction_preview(Some(&UnitId(PZG_17.to_owned())))
+        .unwrap();
+    assert_eq!(alone.total_defense, 3);
+    assert!(reinforced.total_defense > alone.total_defense);
+    assert_eq!(
+        game.reaction_preview(Some(&UnitId(SOVIET.to_owned())))
+            .unwrap_err()
+            .code,
+        "unitCannotReact"
+    );
+    assert_eq!(
+        game.execute(react(Some(SOVIET))).unwrap_err().code,
+        "unitCannotReact"
+    );
+
+    let outcome = game.execute(react(Some(PZG_17))).unwrap();
+    assert!(outcome.events.iter().any(|event| matches!(
+        event,
+        GameEvent::UnitReacted { unit_id, from, to, .. }
+            if unit_id.0 == PZG_17 && from.0 == "4011" && to.0 == "4010"
+    )));
+    let report = report(&outcome);
+    assert_eq!(report.reacting_unit_id, Some(UnitId(PZG_17.to_owned())));
+    let odds = report.odds.unwrap();
+    assert_eq!(odds.total_defense, reinforced.total_defense);
+    assert!(odds.defenders.iter().any(|entry| entry.unit_id.0 == PZG_17));
+    assert!(outcome.snapshot.combat.unwrap().pending_reaction.is_none());
+}
+
+/// Verifies declining Reaction fights the battle with the units already in the hex.
+#[test]
+fn declining_reaction_fights_the_battle_as_committed() {
+    let mut game = baltap_combat(
+        &[(SOVIET, "4009"), (GERMAN, "4010"), (PZG_17, "4011")],
+        "4010",
+    );
+    game.execute(battle("4010", &[SOVIET])).unwrap();
+    let outcome = game.execute(react(None)).unwrap();
+    let report = report(&outcome);
+    assert_eq!(report.reacting_unit_id, None);
+    assert_eq!(report.odds.unwrap().total_defense, 3);
+    assert_eq!(
+        game.unit(&UnitId(PZG_17.to_owned())).location,
+        UnitLocation::Hex {
+            hex_id: HexId("4011".to_owned())
+        }
+    );
+    assert_eq!(
+        game.execute(react(None)).unwrap_err().code,
+        "noReactionPending"
+    );
+}
+
+/// Verifies the EZOC, nationality, and readiness limits on Reaction (25.1.2).
+#[test]
+fn reaction_follows_the_ezoc_nationality_and_readiness_limits() {
+    // 3910 lies next to both the Objective and the attacking Soviets.
+    let mut game = baltap_combat(
+        &[
+            (SOVIET, "4009"),
+            (GERMAN, "4010"),
+            (PZG_17, "3910"),
+            (DANE, "4011"),
+        ],
+        "4010",
+    );
+    // Alone in an EZOC, the German brigade may not leave its hex; the Danes
+    // may not join a West German stack. The Defender is still asked, and
+    // told why.
+    let outcome = game.execute(battle("4010", &[SOVIET])).unwrap();
+    assert_eq!(
+        outcome.snapshot.pending_decision.unwrap().kind,
+        "defenderReaction"
+    );
+    assert!(reaction_candidates(&game).is_empty());
+    assert_eq!(
+        blocked_reactions(&game),
+        vec![
+            (DANE.to_owned(), ReactionBlock::Nationality),
+            (PZG_17.to_owned(), ReactionBlock::AloneInEnemyZoc),
+        ]
+    );
+    let outcome = game.execute(react(None)).unwrap();
+    assert!(report(&outcome).reacting_unit_id.is_none());
+
+    // With company in its hex, a NATO unit may React out of an EZOC; a
+    // Disrupted one may not.
+    let mut game = baltap_combat(
+        &[
+            (SOVIET, "4009"),
+            (GERMAN, "4010"),
+            (PZG_17, "3910"),
+            (PZ_18, "3910"),
+        ],
+        "4010",
+    );
+    game.edit_unit(&UnitId(PZ_18.to_owned()), |unit| {
+        unit.disruption = Some(Disruption::Disrupted)
+    });
+    game.execute(battle("4010", &[SOVIET])).unwrap();
+    assert_eq!(reaction_candidates(&game), vec![PZG_17.to_owned()]);
+    assert_eq!(
+        blocked_reactions(&game),
+        vec![(PZ_18.to_owned(), ReactionBlock::Disrupted)]
+    );
+}
+
+/// Units the pending Reaction decision bars from Reacting, with the reason.
+fn blocked_reactions(game: &TestGame) -> Vec<(String, ReactionBlock)> {
+    game.snapshot()
+        .combat
+        .and_then(|combat| combat.pending_reaction)
+        .map(|pending| {
+            pending
+                .blocked_units
+                .into_iter()
+                .map(|blocked| (blocked.unit_id.0, blocked.reason))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+const PZ_18: &str = "westGermany.6panzergrenadierDivision.18panzerBrigade";
 
 const NEGF_HQ: &str = "soviet.northernEastGermanyFront.hq";
 const BALTIC_CORPS_TANKS: &str = "soviet.balticCorps.138tankRegiment";
@@ -2167,9 +2372,7 @@ fn a_front_hq_gives_one_battle_a_column_of_offensive_support() {
     // 2:1, +1 Surprise, +1 Offensive Support.
     assert_eq!(odds.final_odds, "4:1");
 
-    let outcome = game
-        .execute(supported_battle("4010", &[SOVIET], NEGF_HQ))
-        .unwrap();
+    let outcome = attack(&mut game, supported_battle("4010", &[SOVIET], NEGF_HQ)).unwrap();
     assert_eq!(report(&outcome).supporting_hq_id, Some(hq.clone()));
     if outcome.snapshot.pending_decision.is_some() {
         game.execute(GameCommand::AdvanceAfterCombat { unit_ids: vec![] })
@@ -2177,12 +2380,12 @@ fn a_front_hq_gives_one_battle_a_column_of_offensive_support() {
     }
     // The HQ has supported its one battle this phase.
     assert_eq!(
-        game.execute(supported_battle("4012", &[EAST_GERMAN], NEGF_HQ))
+        attack(&mut game, supported_battle("4012", &[EAST_GERMAN], NEGF_HQ))
             .unwrap_err()
             .code,
         "supportUnavailable"
     );
-    game.execute(battle("4012", &[EAST_GERMAN])).unwrap();
+    attack(&mut game, battle("4012", &[EAST_GERMAN])).unwrap();
 }
 
 /// Verifies Offensive Support requires an eligible HQ and a committed Subordinate within range.
@@ -2347,7 +2550,9 @@ fn units_in_reserve_do_not_attack() {
         .iter()
         .all(|objective| objective.hex_id.0 != "2416"));
     assert_eq!(
-        game.execute(battle("2416", &[SOVIET])).unwrap_err().code,
+        attack(&mut game, battle("2416", &[SOVIET]))
+            .unwrap_err()
+            .code,
         "invalidObjective"
     );
     // With no eligible attacker the marked objective does not block the phase.
@@ -2965,7 +3170,7 @@ fn a_fortified_hex_cancels_a_one_hex_retreat() {
     .unwrap();
     advance_to(&mut game, "warsawPact", "combat");
     game.set_dice(dice_rolling(5)); // 3:1 without the Fortified shift, 1:1 with it; roll 5: A1/R1
-    let outcome = game.execute(battle("4010", &[SOVIET])).unwrap();
+    let outcome = attack(&mut game, battle("4010", &[SOVIET])).unwrap();
     assert_eq!(report(&outcome).result.unwrap().code, "A1/R1");
     assert!(!outcome
         .events

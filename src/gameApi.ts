@@ -334,6 +334,8 @@ export interface BattleReport {
   result: CombatResult | null;
   counterattacks: CounterattackRoll[];
   supportingHqId: string | null;
+  /** Unit the Defender Reacted into the Objective hex, if any. */
+  reactingUnitId: string | null;
 }
 
 export interface PendingAdvance {
@@ -341,6 +343,39 @@ export interface PendingAdvance {
   hexId: string;
   eligibleUnitIds: string[];
   conquersFreeCity: boolean;
+}
+
+/** A committed attack waiting for the Defender's Reaction decision. */
+export interface PendingReaction {
+  hexId: string;
+  /** Defending side, which decides. */
+  sideId: string;
+  attackingUnitIds: string[];
+  supportingHqId: string | null;
+  /** Adjacent defending units that may React into the hex. */
+  eligibleUnitIds: string[];
+  /** Adjacent defending units that may not React, and why. */
+  blockedUnits: BlockedReaction[];
+}
+
+/** Why an adjacent defending unit may not React. */
+export type ReactionBlock =
+  | "mountainObjective"
+  | "emptyObjective"
+  | "notManeuver"
+  | "disrupted"
+  | "outOfSupply"
+  | "entrained"
+  | "engaged"
+  | "hexside"
+  | "enemyZoc"
+  | "aloneInEnemyZoc"
+  | "nationality"
+  | "stacking";
+
+export interface BlockedReaction {
+  unitId: string;
+  reason: ReactionBlock;
 }
 
 export interface CombatState {
@@ -351,6 +386,7 @@ export interface CombatState {
   engagedUnitIds: string[];
   supportingHqIds: string[];
   pendingAdvance: PendingAdvance | null;
+  pendingReaction: PendingReaction | null;
 }
 
 export interface CombatObjective {
@@ -493,6 +529,7 @@ export type GameCommand =
   | { type: "resolveAirStrikes" }
   | { type: "resolveArtilleryStrike"; artilleryUnitId: string; hexId: string; unitIds: string[] }
   | { type: "resolveBattle"; hexId: string; unitIds: string[]; supportingHqId: string | null }
+  | { type: "reactToBattle"; unitId: string | null }
   | { type: "advanceAfterCombat"; unitIds: string[] };
 
 export type GameEvent =
@@ -535,6 +572,8 @@ export type GameEvent =
   | { type: "breakthroughMarkerPlaced"; sideId: string; hexId: string }
   | { type: "breakthroughMarkersRemoved"; sideId: string; hexIds: string[] }
   | { type: "unitWithdrawn"; gameTurn: number; unitId: string }
+  | { type: "reactionOffered"; pending: PendingReaction }
+  | { type: "unitReacted"; sideId: string; unitId: string; from: string; to: string }
   | { type: "battleResolved"; sideId: string; report: BattleReport }
   | { type: "unitRetreated"; unitId: string; from: string; path: string[] }
   | { type: "advanceOffered"; pending: PendingAdvance }
@@ -637,5 +676,11 @@ export async function fetchCombatOptions(): Promise<CombatOptionsResponse> {
 /** Read-only odds for a proposed attack. */
 export async function fetchBattlePreview(hexId: string, unitIds: string[], supportingHqId: string | null): Promise<BattlePreviewResponse> {
   const { revision, result } = await rulesQuery<BattleOdds>("battlePreview", { hexId, unitIds, supportingHqId });
+  return { revision, odds: result };
+}
+
+/** Read-only odds of the battle awaiting Reaction if `unitId` Reacts (or none does). */
+export async function fetchReactionPreview(unitId: string | null): Promise<BattlePreviewResponse> {
+  const { revision, result } = await rulesQuery<BattleOdds>("reactionPreview", { unitId });
   return { revision, odds: result };
 }

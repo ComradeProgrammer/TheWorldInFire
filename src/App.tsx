@@ -433,11 +433,14 @@ function App({ game }: { game: NewGameResponse }) {
     };
   }, [combatPhase, revision]);
 
-  // The Battle Planner stays open while an advance decision is pending.
+  // The Battle Planner stays open while the Defender's Reaction or the
+  // Attacker's advance decision is pending.
   useEffect(() => {
     if (!combatPhase) setBattleHexId(null);
   }, [combatPhase]);
-  const plannerHexId = combatPhase && snapshot?.combat ? (snapshot.combat.pendingAdvance?.hexId ?? battleHexId) : null;
+  const plannerHexId = combatPhase && snapshot?.combat
+    ? (snapshot.combat.pendingReaction?.hexId ?? snapshot.combat.pendingAdvance?.hexId ?? battleHexId)
+    : null;
 
   const combat = useMemo<CombatContext | null>(() => {
     if (!combatPhase || !snapshot?.combat) return null;

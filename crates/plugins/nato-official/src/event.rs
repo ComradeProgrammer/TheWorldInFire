@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::{
     AirBaseId, AirCombatPairing, AirMission, AirPoints, AirSortie, AirUnitId, AirUnitState,
-    BattleReport, Disruption, HexId, MovementMode, PendingAdvance, PhaseDefinition,
-    PlannedMovement, SideId, StrikeResolution, TrainStatus, UnitId, UnitLocation, UnitState,
-    UnitSupplyState,
+    BattleReport, Disruption, HexId, MovementMode, PendingAdvance, PendingReaction,
+    PhaseDefinition, PlannedMovement, SideId, StrikeResolution, TrainStatus, UnitId, UnitLocation,
+    UnitState, UnitSupplyState,
 };
 
 /// Supply result recorded for one unit during automatic pre-battle resolution.
@@ -314,6 +314,22 @@ pub enum GameEvent {
         game_turn: u16,
         /// Unit removed.
         unit_id: UnitId,
+    },
+    /// An attack was committed and the Defender may React before it is fought (25.1.2).
+    ReactionOffered {
+        /// Reaction decision now pending.
+        pending: PendingReaction,
+    },
+    /// A defending unit Reacted into the Objective hex (25.1.2).
+    UnitReacted {
+        /// Defending side.
+        side_id: SideId,
+        /// Unit that Reacted.
+        unit_id: UnitId,
+        /// Hex it left.
+        from: HexId,
+        /// Objective hex it entered.
+        to: HexId,
     },
     /// A battle was fought (25.1); consequences follow as separate events.
     BattleResolved {

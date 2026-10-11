@@ -400,8 +400,10 @@ function AttackAction({ hexId, combat, busy, onOpen }: {
   const objective = combat.objectives.get(hexId);
   const report = combat.state.battles.find((battle) => battle.hexId === hexId);
   const pending = combat.state.pendingAdvance;
+  const reaction = combat.state.pendingReaction;
   let reason: string | null = null;
   if (!combat.ready) reason = "Checking attack options…";
+  else if (reaction) reason = `The defender must decide on Reaction at ${reaction.hexId} first.`;
   else if (pending) reason = `Decide the advance into ${pending.hexId} first.`;
   else if (report) reason = "This hex has already been attacked this phase.";
   else if (!objective) reason = "None of your units can attack this hex now.";

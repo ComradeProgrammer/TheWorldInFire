@@ -1,6 +1,6 @@
 # Combat
 
-In the Combat Phase, the acting side attacks enemy-held hexes with adjacent Maneuver units. Each attack targets one **Objective hex** and is resolved as one battle. The attacker makes every decision; the defender's responses follow the fixed rules below.
+In the Combat Phase, the acting side attacks enemy-held hexes with adjacent Maneuver units. Each attack targets one **Objective hex** and is resolved as one battle. Once an attack is committed, the defender may **React** one adjacent unit into the hex (see [Reaction](#reaction)); every other defender response follows the fixed rules below.
 
 ## Choosing an Objective
 
@@ -31,6 +31,27 @@ When committing an attack, the attacker may add **Offensive Support** from one e
 - must reach at least one committed unit of its own formations within its Support Range. The path may not pass through enemy units, enemy-controlled cities, enemy-ZOC hexes without a friendly unit, or all-sea hexes or hexsides, and may not cross Blocked hexsides (the Danish Ferry is allowed). Count the HQ's hex but not the unit's.
 
 A battle may receive support from only one HQ. The HQ itself does not take part in the battle and is never affected by its results.
+
+## Reaction
+
+Committing an attack is final: the attacker cannot add or withdraw units or Offensive Support afterwards. Before the battle is fought, the defender may move **one** of its Maneuver units from an adjacent hex into the Objective hex. The reacting unit then defends with the units already there and shares all their results.
+
+A unit may React only if it:
+
+- is a Maneuver unit (not an HQ or artillery division) and is not under a train marker;
+- is not Disrupted and is in Movement and Combat Supply;
+- has not already defended in a battle this phase;
+- would not cross a Major River, Causeway, Blocked, or All-Sea hexside, or the Danish Ferry;
+- keeps the Objective hex within the stacking limit.
+
+In addition:
+
+- No unit may React into a Mountain hex, or into an empty Breakthrough Marker hex.
+- An enemy-occupied hex can be reinforced only while friendly units hold it, or while it is a friendly Free City defended by its Organic Defense alone.
+- A **Warsaw Pact** unit may never React out of an enemy zone of control.
+- A **NATO** unit may React out of an enemy zone of control only if another NATO Maneuver unit stays in the hex it leaves. A NATO unit may React only into a hex whose units are all of its own nationality.
+
+The defender is asked after every attack on a defended hex, and is shown why each adjacent unit that cannot React is barred. It may also decline and fight with the units already in the hex; when no unit is able to React, it simply continues to the battle. Because units that have already defended cannot React, the order of the attacker's battles matters.
 
 ## Odds
 

@@ -316,14 +316,20 @@ impl Rules {
         }
     }
 
-    /// The decision players must make next: the Attacker's advance (25.8).
+    /// The decision players must make next: the Defender's Reaction (25.1.2)
+    /// or the Attacker's advance (25.8).
     fn pending_decision(&self) -> Option<PendingDecision> {
-        self.combat
-            .as_ref()
-            .and_then(|combat| combat.pending_advance.as_ref())
-            .map(|_| PendingDecision {
-                kind: "advanceAfterCombat".to_owned(),
-            })
+        let combat = self.combat.as_ref()?;
+        let kind = if combat.pending_reaction.is_some() {
+            "defenderReaction"
+        } else if combat.pending_advance.is_some() {
+            "advanceAfterCombat"
+        } else {
+            return None;
+        };
+        Some(PendingDecision {
+            kind: kind.to_owned(),
+        })
     }
 
     /// Changes since the baseline; the current mirror becomes the new baseline.
@@ -481,6 +487,7 @@ impl Rules {
                 unit_ids,
                 supporting_hq_id,
             } => self.resolve_battle(hex_id, unit_ids, supporting_hq_id),
+            GameCommand::ReactToBattle { unit_id } => self.react_to_battle(unit_id),
             GameCommand::AdvanceAfterCombat { unit_ids } => self.advance_after_combat(unit_ids),
             GameCommand::DebugCheckSupply { side_id } => {
                 let mut events = Vec::new();

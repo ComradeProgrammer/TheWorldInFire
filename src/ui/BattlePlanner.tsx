@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   fetchBattlePreview,
+  fetchReactionPreview,
   ODDS_COLUMNS,
   type BattleOdds,
   type BattleReport,
@@ -10,6 +11,7 @@ import {
   type GameCommand,
   type KnownShiftReason,
   type KnownStrengthModifier,
+  type ReactionBlock,
   type StrengthModifier,
   type UnitState,
   type UnitStrength,
@@ -30,6 +32,22 @@ const MODIFIER_LABELS: Record<KnownStrengthModifier, string> = {
   softUnitCover: "Soft unit in cover ×2",
   fortifiedHex: "Soft unit fortified ×2",
   provisionalDefense: "HQ provisional",
+};
+
+/** Why an adjacent defending unit may not React, as shown beside it. */
+const BLOCK_LABELS: Record<ReactionBlock, string> = {
+  mountainObjective: "Cannot React into a Mountain hex",
+  emptyObjective: "Hex has no defenders to join",
+  notManeuver: "Not a Maneuver unit",
+  disrupted: "Disrupted",
+  outOfSupply: "Out of supply",
+  entrained: "Under a train marker",
+  engaged: "Already defended this phase",
+  hexside: "Blocked by the hexside",
+  enemyZoc: "In an enemy ZOC (WP cannot React)",
+  aloneInEnemyZoc: "Alone in an enemy ZOC",
+  nationality: "Different nationality from the defenders",
+  stacking: "Would exceed the stacking limit",
 };
 
 const SHIFT_LABELS: Record<KnownShiftReason, string> = {
@@ -100,13 +118,17 @@ const polyline = (points: number[]) => `M${points.slice(0, 2).join(",")}L${point
  * The Objective hex and its six neighbours, drawn like the main map (terrain,
  * water, city outlines, rivers) with every unit in them as its counter.
  */
-function BattleMiniMap({ map, centerId, units, attackerSideId, activeIds }: {
+function BattleMiniMap({ map, centerId, units, attackerSideId, activeIds, dimmedIds, reactionFrom }: {
   map: MapData;
   centerId: string;
   units: UnitState[];
   attackerSideId: string;
   /** Attackers currently committed; other attackers draw dimmed. */
   activeIds: ReadonlySet<string>;
+  /** Other units to draw dimmed, such as Reaction candidates not chosen. */
+  dimmedIds?: ReadonlySet<string>;
+  /** Hex the chosen Reaction unit moves from, drawn as an arrow into the centre. */
+  reactionFrom?: string | null;
 }) {
   const grid = useMemo(() => new HexGrid(map.grid), [map.grid]);
   const cluster = useMemo(() => {
@@ -208,6 +230,7 @@ function BattleMiniMap({ map, centerId, units, attackerSideId, activeIds }: {
         strokeWidth={hw * 0.07}
         strokeLinejoin="round"
       />
+      {reactionFrom && <ReactionArrow grid={grid} from={cluster.find((hex) => hex.id === reactionFrom)} to={center} />}
       {cluster.map((hex) => {
         const { x, y } = grid.center(hex.row, hex.col);
         const here = units.filter((unit) => hexOf(unit) === hex.id);
@@ -220,7 +243,7 @@ function BattleMiniMap({ map, centerId, units, attackerSideId, activeIds }: {
           const row = Math.floor(index / columns);
           const inRow = Math.min(columns, here.length - row * columns);
           const left = x - (inRow * size + (inRow - 1) * gap) / 2 + (index % columns) * (size + gap);
-          const dim = unit.sideId === attackerSideId && !activeIds.has(unit.id);
+          const dim = (unit.sideId === attackerSideId && !activeIds.has(unit.id)) || Boolean(dimmedIds?.has(unit.id));
           return (
             <g key={unit.id} data-chip={unit.id} opacity={dim ? 0.45 : 1}>
               <UnitCounterIcon unit={unit} size={size} x={left} y={top + row * (size + gap)} />
@@ -229,6 +252,27 @@ function BattleMiniMap({ map, centerId, units, attackerSideId, activeIds }: {
         });
       })}
     </svg>
+  );
+}
+
+/** Arrow from a Reaction unit's hex towards the Objective hex, stopping at its edge. */
+function ReactionArrow({ grid, from, to }: { grid: HexGrid; from: HexData | undefined; to: HexData }) {
+  if (!from) return null;
+  const a = grid.center(from.row, from.col);
+  const b = grid.center(to.row, to.col);
+  const [dx, dy] = [b.x - a.x, b.y - a.y];
+  const length = Math.hypot(dx, dy) || 1;
+  const [ux, uy] = [dx / length, dy / length];
+  const hw = grid.halfWidth;
+  const start = { x: a.x + ux * hw * 0.55, y: a.y + uy * hw * 0.55 };
+  const tip = { x: b.x - ux * hw * 0.7, y: b.y - uy * hw * 0.7 };
+  const head = hw * 0.22;
+  const wing = (sign: number) => `${tip.x - ux * head + sign * uy * head * 0.6},${tip.y - uy * head - sign * ux * head * 0.6}`;
+  return (
+    <g className="reaction-arrow">
+      <line x1={start.x} y1={start.y} x2={tip.x - ux * head * 0.5} y2={tip.y - uy * head * 0.5} strokeWidth={hw * 0.08} />
+      <polygon points={`${tip.x},${tip.y} ${wing(1)} ${wing(-1)}`} />
+    </g>
   );
 }
 
@@ -308,6 +352,7 @@ function ResultSummary({ report, nameOf }: { report: BattleReport; nameOf(id: st
         {report.odds?.finalOdds} · rolled <b>{report.dieRoll}</b> → <strong>{report.result.code}</strong>
       </p>
       {report.supportingHqId && <p className="support-note">Offensive Support: {nameOf(report.supportingHqId)}</p>}
+      {report.reactingUnitId && <p className="support-note">Reaction: {nameOf(report.reactingUnitId)}</p>}
       {report.counterattacks.map((roll, index) => (
         <p key={index} className="counterattack">
           Counterattack on {nameOf(roll.targetUnitId)}: {roll.dieRoll} → {roll.disrupted ? "Disrupted" : "no effect"}
@@ -383,13 +428,16 @@ export interface BattlePlannerProps {
 /**
  * Combat Phase dialog for one Objective hex: defenders on the left, attackers
  * on the right, and the hex with its neighbours in between. The core computes
- * the odds and validates the order; this only collects the attacker's choices.
+ * the odds and validates the order; this only collects the players' choices:
+ * the attacker's commitment, then the defender's Reaction, then the
+ * attacker's advance.
  */
 export function BattlePlanner(props: BattlePlannerProps) {
   const { map, hexId, units, roster, combat, objective, revision, busy, onCommand, onClose } = props;
   const hex = map.hexes.find((candidate) => candidate.id === hexId);
   const report = combat.battles.find((battle) => battle.hexId === hexId);
   const pending = combat.pendingAdvance?.hexId === hexId ? combat.pendingAdvance : null;
+  const reaction = combat.pendingReaction?.hexId === hexId ? combat.pendingReaction : null;
   const nameOf = useCallback((id: string) => roster.get(id)?.name ?? id, [roster]);
   const unitById = useMemo(() => new Map(units.map((unit) => [unit.id, unit])), [units]);
 
@@ -400,16 +448,20 @@ export function BattlePlanner(props: BattlePlannerProps) {
   const pendingKey = pending?.eligibleUnitIds.join(",") ?? "";
   useEffect(() => setAdvancing(pendingKey ? pendingKey.split(",") : []), [pendingKey]);
   const toggle = (list: string[], id: string) => (list.includes(id) ? list.filter((entry) => entry !== id) : [...list, id]);
+  // At most one unit may React; none is chosen until the defender picks one.
+  const [reactor, setReactor] = useState<string | null>(null);
 
-  // Odds come from the core for exactly the ticked units.
+  // Odds come from the core for exactly the ticked units, or for the
+  // committed attack with the chosen Reaction.
   const [odds, setOdds] = useState<BattleOdds | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   useEffect(() => {
     setOdds(null);
     setPreviewError(null);
-    if (report || !objective || objective.breakthroughOnly || chosen.length === 0) return;
+    if (report) return;
+    if (!reaction && (!objective || objective.breakthroughOnly || chosen.length === 0)) return;
     let active = true;
-    fetchBattlePreview(hexId, chosen, supportHq).then(
+    (reaction ? fetchReactionPreview(reactor) : fetchBattlePreview(hexId, chosen, supportHq)).then(
       (response) => {
         if (active && response.revision === revision) setOdds(response.odds);
       },
@@ -420,10 +472,10 @@ export function BattlePlanner(props: BattlePlannerProps) {
     return () => {
       active = false;
     };
-  }, [chosen, hexId, objective, report, revision, supportHq]);
+  }, [chosen, hexId, objective, reaction, reactor, report, revision, supportHq]);
 
-  // An advance decision must be made before the dialog can close.
-  const closable = !pending;
+  // A Reaction or advance decision must be made before the dialog can close.
+  const closable = !pending && !reaction;
   useEffect(() => {
     if (!closable) return;
     const onKey = (event: KeyboardEvent) => {
@@ -437,9 +489,82 @@ export function BattlePlanner(props: BattlePlannerProps) {
   const defenderRows: ForceRowProps[] = [];
   const attackerRows: ForceRowProps[] = [];
   const supportRows: ForceRowProps[] = [];
+  const reactionRows: ForceRowProps[] = [];
   const activeAttackers = new Set<string>();
+  const idleReactors = new Set<string>();
 
-  if (!report) {
+  if (reaction) {
+    // The attack is committed: the attackers are fixed and the defender may
+    // move one adjacent unit into the hex.
+    for (const unit of units) {
+      if (hexOf(unit) !== hexId || unit.sideId === combat.sideId) continue;
+      const entry = odds?.defenders.find((candidate) => candidate.unitId === unit.id);
+      defenderRows.push({
+        unitId: unit.id,
+        name: unit.name,
+        sideId: unit.sideId,
+        anchor: "right",
+        active: true,
+        detail: odds && !entry ? "Adds no Defense Strength" : strengthDetail(entry, null),
+        value: entry ? strength(entry.adjusted64ths) : odds ? "0" : String(unit.steps[unit.strengthStepIndex]?.defense ?? "—"),
+      });
+    }
+    for (const id of reaction.eligibleUnitIds) {
+      const unit = unitById.get(id);
+      const checked = reactor === id;
+      if (!checked) idleReactors.add(id);
+      const entry = checked ? odds?.defenders.find((candidate) => candidate.unitId === id) : undefined;
+      reactionRows.push({
+        unitId: id,
+        name: nameOf(id),
+        sideId: reaction.sideId,
+        anchor: "right",
+        active: checked,
+        detail: strengthDetail(entry, hexOf(unit) ? `from ${hexOf(unit)}` : null),
+        value: entry ? strength(entry.adjusted64ths) : String(unit?.steps[unit.strengthStepIndex]?.defense ?? "—"),
+        checkbox: { checked, disabled: busy, onChange: () => setReactor((current) => (current === id ? null : id)) },
+      });
+    }
+    for (const { unitId: id, reason } of reaction.blockedUnits ?? []) {
+      const unit = unitById.get(id);
+      idleReactors.add(id);
+      reactionRows.push({
+        unitId: id,
+        name: nameOf(id),
+        sideId: reaction.sideId,
+        anchor: "right",
+        active: false,
+        detail: [hexOf(unit) ? `from ${hexOf(unit)}` : null, BLOCK_LABELS[reason] ?? reason].filter(Boolean).join(" · "),
+        value: "—",
+        checkbox: { checked: false, disabled: true, onChange: () => {} },
+      });
+    }
+    for (const id of reaction.attackingUnitIds) {
+      const unit = unitById.get(id);
+      activeAttackers.add(id);
+      const entry = odds?.attackers.find((candidate) => candidate.unitId === id);
+      attackerRows.push({
+        unitId: id,
+        name: nameOf(id),
+        sideId: combat.sideId,
+        anchor: "left",
+        active: true,
+        detail: strengthDetail(entry, hexOf(unit)),
+        value: entry ? strength(entry.adjusted64ths) : String(unit?.steps[unit.strengthStepIndex]?.attack ?? "—"),
+      });
+    }
+    if (reaction.supportingHqId) {
+      supportRows.push({
+        unitId: reaction.supportingHqId,
+        name: nameOf(reaction.supportingHqId),
+        sideId: combat.sideId,
+        anchor: "left",
+        active: true,
+        detail: hexOf(unitById.get(reaction.supportingHqId)) ?? "",
+        value: "+1",
+      });
+    }
+  } else if (!report) {
     const eligible = objective?.eligibleUnitIds ?? [];
     for (const unit of units) {
       if (hexOf(unit) !== hexId || unit.sideId === combat.sideId) continue;
@@ -556,7 +681,24 @@ export function BattlePlanner(props: BattlePlannerProps) {
   const attackTotal = odds ? odds.totalAttack : report?.odds?.totalAttack;
 
   let footer;
-  if (pending) {
+  if (reaction && reaction.eligibleUnitIds.length === 0) {
+    footer = (
+      <button type="button" className="battle-primary" disabled={busy} onClick={() => onCommand({ type: "reactToBattle", unitId: null })}>
+        Continue to battle
+      </button>
+    );
+  } else if (reaction) {
+    footer = (
+      <>
+        <button type="button" className="battle-secondary" disabled={busy} onClick={() => onCommand({ type: "reactToBattle", unitId: null })}>
+          Hold without Reaction
+        </button>
+        <button type="button" className="battle-primary" disabled={busy || !reactor} onClick={() => onCommand({ type: "reactToBattle", unitId: reactor })}>
+          {reactor ? `React with ${nameOf(reactor)}` : "React"}
+        </button>
+      </>
+    );
+  } else if (pending) {
     footer = (
       <>
         <button type="button" className="battle-secondary" disabled={busy} onClick={() => onCommand({ type: "advanceAfterCombat", unitIds: [] })}>
@@ -586,7 +728,11 @@ export function BattlePlanner(props: BattlePlannerProps) {
   }
 
   let centerNote: string | null = null;
-  if (!report) {
+  if (reaction) {
+    centerNote = reaction.eligibleUnitIds.length > 0
+      ? `${sideName(combat.sideId)} has committed this attack. ${sideName(reaction.sideId)} may move one adjacent unit into the hex before the battle, or hold.`
+      : `${sideName(combat.sideId)} has committed this attack. No ${sideName(reaction.sideId)} unit can React${reaction.blockedUnits?.length ? " (reasons listed on the left)" : ""}.`;
+  } else if (!report) {
     if (!objective) centerNote = "Checking attack options…";
     else if (objective.breakthroughOnly) centerNote = "No defenders remain: the committed units advance into the Breakthrough hex.";
     else if (chosen.length === 0) centerNote = "Tick at least one attacking unit.";
@@ -598,7 +744,7 @@ export function BattlePlanner(props: BattlePlannerProps) {
   return (
     <div className="settings-backdrop battle-backdrop" role="presentation" onMouseDown={closable ? onClose : undefined}>
       <section
-        className="battle-dialog"
+        className={reaction ? `battle-dialog reaction side-${tone(reaction.sideId)}` : "battle-dialog"}
         role="dialog"
         aria-modal="true"
         aria-labelledby="battle-title"
@@ -606,8 +752,12 @@ export function BattlePlanner(props: BattlePlannerProps) {
       >
         <header className="battle-header">
           <div>
-            <span className="dialog-kicker">{sideName(combat.sideId)} attack · {terrain}</span>
-            <h2 id="battle-title">Battle Planner at {hexId}{place ? ` · ${place}` : ""}</h2>
+            <span className="dialog-kicker">
+              {reaction && `${sideName(reaction.sideId)} decides · `}{sideName(combat.sideId)} attack · {terrain}
+            </span>
+            <h2 id="battle-title">
+              {reaction ? "Defender Reaction" : "Battle Planner"} at {hexId}{place ? ` · ${place}` : ""}
+            </h2>
           </div>
           <div className="battle-tags">
             {objective?.mandatory && <span className="combat-tag mandatory">Must attack</span>}
@@ -628,11 +778,26 @@ export function BattlePlanner(props: BattlePlannerProps) {
                   <strong>{(odds ?? report?.odds)?.cityDefense}</strong>
                 </div>
               ) : null}
+              {reaction && (
+                <>
+                  <h4>Reaction (one adjacent unit)</h4>
+                  {reactionRows.map((row) => <ForceRow key={row.unitId} {...row} />)}
+                  {reactionRows.length === 0 && <p className="empty">No friendly units are adjacent.</p>}
+                </>
+              )}
             </div>
           </div>
 
           <div className="battle-center">
-            <BattleMiniMap map={map} centerId={hexId} units={units} attackerSideId={combat.sideId} activeIds={activeAttackers} />
+            <BattleMiniMap
+              map={map}
+              centerId={hexId}
+              units={units}
+              attackerSideId={combat.sideId}
+              activeIds={activeAttackers}
+              dimmedIds={idleReactors}
+              reactionFrom={reactor ? hexOf(unitById.get(reactor)) : null}
+            />
             {report && <ResultSummary report={report} nameOf={nameOf} />}
             {!report && odds && <OddsSummary odds={odds} />}
             {report?.odds && !pending && <OddsSummary odds={report.odds} />}

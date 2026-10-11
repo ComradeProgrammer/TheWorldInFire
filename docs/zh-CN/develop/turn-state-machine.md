@@ -158,9 +158,10 @@ jointStatus
 
 ### 战斗阶段
 
-`src/combat.rs` 实现简化的战斗阶段（25），只有进攻方作出选择。华约必须攻击所有仍能攻击的战斗标记目标（在此之前 `endPhase` 会以 `mandatoryAttacksRemaining` 拒绝）；北约可以攻击任何合格的格子。
+`src/combat.rs` 实现简化的战斗阶段（25），防守方唯一的选择是反应。华约必须攻击所有仍能攻击的战斗标记目标（在此之前 `endPhase` 会以 `mandatoryAttacksRemaining` 拒绝）；北约可以攻击任何合格的格子。
 
-- **命令：**`resolveBattle { hexId, unitIds, supportingHqId? }` 投入相邻机动单位（可选一个 HQ 的进攻支援）并立即结算战斗；`advanceAfterCombat { unitIds }` 让存活单位推进进入已清空的格子，空列表表示放弃推进。有待决定的推进时，快照的 `pendingDecision.kind` 为 `advanceAfterCombat`，不能开始其他战斗，`endPhase` 会放弃推进。
+- **命令：**`resolveBattle { hexId, unitIds, supportingHqId? }` 投入相邻机动单位（可选一个 HQ 的进攻支援），即投入步骤（25.1.1）。对有防守方的格子，总是记录 `combat.pendingReaction` 并发出 `reactionOffered`，即使没有单位能够反应，使防守方看到每一次进攻；只有仅推进的突破格才立即结算。`reactToBattle { unitId? }` 作答：给出单位 ID 则该单位移入目标格（`unitReacted`），`null` 表示放弃，两种情况都在同一条命令中结算战斗。`advanceAfterCombat { unitIds }` 让存活单位推进进入已清空的格子，空列表表示放弃推进。有待决定的推进时，快照的 `pendingDecision.kind` 为 `advanceAfterCombat`，不能开始其他战斗，`endPhase` 会放弃推进。
+- **反应**（25.1.2）：反应待决时，`pendingDecision.kind` 为 `defenderReaction`，`resolveBattle` 和 `endPhase` 会以 `reactionPending` 拒绝。`pendingReaction` 保存已投入的进攻单位与支援 HQ、防守方 `sideId`、`eligibleUnitIds` 以及 `blockedUnits`（其余每个相邻防守单位的 `{ unitId, reason }`，原因为阻止其反应的第一条规则：`mountainObjective`、`emptyObjective`、`notManeuver`、`disrupted`、`outOfSupply`、`entrained`、`engaged`、`hexside`、`enemyZoc`、`aloneInEnemyZoc`、`nationality` 或 `stacking`）；`reactToBattle` 会重新校验资格（`unitCannotReact`）。候选单位是相邻的防守方机动单位（非炮兵），未混乱、未缺乏移动或战斗补给、不在铁路标记下、未交战；不得跨越堤道、大河、阻断、全海格边或丹麦渡轮，且须符合堆叠上限。不能反应进入山地格，也不能进入不是敌方自由城市的空格（只有突破标记的目标不会询问）。华约单位永远不能从敌控格反应；北约单位在原格仍留有另一个北约机动单位时可以，且只能进入格中单位全部与其同国籍的格子。`reactionPreview { unitId? }` 查询返回加入该单位后待决战斗的 `BattleOdds`；若该单位离开后原格变空，还会从防守方占据格中去掉原格，因此侧翼攻击可能变为包围攻击。`BattleReport.reactingUnitId` 记录反应单位。尚未实现：华约同一方面军规则（25.1.2.4，需要协同）、北约自由城市国籍规则（25.1.2.3，地图没有城市国籍）、化学与核打击标记，以及山口格边（地图数据中没有）。
 - **战力**以六十四分之一为单位计算，保证小数精确。
   - 攻击：混乱 ½、缺乏战斗补给 ½、装甲攻击城市或山地 ½、小河 ¾、大河 ½。
   - 防御：混乱 ½、缺乏战斗补给 ½、软目标单位在掩护地形 ×2、自由城市固有防御，以及仅在没有机动单位防守时的 HQ 临时防御。
@@ -176,7 +177,7 @@ jointStatus
   - 撤退路线遵循 25.7.4 的优先级，“朝向己方后方”近似为离进攻方最远。
 - **结果**（25.6）：战力面损失、撤退（含敌控格和未完成格的损失）、混乱、交战标记、受堆叠限制的巩固推进、推进夺取城市，以及推进决定后放置突破标记。攻击只有突破标记的空格是只推进的战斗。
 
-尚未实现：武装直升机、防守方反应、北约防御性打击、扩张、强攻、协同（26）、华约多方面军反击限制、防守方自行选择损失与撤退及“决不后退”选项、联合战斗补给检查，以及真正的“朝向己方后方”撤退方向。
+尚未实现：武装直升机、北约防御性打击、扩张、强攻、协同（26）、华约多方面军反击限制、防守方自行选择损失与撤退及“决不后退”选项、联合战斗补给检查，以及真正的“朝向己方后方”撤退方向。
 
 ### 预备队与战后阶段
 
@@ -405,7 +406,7 @@ rules_query(battlePreview, { "hexId": "2415", "unitIds": ["..."], "supportingHqI
 { "type": "advanceAfterCombat", "unitIds": ["soviet.2gta.21motorRifleDivision"] }
 ```
 
-协议 12 在快照中新增 `combat`（战斗、已进攻的单位与格子、已交战单位、待决定的推进），并新增事件 `battleResolved`、`unitRetreated`、`advanceOffered` 和 `unitsAdvanced`。协议 13 加入进攻支援：战斗目标的 `supportHqIds`、战斗报告的 `supportingHqId`、`combat.supportingHqIds`，以及 `unitWithdrawn` 事件。协议 14 将单个 `resupplyTargetUnitId` 替换为 `resupplyTargetUnitIds`，并为再补给命令和事件增加 `selected` 字段。协议 15 加入预备队：`battlePlan.reserveUnitIds`、快照的 `reserve`、`setReserve` 命令，以及 `reserveStatusChanged` 和 `reserveMarkersRemoved` 事件。协议 16 新增 `unitSupplyChanged { unitId, supply }` 事件和地图城市标志 `enclave`。协议 17 新增移动方式 `paradrop` 和 `seaTransport`、`battlePlan.sealiftStepsUsed`，以及地图的 `reinforcementSectors`（`{ number, sideId, hexId }`）。协议 18 改为双方按阶段交替：单一的 `battlePlan` 改为每方一份的 `battlePlans`，`breakthroughMarkers` 的每一项改为 `{ sideId, hexId }`，突破标记事件增加 `sideId`。`src/gameApi.ts` 中的 `activeBattlePlan` 选出行动方当前回合的计划。
+协议 12 在快照中新增 `combat`（战斗、已进攻的单位与格子、已交战单位、待决定的推进），并新增事件 `battleResolved`、`unitRetreated`、`advanceOffered` 和 `unitsAdvanced`。协议 13 加入进攻支援：战斗目标的 `supportHqIds`、战斗报告的 `supportingHqId`、`combat.supportingHqIds`，以及 `unitWithdrawn` 事件。协议 14 将单个 `resupplyTargetUnitId` 替换为 `resupplyTargetUnitIds`，并为再补给命令和事件增加 `selected` 字段。协议 15 加入预备队：`battlePlan.reserveUnitIds`、快照的 `reserve`、`setReserve` 命令，以及 `reserveStatusChanged` 和 `reserveMarkersRemoved` 事件。协议 16 新增 `unitSupplyChanged { unitId, supply }` 事件和地图城市标志 `enclave`。协议 17 新增移动方式 `paradrop` 和 `seaTransport`、`battlePlan.sealiftStepsUsed`，以及地图的 `reinforcementSectors`（`{ number, sideId, hexId }`）。协议 18 改为双方按阶段交替：单一的 `battlePlan` 改为每方一份的 `battlePlans`，`breakthroughMarkers` 的每一项改为 `{ sideId, hexId }`，突破标记事件增加 `sideId`。协议 19 加入防守方反应：`combat.pendingReaction`、`BattleReport.reactingUnitId`、`reactToBattle` 命令、`reactionPreview` 查询、`defenderReaction` 待决定类型，以及 `reactionOffered` 和 `unitReacted` 事件。`src/gameApi.ts` 中的 `activeBattlePlan` 选出行动方当前回合的计划。
 
 预备队查询与命令：
 
@@ -463,7 +464,9 @@ rules_query(reserveOptions)  →  { "revision": 4, "result": [{ "unitId": "...",
 - 列表中的每个单位都有一条折线连到小地图上它的算子，位置按实际渲染布局测量，折线止于算子最近的边缘；未勾选的进攻单位显示为暗色虚线；
 - Attack（`resolveBattle`）和 Cancel 按钮。
 
-战斗结算后对话框保持打开，显示骰点、结果与反击，以及各单位的新状态（被消灭、撤退、混乱）。格子被清空时，右栏变为推进选择（推进或原地不动），在作出决定前对话框不能关闭；若存在待决定的推进，对话框会自动重新打开。
+核心要求反应时，同一对话框保持打开并变为“Defender Reaction at <格号>”，边框使用防守方颜色。右栏固定显示进攻单位和支援 HQ。左栏列出防守单位，并在“Reaction (one adjacent unit)”下为每个 `eligibleUnitIds` 单位提供复选框；勾选一个会取消其他勾选，从 `reactionPreview` 重新获取战斗比，并在小地图上画出从其所在格指向目标格的黄色箭头。每个 `blockedUnits` 单位列在其下方，变暗并带有禁用的复选框和原因。“React with <单位>”和“Hold without Reaction”提交 `reactToBattle`；没有单位能够反应时，只有一个“Continue to battle”按钮提交该命令；作出选择前对话框不能关闭，若存在待决的反应，对话框会自动重新打开。双方使用同一屏幕（热座），因此对话框标题注明作决定的一方。
+
+战斗结算后对话框保持打开，显示骰点、结果、反应与反击，以及各单位的新状态（被消灭、撤退、混乱）。格子被清空时，右栏变为推进选择（推进或原地不动），在作出决定前对话框不能关闭；若存在待决定的推进，对话框会自动重新打开。
 
 战斗后会自动选中目标格。仍有华约必须进攻的目标时，顶栏按钮显示“N Marked Attacks Left”并禁用。战斗计划面板列出各场战斗；战斗日志列出战斗比、骰点、反击、损失、撤退、推进与夺取的城市。客户端名册保留被消灭单位的名称。
 

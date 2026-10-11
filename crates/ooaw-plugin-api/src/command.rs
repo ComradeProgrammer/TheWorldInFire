@@ -172,7 +172,8 @@ pub enum GameCommand {
         /// Targeted enemy units, in step-loss priority order.
         unit_ids: Vec<UnitId>,
     },
-    /// Commits adjacent units against an objective and resolves the battle.
+    /// Commits adjacent units against an objective and resolves the battle,
+    /// unless the rules first ask the defender for a decision.
     ResolveBattle {
         /// Objective hex.
         hex_id: HexId,
@@ -181,6 +182,13 @@ pub enum GameCommand {
         /// Headquarters committing offensive support, if any.
         #[serde(default)]
         supporting_hq_id: Option<UnitId>,
+    },
+    /// The defender's answer to a committed attack: moves one adjacent unit
+    /// into the objective hex before the battle is fought, then resolves it.
+    ReactToBattle {
+        /// Unit that reacts; `None` declines and lets the battle proceed.
+        #[serde(default)]
+        unit_id: Option<UnitId>,
     },
     /// Advances surviving attackers into a cleared objective.
     AdvanceAfterCombat {

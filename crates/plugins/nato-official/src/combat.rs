@@ -1,11 +1,12 @@
-//! Combat Phase (rule 25), simplified so that only the Attacker makes choices.
+//! Combat Phase (rule 25), simplified so that the Defender makes only one choice.
 //!
 //! The Attacker picks each Objective hex, the committed units, and whether to
-//! advance. Decisions the rules give to the Defender are taken automatically:
-//! which defending steps are lost, retreat routes, Counterattack targets, and
-//! which attacking step absorbs an A1 result. Attack Helicopters, Reaction,
-//! NATO Defensive Strikes, Exploitation, Assaults, and Coordination are not
-//! implemented.
+//! advance. The Defender may then React one adjacent unit into the Objective
+//! hex before the battle is fought (25.1.2). Every other decision the rules give
+//! to the Defender is taken automatically: which defending steps are lost,
+//! retreat routes, Counterattack targets, and which attacking step absorbs an
+//! A1 result. Attack Helicopters, NATO Defensive Strikes, Exploitation,
+//! Assaults, and Coordination are not implemented.
 
 use std::cmp::Reverse;
 use std::collections::HashMap;
@@ -15,10 +16,11 @@ use crate::error::RuleError;
 use crate::event::GameEvent;
 use crate::filters::{self, ColumnShiftsInput, CombatResultInput, UnitStrengthInput};
 use crate::model::{
-    BattleOdds, BattleReport, CityKind, ColumnShift, ColumnShiftReason, CombatObjective,
-    CombatOptions, CombatResult, CombatState, CounterattackRoll, HexId, HexsideFeature, MapHex,
-    PendingAdvance, PhaseActor, SideId, StrengthModifier, SupplyStatus, Terrain, UnitId,
-    UnitLocation, UnitState, UnitStrength, ODDS_COLUMNS,
+    BattleOdds, BattleReport, BlockedReaction, CityKind, ColumnShift, ColumnShiftReason,
+    CombatObjective, CombatOptions, CombatResult, CombatState, CounterattackRoll, HexId,
+    HexsideFeature, MapHex, PendingAdvance, PendingReaction, PhaseActor, ReactionBlock, SideId,
+    StrengthModifier, SupplyStatus, Terrain, UnitId, UnitLocation, UnitState, UnitStrength,
+    ODDS_COLUMNS,
 };
 use crate::movement::MovementContext;
 use crate::rules::Rules;
@@ -104,6 +106,24 @@ fn is_armored(unit: &UnitState) -> bool {
 /// Checks whether a unit is a non-headquarters maneuver unit without the hard trait.
 fn is_soft_maneuver(unit: &UnitState) -> bool {
     !unit.is_hard() && !unit.is_headquarters() && !unit.has_trait("artillery")
+}
+
+/// Rejection while the Defender has not yet decided on Reaction.
+fn reaction_pending() -> RuleError {
+    RuleError::new(
+        "reactionPending",
+        "The Defender must decide on Reaction before play continues",
+    )
+}
+
+/// Rejection for a unit that may not React into the waiting battle.
+fn cannot_react() -> RuleError {
+    RuleError::new("unitCannotReact", "That unit cannot React into this battle")
+}
+
+/// Checks whether a unit is a Maneuver unit: neither an HQ nor Artillery.
+fn is_maneuver(unit: &UnitState) -> bool {
+    !unit.is_headquarters() && !unit.has_trait("artillery")
 }
 
 /// Checks whether a unit currently occupies the specified map hex.
@@ -272,11 +292,15 @@ impl Rules {
             engaged_unit_ids: Vec::new(),
             supporting_hq_ids: Vec::new(),
             pending_advance: None,
+            pending_reaction: None,
         });
     }
 
     /// 25.0: the Warsaw Pact must attack every Battle Marker hex it still can.
     pub(crate) fn check_combat_can_end(&self) -> Result<(), RuleError> {
+        if self.combat_state()?.pending_reaction.is_some() {
+            return Err(reaction_pending());
+        }
         let remaining = self.combat_options()?.mandatory_remaining;
         if remaining.is_empty() {
             Ok(())
@@ -420,9 +444,13 @@ impl Rules {
             self.validate_support(&side_id, hq_id, &attackers)?;
         }
         match self.objective_kind(&side_id, hex_id) {
-            Some(ObjectiveKind::Defended) => {
-                self.battle_odds(&side_id, hex_id, &attackers, supporting_hq_id.is_some())
-            }
+            Some(ObjectiveKind::Defended) => self.battle_odds(
+                &side_id,
+                hex_id,
+                &attackers,
+                supporting_hq_id.is_some(),
+                None,
+            ),
             _ => Err(RuleError::new(
                 "breakthroughAdvance",
                 "The hex holds only a Breakthrough Marker: attacking it is an advance with no odds",
@@ -430,9 +458,43 @@ impl Rules {
         }
     }
 
+    /// Odds of the battle awaiting the Defender's Reaction, as they would be if
+    /// `unit_id` Reacted into the Objective hex (or with no Reaction for `None`).
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`RuleError`] outside the Combat Phase, when no Reaction
+    /// decision is pending, or when the unit may not React into this battle.
+    pub fn reaction_preview(&self, unit_id: Option<&UnitId>) -> Result<BattleOdds, RuleError> {
+        let side_id = self.combat_side()?;
+        let pending = self.pending_reaction()?;
+        if let Some(id) = unit_id {
+            if !self
+                .reaction_candidates(&side_id, &pending.hex_id)
+                .contains(id)
+            {
+                return Err(cannot_react());
+            }
+        }
+        let attackers: Vec<&UnitState> = pending
+            .attacking_unit_ids
+            .iter()
+            .filter_map(|id| self.units.get(id))
+            .collect();
+        self.battle_odds(
+            &side_id,
+            &pending.hex_id,
+            &attackers,
+            pending.supporting_hq_id.is_some(),
+            unit_id,
+        )
+    }
+
     // ------------------------------------------------------------------ commands
 
-    /// Validates and resolves an attack, applying losses, retreats, support, and advance choices.
+    /// Commits an attack (25.1.1). The battle is fought at once unless the
+    /// Defender has a unit able to React, in which case it waits for
+    /// [`Self::react_to_battle`].
     pub(super) fn resolve_battle(
         &mut self,
         hex_id: HexId,
@@ -440,6 +502,9 @@ impl Rules {
         supporting_hq_id: Option<UnitId>,
     ) -> Result<Vec<GameEvent>, RuleError> {
         let side_id = self.combat_side()?;
+        if self.combat_state()?.pending_reaction.is_some() {
+            return Err(reaction_pending());
+        }
         if self.combat_state()?.pending_advance.is_some() {
             return Err(RuleError::new(
                 "advancePending",
@@ -473,7 +538,8 @@ impl Rules {
             .extend(supporting_hq_id.iter().cloned());
         let battle_id = combat.battles.len() as u32 + 1;
 
-        // 25.9.1: an empty Breakthrough hex is taken by advancing, with no roll.
+        // 25.9.1: an empty Breakthrough hex is taken by advancing, with no roll,
+        // and the Defender may not React into it (25.1.2.2).
         if kind == ObjectiveKind::BreakthroughOnly {
             let report = BattleReport {
                 id: battle_id,
@@ -484,18 +550,96 @@ impl Rules {
                 result: None,
                 counterattacks: Vec::new(),
                 supporting_hq_id: None,
+                reacting_unit_id: None,
             };
             self.record_battle(&side_id, report, &mut events);
             self.offer_advance(battle_id, &hex_id, &attackers, false, &mut events);
             return Ok(events);
         }
 
+        // 25.1.2: the Defender's Reaction Segment follows every commitment
+        // against a defended hex, even when no unit can React, so the Defender
+        // always sees the attack before it is fought. The commitment above
+        // stands whatever it decides (25.1.1).
+        let (eligible_unit_ids, blocked_units) = self.reaction_survey(&side_id, &hex_id);
+        let pending = PendingReaction {
+            hex_id,
+            side_id: self.opponent(&side_id),
+            attacking_unit_ids: attackers,
+            supporting_hq_id,
+            eligible_unit_ids,
+            blocked_units,
+        };
+        if let Some(combat) = self.combat.as_mut() {
+            combat.pending_reaction = Some(pending.clone());
+        }
+        events.push(GameEvent::ReactionOffered { pending });
+        Ok(events)
+    }
+
+    /// Applies the Defender's Reaction decision (25.1.2) and fights the waiting battle.
+    pub(super) fn react_to_battle(
+        &mut self,
+        unit_id: Option<UnitId>,
+    ) -> Result<Vec<GameEvent>, RuleError> {
+        let side_id = self.combat_side()?;
+        let pending = self.pending_reaction()?.clone();
+        let mut events = Vec::new();
+        if let Some(id) = &unit_id {
+            if !self
+                .reaction_candidates(&side_id, &pending.hex_id)
+                .contains(id)
+            {
+                return Err(cannot_react());
+            }
+            let unit = self.units.get_mut(id).expect("eligible units are in play");
+            let from = match &unit.location {
+                UnitLocation::Hex { hex_id } => hex_id.clone(),
+                UnitLocation::StrategicReserve => unreachable!("eligible units are on the map"),
+            };
+            unit.location = UnitLocation::Hex {
+                hex_id: pending.hex_id.clone(),
+            };
+            events.push(GameEvent::UnitReacted {
+                side_id: pending.side_id.clone(),
+                unit_id: id.clone(),
+                from,
+                to: pending.hex_id.clone(),
+            });
+        }
+        if let Some(combat) = self.combat.as_mut() {
+            combat.pending_reaction = None;
+        }
+        self.fight(
+            &side_id,
+            pending.hex_id,
+            pending.attacking_unit_ids,
+            pending.supporting_hq_id,
+            unit_id,
+            &mut events,
+        )?;
+        Ok(events)
+    }
+
+    /// Battle and Results Segments of a committed attack on a defended hex (25.1.5-25.1.7).
+    fn fight(
+        &mut self,
+        side_id: &SideId,
+        hex_id: HexId,
+        attackers: Vec<UnitId>,
+        supporting_hq_id: Option<UnitId>,
+        reacting_unit_id: Option<UnitId>,
+        events: &mut Vec<GameEvent>,
+    ) -> Result<(), RuleError> {
+        let side_id = side_id.clone();
+        let battle_id = self.combat_state()?.battles.len() as u32 + 1;
         let attacker_units: Vec<&UnitState> = attackers.iter().map(|id| &self.units[id]).collect();
         let odds = self.battle_odds(
             &side_id,
             &hex_id,
             &attacker_units,
             supporting_hq_id.is_some(),
+            None,
         )?;
         let die_roll = self.dice.d6();
         let result = self.combat_result(&side_id, &hex_id, odds.final_column, die_roll)?;
@@ -578,8 +722,9 @@ impl Rules {
             result: Some(result),
             counterattacks,
             supporting_hq_id,
+            reacting_unit_id,
         };
-        self.record_battle(&side_id, report, &mut events);
+        self.record_battle(&side_id, report, events);
         events.extend(consequences);
 
         // 25.8: the Attacker may advance when no defender remains and no enemy
@@ -595,11 +740,11 @@ impl Rules {
             .cloned()
             .collect();
         if cleared && !city_holds && !survivors.is_empty() {
-            self.offer_advance(battle_id, &hex_id, &survivors, enemy_free_city, &mut events);
+            self.offer_advance(battle_id, &hex_id, &survivors, enemy_free_city, events);
         } else if cleared && !city_holds {
-            self.place_breakthrough(&side_id, &hex_id, &mut events);
+            self.place_breakthrough(&side_id, &hex_id, events);
         }
-        Ok(events)
+        Ok(())
     }
 
     /// Validates the chosen surviving attackers and stacking before completing a pending advance.
@@ -1117,6 +1262,7 @@ impl Rules {
         hex_id: &HexId,
         attackers: &[&UnitState],
         offensive_support: bool,
+        reacting_unit_id: Option<&UnitId>,
     ) -> Result<BattleOdds, RuleError> {
         let hexes = &self.scenario.map.hexes;
         let hex = hexes
@@ -1124,15 +1270,22 @@ impl Rules {
             .find(|hex| hex.id == *hex_id)
             .expect("validated hex");
         let fortified = self.fortified_against(side_id, hex_id);
-        let defender_side = self
-            .scenario
-            .sides
-            .iter()
-            .find(|side| side.id != *side_id)
-            .map(|side| side.id.clone())
-            .expect("scenario has two sides");
+        let defender_side = self.opponent(side_id);
         // Seen from the Defender, "enemy" units and ZOCs are the Attacker's.
-        let context = MovementContext::new(self, &defender_side);
+        let mut context = MovementContext::new(self, &defender_side);
+        // A previewed Reaction empties the hex it leaves, which can turn a Flank
+        // Attack into a Concentric one.
+        let reactor = reacting_unit_id.and_then(|id| self.units.get(id));
+        if let Some(UnitLocation::Hex { hex_id: from }) = reactor.map(|unit| &unit.location) {
+            let company = self.units.values().any(|unit| {
+                Some(unit.id()) != reacting_unit_id
+                    && unit.definition.side_id == defender_side
+                    && in_hex(unit, from)
+            });
+            if !company {
+                context.friendly_occupied.remove(from.0.as_str());
+            }
+        }
 
         let mut attack_strengths = Vec::new();
         for unit in attackers {
@@ -1183,7 +1336,7 @@ impl Rules {
             .values()
             .filter(|unit| {
                 unit.definition.side_id != *side_id
-                    && in_hex(unit, hex_id)
+                    && (in_hex(unit, hex_id) || Some(unit.id()) == reacting_unit_id)
                     && unit.train_status.is_none()
                     && !engaged.contains(unit.id())
             })
@@ -1514,6 +1667,167 @@ impl Rules {
             && !context
                 .side_features(&from.0, &hex_id.0)
                 .contains(&HexsideFeature::DanishFerry)
+    }
+
+    /// Defending units that may React into the Objective hex now (25.1.2).
+    fn reaction_candidates(&self, attacker_side: &SideId, hex_id: &HexId) -> Vec<UnitId> {
+        self.reaction_survey(attacker_side, hex_id).0
+    }
+
+    /// Splits the Defender's units adjacent to the Objective hex into those
+    /// that may React (25.1.2) and those that may not, with the reason.
+    fn reaction_survey(
+        &self,
+        attacker_side: &SideId,
+        hex_id: &HexId,
+    ) -> (Vec<UnitId>, Vec<BlockedReaction>) {
+        let defender_side = self.opponent(attacker_side);
+        let context = MovementContext::new(self, &defender_side);
+        let occupants: Vec<&UnitState> = self
+            .units
+            .values()
+            .filter(|unit| unit.definition.side_id == defender_side && in_hex(unit, hex_id))
+            .collect();
+        // 25.1.2.1: no unit may React into a Mountain hex. 25.1.2.2-3: an empty
+        // hex may be reinforced only while it is a Free City.
+        let objective_block = if context
+            .hexes
+            .get(hex_id.0.as_str())
+            .is_some_and(|hex| hex.terrain == Terrain::Mountain)
+        {
+            Some(ReactionBlock::MountainObjective)
+        } else if occupants.is_empty() && !self.is_enemy_free_city(attacker_side, hex_id) {
+            Some(ReactionBlock::EmptyObjective)
+        } else {
+            None
+        };
+        let present_steps: u16 = occupants
+            .iter()
+            .filter(|unit| !unit.is_headquarters())
+            .map(|unit| unit.step_count())
+            .sum();
+        let limit = self.scenario.battle_planning_rules.maneuver_stacking_limit;
+        let engaged = self
+            .combat
+            .as_ref()
+            .map(|combat| combat.engaged_unit_ids.clone())
+            .unwrap_or_default();
+        let block = |unit: &UnitState, from: &HexId| -> Option<ReactionBlock> {
+            if let Some(reason) = objective_block {
+                return Some(reason);
+            }
+            // 25.1.2: an undisrupted Maneuver unit with no Out of Supply marker
+            // that has not been Engaged. Units under a train marker cannot
+            // fight (13.4.2).
+            if !is_maneuver(unit) {
+                return Some(ReactionBlock::NotManeuver);
+            }
+            if unit.disruption.is_some() {
+                return Some(ReactionBlock::Disrupted);
+            }
+            if unit.supply.movement == Some(SupplyStatus::OutOfSupply)
+                || unit.supply.combat == Some(SupplyStatus::OutOfSupply)
+            {
+                return Some(ReactionBlock::OutOfSupply);
+            }
+            if unit.train_status.is_some() {
+                return Some(ReactionBlock::Entrained);
+            }
+            if engaged.contains(unit.id()) {
+                return Some(ReactionBlock::Engaged);
+            }
+            // 25.1.2.1: not across a Causeway, Major River, Blocked, or All-Sea
+            // hexside, nor by the Danish Ferry.
+            let barred = context
+                .side_features(&from.0, &hex_id.0)
+                .iter()
+                .any(|feature| {
+                    matches!(
+                        feature,
+                        HexsideFeature::Causeway
+                            | HexsideFeature::MajorRiver
+                            | HexsideFeature::Blocked
+                            | HexsideFeature::AllSea
+                            | HexsideFeature::DanishFerry
+                    )
+                });
+            if barred {
+                return Some(ReactionBlock::Hexside);
+            }
+            // 25.1.2.4-5: a WP unit never Reacts out of an EZOC; a NATO unit
+            // may, unless it is the only Maneuver unit in its hex.
+            if context.in_enemy_zoc(&from.0) {
+                if defender_side.0 != "nato" {
+                    return Some(ReactionBlock::EnemyZoc);
+                }
+                let company = self.units.values().any(|other| {
+                    other.id() != unit.id()
+                        && other.definition.side_id == defender_side
+                        && in_hex(other, from)
+                        && is_maneuver(other)
+                });
+                if !company {
+                    return Some(ReactionBlock::AloneInEnemyZoc);
+                }
+            }
+            // 25.1.2.5: NATO Reacts only into a hex held by its own nationality.
+            if defender_side.0 == "nato"
+                && occupants
+                    .iter()
+                    .any(|other| other.definition.nation_id != unit.definition.nation_id)
+            {
+                return Some(ReactionBlock::Nationality);
+            }
+            // 9.1.1: the Reaction observes the stacking limit.
+            if present_steps + unit.step_count() > limit {
+                return Some(ReactionBlock::Stacking);
+            }
+            None
+        };
+        let mut eligible = Vec::new();
+        let mut blocked = Vec::new();
+        for unit in self.units.values() {
+            let UnitLocation::Hex { hex_id: from } = &unit.location else {
+                continue;
+            };
+            if unit.definition.side_id != defender_side
+                || from == hex_id
+                || !context.neighbors(&from.0).contains(&hex_id.0.as_str())
+            {
+                continue;
+            }
+            match block(unit, from) {
+                None => eligible.push(unit.id().clone()),
+                Some(reason) => blocked.push(BlockedReaction {
+                    unit_id: unit.id().clone(),
+                    reason,
+                }),
+            }
+        }
+        (eligible, blocked)
+    }
+
+    /// The side opposing `side_id`.
+    fn opponent(&self, side_id: &SideId) -> SideId {
+        self.scenario
+            .sides
+            .iter()
+            .find(|side| side.id != *side_id)
+            .map(|side| side.id.clone())
+            .expect("scenario has two sides")
+    }
+
+    /// Borrows the committed attack waiting for the Defender's Reaction decision.
+    fn pending_reaction(&self) -> Result<&PendingReaction, RuleError> {
+        self.combat_state()?
+            .pending_reaction
+            .as_ref()
+            .ok_or_else(|| {
+                RuleError::new(
+                    "noReactionPending",
+                    "No committed attack is waiting for the Defender's Reaction",
+                )
+            })
     }
 
     /// Checks the objective and distinct eligible attackers, requiring attack strength for defended hexes.
