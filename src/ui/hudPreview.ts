@@ -5,6 +5,10 @@
 export interface HudState {
   turn: number;
   lastTurn: number;
+  activeSide: {
+    label: string;
+    tone: "nato" | "pact" | "joint" | "neutral";
+  };
   /** Every step in the turn sequence, including automatic and opposing-side steps. */
   steps: PhaseStep[];
 }
@@ -19,5 +23,6 @@ export interface PhaseStep {
 export const PREVIEW_HUD: HudState = {
   turn: 1,
   lastTurn: 14,
+  activeSide: { label: "—", tone: "neutral" },
   steps: [],
 };

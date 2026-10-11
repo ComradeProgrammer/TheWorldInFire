@@ -33,11 +33,12 @@ import {
 import { BattlePlanner } from "./ui/BattlePlanner";
 import { BottomBar } from "./ui/BottomBar";
 import { describeCombatEvents, type CombatLogEntry } from "./ui/combatLog";
-import { PREVIEW_HUD } from "./ui/hudPreview";
+import { PREVIEW_HUD, type HudState } from "./ui/hudPreview";
 import { defaultMovementMode, type MovementPreviewStatus } from "./ui/movementModes";
 import { SettingsDialog } from "./ui/SettingsDialog";
 import { SidePanel, type CombatContext } from "./ui/SidePanel";
 import { TopBar } from "./ui/TopBar";
+import { sideName } from "./ui/unitFormat";
 import "./App.css";
 
 const PHASE_NAMES: Record<string, string> = {
@@ -188,6 +189,17 @@ function App({ game }: { game: NewGameResponse }) {
 
   const hud = useMemo(() => {
     if (!snapshot) return PREVIEW_HUD;
+    const actor = snapshot.turn.currentStep?.actor;
+    const activeSide: HudState["activeSide"] = snapshot.status === "completed"
+      ? { label: "Game complete", tone: "neutral" }
+      : actor?.type === "all"
+        ? { label: "Both sides", tone: "joint" }
+        : actor?.type === "side" && actor.sideId
+          ? {
+              label: sideName(actor.sideId),
+              tone: actor.sideId === "nato" ? "nato" : actor.sideId === "warsawPact" ? "pact" : "neutral",
+            }
+          : { label: "—", tone: "neutral" };
     const steps = turnSequence.flatMap((step, index) => {
       if (step.execution !== "interactive") return [];
       const side = step.actor.type === "all" ? "joint" : step.actor.sideId === "nato" ? "nato" : "pact";
@@ -202,6 +214,7 @@ function App({ game }: { game: NewGameResponse }) {
     return {
       turn: snapshot.turn.gameTurn,
       lastTurn: snapshot.scenario.maxGameTurns,
+      activeSide,
       steps,
     };
   }, [snapshot, turnSequence]);

@@ -12,6 +12,13 @@ export function TopBar({ hud }: TopBarProps) {
           Round {hud.turn}
           <span className="hud-dim"> / {hud.lastTurn}</span>
         </span>
+        <div
+          className={`active-side active-side-${hud.activeSide.tone}`}
+          aria-label={`Active side: ${hud.activeSide.label}`}
+        >
+          <span className="active-side-label">Active side</span>
+          <strong className="active-side-value">{hud.activeSide.label}</strong>
+        </div>
         <ol className="phase-steps">
           {hud.steps.map((step) => (
             <li

@@ -106,6 +106,53 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
+.active-side {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-width: 104px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel-2);
+  line-height: 1.1;
+}
+
+.active-side-label {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.active-side-value {
+  margin-top: 2px;
+  font-size: 13px;
+}
+
+.active-side-nato {
+  border-color: rgba(111, 163, 224, 0.72);
+  background: rgba(69, 128, 204, 0.2);
+  color: #a9d2ff;
+}
+
+.active-side-pact {
+  border-color: rgba(224, 106, 92, 0.72);
+  background: rgba(190, 70, 58, 0.2);
+  color: #ffaaa1;
+}
+
+.active-side-joint {
+  border-color: rgba(212, 169, 76, 0.72);
+  background: rgba(212, 169, 76, 0.14);
+  color: var(--accent);
+}
+
+.active-side-neutral {
+  color: var(--text);
+}
+
 .phase-steps {
   display: flex;
   flex: 1;
