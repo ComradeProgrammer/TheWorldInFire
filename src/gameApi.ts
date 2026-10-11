@@ -56,7 +56,7 @@ export interface GameSnapshot {
   reserve: ReserveState | null;
   /** Artillery divisions that have fired during the current game turn. */
   artilleryFiredUnitIds: string[];
-  /** NATO Fortified hexes that have not yet been Conquered. */
+  /** NATO Fortified hexes; they stay Fortified for the whole game. */
   fortifiedHexIds: string[];
   pendingDecision: { kind: string } | null;
 }
@@ -534,7 +534,6 @@ export type GameEvent =
   | { type: "unitEliminated"; unitId: string; hexId: string }
   | { type: "breakthroughMarkerPlaced"; sideId: string; hexId: string }
   | { type: "breakthroughMarkersRemoved"; sideId: string; hexIds: string[] }
-  | { type: "fortifiedHexesConquered"; hexIds: string[] }
   | { type: "unitWithdrawn"; gameTurn: number; unitId: string }
   | { type: "battleResolved"; sideId: string; report: BattleReport }
   | { type: "unitRetreated"; unitId: string; from: string; path: string[] }

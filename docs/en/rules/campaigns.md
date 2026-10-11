@@ -24,6 +24,6 @@ In Extended Buildup, NATO has fortified the inner-German border. Every West Germ
 - Retreats from a Fortified hex are reduced by one hex, or by two if the hex is Mountain or a Major or Key City. A retreating unit may also stop in a Fortified hex after one hex.
 - Fortification does not change movement costs.
 
-In each Joint Status Phase, every Fortified hex that holds a Warsaw Pact unit is Conquered and stops being Fortified for the rest of the game, even if NATO retakes it. Because the check comes only at the start of a turn, NATO always gets one turn to recapture a lost hex before it loses its Fortified status.
+Fortified hexes stay Fortified for the whole game, even after the Warsaw Pact occupies them. They protect only NATO units, so a Warsaw Pact unit in a Fortified hex gains nothing from it.
 
 West Berlin is a Major City, so being Fortified gives it no extra benefit.

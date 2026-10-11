@@ -66,7 +66,7 @@ export interface StrikeOverlay {
   missions: AirMission[];
   zones: AirInterdictionZone[];
   breakthroughs: string[];
-  /** NATO Fortified hexes that have not yet been Conquered. */
+  /** NATO Fortified hexes; they stay Fortified for the whole game. */
   fortified: string[];
 }
 

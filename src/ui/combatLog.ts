@@ -69,9 +69,6 @@ export function describeCombatEvents(
       case "breakthroughMarkersRemoved":
         lines.push({ tone: "info", text: `${sideLabel(event.sideId)} Breakthrough markers removed from ${event.hexIds.join(", ")}` });
         break;
-      case "fortifiedHexesConquered":
-        lines.push({ tone: "info", text: `Fortified hexes Conquered by the Warsaw Pact: ${event.hexIds.join(", ")}` });
-        break;
       case "airInterdictionZonesRemoved":
         lines.push({ tone: "info", text: `${sideLabel(event.sideId)} Air Interdiction Zones lifted (${event.hexIds.join(", ")})` });
         break;

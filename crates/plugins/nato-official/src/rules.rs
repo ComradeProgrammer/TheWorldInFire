@@ -54,7 +54,7 @@ pub struct RulesState {
     pub reserve: Option<ReserveState>,
     /// Artillery divisions that have fired during the current game turn.
     pub artillery_fired_unit_ids: Vec<UnitId>,
-    /// NATO Fortified hexes that have not yet been Conquered (38.4.3.4).
+    /// NATO Fortified hexes (38.4.3.4); permanent by house rule.
     pub fortified_hex_ids: Vec<HexId>,
 }
 
@@ -129,7 +129,7 @@ pub struct Rules {
     pub(super) reserve: Option<ReserveState>,
     /// Artillery divisions that have fired during the current game turn.
     pub(super) artillery_fired_units: Vec<UnitId>,
-    /// NATO Fortified hexes that have not yet been Conquered.
+    /// NATO Fortified hexes, which stay Fortified for the whole game.
     pub(super) fortified_hexes: Vec<HexId>,
     /// The kernel's seeded dice.
     pub(super) dice: Dice,

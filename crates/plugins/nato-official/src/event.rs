@@ -301,11 +301,6 @@ pub enum GameEvent {
         /// Hex.
         hex_id: HexId,
     },
-    /// Fortified hexes occupied by the Warsaw Pact lost their Fortified status.
-    FortifiedHexesConquered {
-        /// Hexes that are no longer Fortified.
-        hex_ids: Vec<HexId>,
-    },
     /// A side's Breakthrough Markers were removed at the end of its Reserve Phase.
     BreakthroughMarkersRemoved {
         /// Side whose markers were removed.

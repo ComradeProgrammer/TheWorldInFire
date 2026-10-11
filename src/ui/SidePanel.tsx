@@ -444,7 +444,7 @@ export interface SidePanelProps {
   strike: StrikeContext | null;
   /** Strike choices for the selected artillery division. */
   artillery: ArtilleryStrikeOptionsResponse | null;
-  /** NATO Fortified hexes that have not yet been Conquered. */
+  /** NATO Fortified hexes; they stay Fortified for the whole game. */
   fortifiedHexIds: string[];
   /** Named-aircraft command shown only while an airbase installation is selected. */
   air: AirOperationsContext | null;

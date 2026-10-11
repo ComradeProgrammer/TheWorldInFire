@@ -2999,26 +2999,17 @@ fn wp_strikes_into_a_fortified_hex_take_minus_two() {
     assert_eq!(target_modifier(&["4010"]), target_modifier(&[]) - 2);
 }
 
-/// Verifies a Fortified hex the WP occupies at a Joint Status Phase is Conquered for good.
+/// Verifies WP occupation never removes a hex's Fortified status (house rule).
 #[test]
-fn wp_occupation_conquers_a_fortified_hex_at_joint_status() {
+fn wp_occupation_does_not_remove_fortification() {
     let mut game = fortified_game(&[(SOVIET, "4009"), (GERMAN, "4010")], &["4009", "4010"]);
-    assert_eq!(game.snapshot().fortified_hex_ids.len(), 2);
-    let mut conquered = Vec::new();
-    loop {
-        let outcome = game.execute(GameCommand::EndPhase).unwrap();
-        for event in &outcome.events {
-            if let GameEvent::FortifiedHexesConquered { hex_ids } = event {
-                conquered.extend(hex_ids.clone());
-            }
-        }
-        if outcome.snapshot.turn.game_turn == 2 {
-            break;
-        }
+    // Play through the next turn's Joint Status Phase with a WP unit in 4009.
+    advance_to(&mut game, "warsawPact", "offensiveStrike");
+    while game.snapshot().turn.game_turn == 1 {
+        game.execute(GameCommand::EndPhase).unwrap();
     }
-    assert_eq!(conquered, vec![HexId("4009".to_owned())]);
     assert_eq!(
         game.snapshot().fortified_hex_ids,
-        vec![HexId("4010".to_owned())]
+        vec![HexId("4009".to_owned()), HexId("4010".to_owned())]
     );
 }
