@@ -82,10 +82,25 @@ pub enum StrikeResult {
     StepLoss,
 }
 
-/// Dice outcome of one resolved Air Strike.
+/// Air/Artillery Points column of the Strike Table.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StrikeColumn {
+    /// "0": a Suppressed artillery division's reduced Artillery Point (24.1.4).
+    #[serde(rename = "0")]
+    Zero,
+    /// "1": one Air Point or one full-strength Artillery Point.
+    #[default]
+    #[serde(rename = "1")]
+    One,
+}
+
+/// Dice outcome of one resolved Air or Artillery Strike.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StrikeResolution {
+    /// Strike Table column the roll was read on.
+    #[serde(default)]
+    pub column: StrikeColumn,
     /// Natural die roll, 1 to 6.
     pub die_roll: u8,
     /// Sum of the die roll modifiers applied.
@@ -252,6 +267,8 @@ pub struct ArtilleryStrikeTargetUnit {
     pub unit_id: UnitId,
     /// Steps counted against the strike's two-step limit.
     pub steps: u16,
+    /// Strike Table die roll modifier against this unit.
+    pub modifier: i8,
     /// Whether the unit is an HQ and therefore must be targeted alone.
     pub headquarters: bool,
 }
@@ -274,6 +291,8 @@ pub struct ArtilleryStrikeOptions {
     pub artillery_unit_id: UnitId,
     /// Why it cannot fire now, or `None` when it may fire.
     pub unavailable: Option<crate::error::RuleError>,
+    /// Strike Table column it fires on: "0" while Suppressed, otherwise "1".
+    pub column: StrikeColumn,
     /// Adjacent legal target hexes. Empty while unavailable.
     pub targets: Vec<ArtilleryStrikeTarget>,
 }

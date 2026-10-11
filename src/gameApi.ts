@@ -100,7 +100,11 @@ export interface AirPoints {
   bonusTactical: number;
 }
 
+/** Air/Artillery Points column of the Strike Table. */
+export type StrikeColumn = "0" | "1";
+
 export interface StrikeResolution {
+  column: StrikeColumn;
   dieRoll: number;
   modifier: number;
   modifiedRoll: number;
@@ -247,13 +251,15 @@ export interface StrikeTargetHex {
 
 export interface ArtilleryStrikeTarget {
   hexId: string;
-  units: { unitId: string; steps: number; headquarters: boolean }[];
+  units: { unitId: string; steps: number; modifier: number; headquarters: boolean }[];
 }
 
 export interface ArtilleryStrikeOptionsResponse {
   revision: number;
   artilleryUnitId: string;
   unavailable: RuleRejection | null;
+  /** "0" while the division is Suppressed, otherwise "1". */
+  column: StrikeColumn;
   targets: ArtilleryStrikeTarget[];
 }
 

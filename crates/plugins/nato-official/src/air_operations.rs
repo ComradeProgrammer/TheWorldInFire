@@ -9,10 +9,10 @@ use crate::model::{
     AirBaseId, AirCombatAttack, AirCombatPairing, AirCombatResult, AirGroundTarget,
     AirMissionAssignment, AirMissionOptions, AirOperationsReport, AirPlan, AirPlanningOptions,
     AirReadiness, AirSortie, AirSortieStatus, AirUnitId, AirUnitKind, AirUnitPlanningOption, HexId,
-    PhaseActor, SideId, StrikeResult, UnitId, UnitLocation,
+    PhaseActor, SideId, StrikeColumn, StrikeResult, UnitId, UnitLocation,
 };
 use crate::rules::Rules;
-use crate::strikes::strike_table;
+use crate::strikes::{strike_table, StrikeDelivery};
 
 const MAX_AIR_COMBAT_ROUNDS: u8 = 20;
 
@@ -779,7 +779,9 @@ impl Rules {
                         &side_id,
                         hex_id,
                         &surviving,
-                        strike_modifier,
+                        StrikeDelivery::Air {
+                            aircraft_modifier: strike_modifier,
+                        },
                         &mut consequences,
                     ) {
                         events.push(GameEvent::AirStrikeResolved {
@@ -827,7 +829,7 @@ impl Rules {
         let die_roll = self.dice.d6();
         let modifier = base.definition.strike_modifier + aircraft_modifier;
         let modified_roll = die_roll as i8 + modifier;
-        let result = strike_table(modified_roll);
+        let result = strike_table(StrikeColumn::One, modified_roll);
         events.push(GameEvent::AirStrikeResolved {
             side_id: side_id.clone(),
             air_unit_id: Some(air_unit_id.clone()),
@@ -835,6 +837,7 @@ impl Rules {
             hex_id: base.definition.anchor_hex_id,
             unit_ids: Vec::new(),
             resolution: crate::model::StrikeResolution {
+                column: StrikeColumn::One,
                 die_roll,
                 modifier,
                 modified_roll,

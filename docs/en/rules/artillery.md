@@ -14,26 +14,38 @@ To fire, choose:
 An artillery division cannot fire if it:
 
 - has already fired this game turn;
-- is Suppressed;
 - is Out of Combat Supply;
 - is under a train marker;
 - is not on the map.
 
 ## Resolution
 
-An Artillery Strike is resolved exactly like a fighter-bomber's ground strike (see [Air Power](air-power.md)): roll a d6, apply the same target modifiers (terrain or train marker, the striking side's Airspace over the target hex, and the Surprise-turn bonus), and read the same table:
+An Artillery Strike is resolved on the Strike Table, like a fighter-bomber's ground strike (see [Air Power](air-power.md)). Roll a d6 and apply the target modifiers:
 
-| Modified roll | Result |
-| --- | --- |
-| 1 or less | No effect |
-| 2–4 | Disrupt every target |
-| 5 or more | First target loses one step; disrupt the remaining targets |
+| Condition | Modifier |
+| --- | ---: |
+| Target in a Major or Key City | −2 |
+| Target in a Forest, Rough, Mountain, or Minor City hex | −1 |
+| Target under a train marker, replacing terrain | +1 |
+| Warsaw Pact strike during NATO's Surprise turn | +1 |
+
+Airspace does not modify Artillery Strikes; that modifier applies to air strikes only. When the targets would receive different modifiers, the lowest total applies.
+
+An artillery division fires on the **"1"** column. A Suppressed division still fires, but on the **"0"** column:
+
+| Modified roll | "0" column | "1" column |
+| --- | --- | --- |
+| 1 or less | No effect | No effect |
+| 2–3 | No effect | Disrupt every target |
+| 4 | Disrupt every target | Disrupt every target |
+| 5 | Disrupt every target | First target loses one step; disrupt the rest |
+| 6 or more | First target loses one step; disrupt the rest | First target loses one step; disrupt the rest |
 
 If the strike removes the last enemy unit from the hex, place a Breakthrough Marker there.
 
 ## Suppression
 
-When an artillery division would be Disrupted, by an enemy strike or by a battle, it is **Suppressed** instead. A Suppressed artillery division cannot fire, defends at half strength, and may move only one hex by Minimum movement. Suppressed markers are removed in their side's Post-Battle Phase.
+When an artillery division would be Disrupted, by an enemy strike or by a battle, it is **Suppressed** instead. A Suppressed artillery division fires on the "0" column, defends at half strength, and may move only one hex by Minimum movement. Suppressed markers are removed in their side's Post-Battle Phase.
 
 ## Defending
 

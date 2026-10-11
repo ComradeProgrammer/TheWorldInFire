@@ -91,6 +91,8 @@ Ground strikes use the existing NATO strike procedure. Roll a d6 for each fighte
 | 2–4 | Disrupt every target |
 | 5 or more | First target loses one step; disrupt the remaining targets |
 
+Each fighter-bomber strikes on the "1" column of the Strike Table shown above; the "0" column is used only by Suppressed artillery (see [Artillery](artillery.md)).
+
 If every named target has disappeared before resolution, record `targetGone`; do not reroll or select a new target.
 
 ### Airbase strikes

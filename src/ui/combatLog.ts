@@ -81,10 +81,10 @@ export function describeCombatEvents(
         break;
       }
       case "artilleryStrikeResolved": {
-        const { dieRoll, modifier, modifiedRoll, result } = event.resolution;
+        const { column, dieRoll, modifier, modifiedRoll, result } = event.resolution;
         lines.push({
           tone: "roll",
-          text: `${name(event.artilleryUnitId)} artillery strike on ${event.hexId} (${event.unitIds.map(name).join(", ")}): rolled ${dieRoll} ${signed(modifier)} = ${modifiedRoll} → ${RESULT_LABELS[result]}`,
+          text: `${name(event.artilleryUnitId)} artillery strike on ${event.hexId} (${event.unitIds.map(name).join(", ")}): rolled ${dieRoll} ${signed(modifier)} = ${modifiedRoll} on the "${column}" column → ${RESULT_LABELS[result]}`,
         });
         break;
       }

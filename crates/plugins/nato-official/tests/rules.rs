@@ -8,8 +8,8 @@ use ooaw_core::{Dice, GameId};
 use ooaw_nato::{
     air_combat_table, find_scenario, list_scenarios, AirCombatResult, AirMissionAssignment,
     AirUnitId, AirUnitKind, Airspace, Disruption, GameCommand, GameEvent, HexId, MovementMode,
-    PhaseActor, PhaseExecution, ScenarioDefinition, SideId, StrikeResult, SupplyStatus,
-    TrainStatus, UnitId, UnitLocation, UnitState, UnitTraitId,
+    PhaseActor, PhaseExecution, ScenarioDefinition, SideId, StrikeColumn, StrikeResult,
+    SupplyStatus, TrainStatus, UnitId, UnitLocation, UnitState, UnitTraitId,
 };
 
 /// Creates a fresh standard NATO scenario engine for unit tests.
@@ -1331,16 +1331,25 @@ fn dice_d20_rolling(roll: u8) -> Dice {
         .unwrap()
 }
 
-/// Verifies modified die rolls map to the one-point Strike Table results.
+/// Verifies modified die rolls map to the printed "0" and "1" Strike Table columns.
 #[test]
-fn strike_table_matches_the_one_point_column() {
-    use ooaw_nato::strike_table;
-    assert_eq!(strike_table(-1), StrikeResult::NoEffect);
-    assert_eq!(strike_table(1), StrikeResult::NoEffect);
-    assert_eq!(strike_table(2), StrikeResult::Disrupted);
-    assert_eq!(strike_table(4), StrikeResult::Disrupted);
-    assert_eq!(strike_table(5), StrikeResult::StepLoss);
-    assert_eq!(strike_table(8), StrikeResult::StepLoss);
+fn strike_table_matches_both_columns() {
+    use ooaw_nato::{strike_table, StrikeColumn};
+    let column = |column, rolls: std::ops::RangeInclusive<i8>| {
+        rolls
+            .map(|roll| strike_table(column, roll))
+            .collect::<Vec<_>>()
+    };
+    use StrikeResult::{Disrupted as D, NoEffect as N, StepLoss as L};
+    // Rows -1 through 8; 6+ reads the last row.
+    assert_eq!(
+        column(StrikeColumn::Zero, -1..=8),
+        [N, N, N, N, N, D, D, L, L, L]
+    );
+    assert_eq!(
+        column(StrikeColumn::One, -1..=8),
+        [N, N, N, D, D, D, L, L, L, L]
+    );
 }
 
 /// Verifies the boundary rows of the 1985 d20 Air Combat Table.
@@ -1668,6 +1677,85 @@ fn unsupplied_artillery_cannot_fire() {
         .code,
         "artilleryOutOfSupply"
     );
+}
+
+/// Verifies Suppressed artillery still fires, but on the "0" column of the Strike Table.
+#[test]
+fn suppressed_artillery_strikes_on_the_zero_column() {
+    let mut game = baltap_planning("warsawPact", &[(SOVIET, "4009"), (GERMAN, "4010")]);
+    mark_artillery(&mut game, SOVIET);
+    advance_to(&mut game, "warsawPact", "offensiveStrike");
+    game.edit_unit(&UnitId(SOVIET.to_owned()), |unit| {
+        unit.disruption = Some(Disruption::Suppressed);
+    });
+    let artillery = UnitId(SOVIET.to_owned());
+    let options = game.artillery_strike_options(&artillery).unwrap();
+    assert!(options.unavailable.is_none());
+    assert_eq!(options.column, StrikeColumn::Zero);
+    let modifier = options
+        .targets
+        .iter()
+        .find(|target| target.hex_id.0 == "4010")
+        .unwrap()
+        .units[0]
+        .modifier;
+
+    // A modified 3 Disrupts on the "1" column but has no effect on the "0" column.
+    game.set_dice(dice_rolling((3 - modifier) as u8));
+    let outcome = game
+        .execute(GameCommand::ResolveArtilleryStrike {
+            artillery_unit_id: artillery,
+            hex_id: HexId("4010".to_owned()),
+            unit_ids: vec![UnitId(GERMAN.to_owned())],
+        })
+        .unwrap();
+    let resolution = outcome
+        .events
+        .iter()
+        .find_map(|event| match event {
+            GameEvent::ArtilleryStrikeResolved { resolution, .. } => Some(resolution),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(resolution.column, StrikeColumn::Zero);
+    assert_eq!(resolution.modified_roll, 3);
+    assert_eq!(resolution.result, StrikeResult::NoEffect);
+    assert_eq!(game.unit(&UnitId(GERMAN.to_owned())).disruption, None);
+}
+
+/// Verifies the Airspace die roll modifier applies to Air Strikes only, not Artillery Strikes.
+#[test]
+fn artillery_strikes_ignore_airspace() {
+    let mut game = baltap_planning("warsawPact", &[(SOVIET, "4009"), (GERMAN, "4010")]);
+    mark_artillery(&mut game, SOVIET);
+    advance_to(&mut game, "warsawPact", "offensiveStrike");
+    let artillery = UnitId(SOVIET.to_owned());
+    let target_modifier = |game: &mut TestGame| {
+        game.artillery_strike_options(&artillery)
+            .unwrap()
+            .targets
+            .into_iter()
+            .find(|target| target.hex_id.0 == "4010")
+            .unwrap()
+            .units[0]
+            .modifier
+    };
+    let wp = SideId("warsawPact".to_owned());
+    assert_eq!(
+        game.airspace(&wp)[&HexId("4010".to_owned())],
+        Airspace::Contested
+    );
+    let contested = target_modifier(&mut game);
+
+    // An unsupplied German unit stops contesting, leaving the hex in WP-friendly Airspace.
+    game.edit_unit(&UnitId(GERMAN.to_owned()), |unit| {
+        unit.supply.movement = Some(SupplyStatus::OutOfSupply);
+    });
+    assert_eq!(
+        game.airspace(&wp)[&HexId("4010".to_owned())],
+        Airspace::Friendly
+    );
+    assert_eq!(target_modifier(&mut game), contested);
 }
 
 /// Verifies a Strike suppresses artillery instead of giving it a normal Disrupted marker.

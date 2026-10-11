@@ -292,7 +292,7 @@ function ArtilleryActions({ unit, options, units, busy, onCommand }: {
                 disabled={busy || conflicts}
                 onChange={() => setUnitIds((current) => checked ? current.filter((id) => id !== candidate.unitId) : [...current, candidate.unitId])}
               />
-              {targetUnit?.name ?? candidate.unitId} · {candidate.steps} {candidate.steps === 1 ? "step" : "steps"}
+              {targetUnit?.name ?? candidate.unitId} · {candidate.steps} {candidate.steps === 1 ? "step" : "steps"} · DRM {candidate.modifier >= 0 ? `+${candidate.modifier}` : candidate.modifier}
             </label>
           );
         })}
@@ -305,6 +305,7 @@ function ArtilleryActions({ unit, options, units, busy, onCommand }: {
       >
         Fire artillery
       </button>
+      {options.column === "0" && <p className="movement-hint warn">Suppressed: fires on the "0" column of the Strike Table.</p>}
       <p className="movement-hint">One adjacent strike of up to two enemy steps. The first selected unit takes any step loss.</p>
     </section>
   );

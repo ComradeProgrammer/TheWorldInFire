@@ -43,7 +43,7 @@ pub(crate) use scenario_air::standard_air_forces;
 pub use strike::{
     AirInterdictionZone, AirMission, AirMissionKind, AirPointSource, AirPoints, AirPowerRules,
     AirStrikeOptions, Airspace, ArtilleryStrikeOptions, ArtilleryStrikeTarget,
-    ArtilleryStrikeTargetUnit, Disruption, SideAirPower, StrikePlan, StrikeResolution,
-    StrikeResult, StrikeTargetHex, StrikeTargetUnit,
+    ArtilleryStrikeTargetUnit, Disruption, SideAirPower, StrikeColumn, StrikePlan,
+    StrikeResolution, StrikeResult, StrikeTargetHex, StrikeTargetUnit,
 };
 pub use unit::{SupplyStatus, UnitDefinition, UnitState, UnitStepDefinition, UnitSupplyState};

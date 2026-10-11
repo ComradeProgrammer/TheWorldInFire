@@ -1,7 +1,7 @@
 //! Offensive Strike Phase (rules 20 and 23): Air Strikes and Air Interdiction.
 //!
 //! Nuclear and Chemical Strikes and NATO Deep Interdiction are not implemented.
-//! Artillery divisions may each conduct one simplified adjacent strike.
+//! Artillery divisions may each conduct one adjacent Artillery Strike (24).
 
 use crate::error::RuleError;
 use crate::event::GameEvent;
@@ -10,8 +10,8 @@ use crate::model::{
     AirInterdictionZone, AirMission, AirMissionKind, AirPointKind, AirPointSource,
     AirStrikeOptions, Airspace, ArtilleryStrikeOptions, ArtilleryStrikeTarget,
     ArtilleryStrikeTargetUnit, CityKind, Disruption, HexId, HexsideFeature, MapHex, PhaseActor,
-    SideId, StrikeResolution, StrikeResult, StrikeTargetHex, StrikeTargetUnit, SupplyStatus,
-    Terrain, UnitId, UnitLocation, UnitState,
+    SideId, StrikeColumn, StrikeResolution, StrikeResult, StrikeTargetHex, StrikeTargetUnit,
+    SupplyStatus, Terrain, UnitId, UnitLocation, UnitState,
 };
 use crate::movement::MovementContext;
 use crate::rules::Rules;
@@ -21,13 +21,24 @@ const STEPS_PER_AIR_STRIKE: u16 = 2;
 /// Air Strikes one hex may receive per segment (23.1.5).
 const AIR_STRIKES_PER_HEX: usize = 2;
 
-/// Strike Table, one Air or Artillery Point column.
-pub fn strike_table(modified_roll: i8) -> StrikeResult {
-    match modified_roll {
-        i8::MIN..=1 => StrikeResult::NoEffect,
-        2..=4 => StrikeResult::Disrupted,
+/// Reads a modified die roll on one Air/Artillery Points column of the Strike Table.
+pub fn strike_table(column: StrikeColumn, modified_roll: i8) -> StrikeResult {
+    match (column, modified_roll) {
+        (StrikeColumn::Zero, i8::MIN..=3) | (StrikeColumn::One, i8::MIN..=1) => {
+            StrikeResult::NoEffect
+        }
+        (StrikeColumn::Zero, 4..=5) | (StrikeColumn::One, 2..=4) => StrikeResult::Disrupted,
         _ => StrikeResult::StepLoss,
     }
+}
+
+/// How a Strike on ground units is delivered, which selects its column and modifiers.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum StrikeDelivery {
+    /// One Air Point: the "1" column, the Airspace modifier, and the aircraft's own modifier.
+    Air { aircraft_modifier: i8 },
+    /// One Artillery Point on the given column; Airspace does not apply.
+    Artillery { column: StrikeColumn },
 }
 
 /// Checks whether friendly or contested airspace permits use of Tactical Air Points.
@@ -346,7 +357,11 @@ impl Rules {
 
         let side_id = self.offensive_strike_side()?;
         let mut consequences = Vec::new();
-        let resolution = self.resolve_strike(&side_id, &hex_id, &selected, 0, &mut consequences)?;
+        let delivery = StrikeDelivery::Artillery {
+            column: options.column,
+        };
+        let resolution =
+            self.resolve_strike(&side_id, &hex_id, &selected, delivery, &mut consequences)?;
         self.artillery_fired_units.push(artillery_unit_id.clone());
         let mut events = vec![GameEvent::ArtilleryStrikeResolved {
             side_id,
@@ -411,7 +426,7 @@ impl Rules {
                     Ok(StrikeTargetUnit {
                         unit_id: unit.id().clone(),
                         steps: unit.step_count(),
-                        modifier: self.strike_modifier(&side_id, unit, hex, hex_airspace)?,
+                        modifier: self.strike_modifier(&side_id, unit, hex, Some(hex_airspace))?,
                         headquarters: unit.is_headquarters(),
                         already_targeted: targeted.contains(&unit.id()),
                     })
@@ -476,11 +491,6 @@ impl Rules {
                 "artilleryEntrained",
                 "Artillery under a train marker cannot fire",
             ))
-        } else if unit.disruption.is_some() {
-            Some(RuleError::new(
-                "artillerySuppressed",
-                "Suppressed artillery cannot fire",
-            ))
         } else if unit.supply.combat == Some(SupplyStatus::OutOfSupply) {
             // 24.2.5: artillery Out of Combat Supply may not Strike at all.
             Some(RuleError::new(
@@ -495,10 +505,17 @@ impl Rules {
         } else {
             None
         };
+        // 24.1.4: a Suppressed Artillery Point is reduced to zero but still Strikes.
+        let column = if unit.disruption.is_some() {
+            StrikeColumn::Zero
+        } else {
+            StrikeColumn::One
+        };
         if unavailable.is_some() {
             return Ok(ArtilleryStrikeOptions {
                 artillery_unit_id: artillery_unit_id.clone(),
                 unavailable,
+                column,
                 targets: Vec::new(),
             });
         }
@@ -516,6 +533,7 @@ impl Rules {
             {
                 continue;
             }
+            let hex = self.map_hex(&HexId(neighbor.to_owned()))?;
             let units: Vec<ArtilleryStrikeTargetUnit> = self
                 .units
                 .values()
@@ -523,12 +541,15 @@ impl Rules {
                     target.definition.side_id != side_id
                         && matches!(&target.location, UnitLocation::Hex { hex_id } if hex_id.0 == neighbor)
                 })
-                .map(|target| ArtilleryStrikeTargetUnit {
-                    unit_id: target.id().clone(),
-                    steps: target.step_count(),
-                    headquarters: target.is_headquarters(),
+                .map(|target| {
+                    Ok(ArtilleryStrikeTargetUnit {
+                        unit_id: target.id().clone(),
+                        steps: target.step_count(),
+                        modifier: self.strike_modifier(&side_id, target, &hex, None)?,
+                        headquarters: target.is_headquarters(),
+                    })
                 })
-                .collect();
+                .collect::<Result<_, RuleError>>()?;
             if !units.is_empty() {
                 targets.push(ArtilleryStrikeTarget {
                     hex_id: HexId(neighbor.to_owned()),
@@ -539,6 +560,7 @@ impl Rules {
         Ok(ArtilleryStrikeOptions {
             artillery_unit_id: artillery_unit_id.clone(),
             unavailable: None,
+            column,
             targets,
         })
     }
@@ -574,7 +596,9 @@ impl Rules {
                         &side_id,
                         &mission.hex_id,
                         unit_ids,
-                        0,
+                        StrikeDelivery::Air {
+                            aircraft_modifier: 0,
+                        },
                         &mut consequences,
                     )?;
                     if let Some(entry) = self
@@ -606,18 +630,18 @@ impl Rules {
         side_id: &SideId,
         hex_id: &HexId,
         unit_ids: &[UnitId],
-        aircraft_modifier: i8,
+        delivery: StrikeDelivery,
         events: &mut Vec<GameEvent>,
     ) -> Result<StrikeResolution, RuleError> {
-        let hex = self
-            .scenario
-            .map
-            .hexes
-            .iter()
-            .find(|hex| hex.id == *hex_id)
-            .expect("validated when planned")
-            .clone();
-        let airspace = self.airspace_map(side_id).of(&hex_id.0);
+        let hex = self.map_hex(hex_id)?;
+        let (column, airspace, delivery_modifier) = match delivery {
+            StrikeDelivery::Air { aircraft_modifier } => (
+                StrikeColumn::One,
+                Some(self.airspace_map(side_id).of(&hex_id.0)),
+                aircraft_modifier,
+            ),
+            StrikeDelivery::Artillery { column } => (column, None, 0),
+        };
         let targets: Vec<UnitId> = unit_ids
             .iter()
             .filter(|id| self.units.contains_key(*id))
@@ -631,10 +655,10 @@ impl Rules {
             .into_iter()
             .min()
             .unwrap_or(0)
-            + aircraft_modifier;
+            + delivery_modifier;
         let die_roll = self.dice.d6();
         let modified_roll = die_roll as i8 + modifier;
-        let result = strike_table(modified_roll);
+        let result = strike_table(column, modified_roll);
         let enemy_present_before = self.enemy_units_in(side_id, hex_id) > 0;
 
         match result {
@@ -663,6 +687,7 @@ impl Rules {
         }
 
         Ok(StrikeResolution {
+            column,
             die_roll,
             modifier,
             modified_roll,
@@ -670,13 +695,13 @@ impl Rules {
         })
     }
 
-    /// Strike Table die roll modifiers for one target unit.
+    /// Strike Table die roll modifiers for one target unit; `airspace` is `None` for Artillery Strikes.
     fn strike_modifier(
         &self,
         side_id: &SideId,
         unit: &UnitState,
         hex: &MapHex,
-        airspace: Airspace,
+        airspace: Option<Airspace>,
     ) -> Result<i8, RuleError> {
         let mut modifier = 0;
         if unit.train_status.is_some() {
@@ -692,9 +717,9 @@ impl Rules {
         }
         // 11.8.4: Air Strikes into friendly Airspace +1, into enemy Airspace -1.
         modifier += match airspace {
-            Airspace::Friendly => 1,
-            Airspace::Contested => 0,
-            Airspace::Enemy => -1,
+            Some(Airspace::Friendly) => 1,
+            Some(Airspace::Contested) | None => 0,
+            Some(Airspace::Enemy) => -1,
         };
         // 35.7 (2): WP Strikes on the turn of Surprise add one.
         if side_id.0 == "warsawPact"
