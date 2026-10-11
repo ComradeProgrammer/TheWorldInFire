@@ -9,7 +9,7 @@ use ooaw_nato::{
     air_combat_table, find_scenario, list_scenarios, AirCombatResult, AirMissionAssignment,
     AirUnitId, AirUnitKind, Airspace, Disruption, GameCommand, GameEvent, HexId, MovementMode,
     PhaseActor, PhaseExecution, ScenarioDefinition, SideId, StrikeResult, SupplyStatus,
-    TrainStatus, UnitId, UnitLocation, UnitState,
+    TrainStatus, UnitId, UnitLocation, UnitState, UnitTraitId,
 };
 
 /// Creates a fresh standard NATO scenario engine for unit tests.
@@ -1592,6 +1592,145 @@ fn west_berlin_does_not_contest_airspace() {
     let airspace = game.airspace(&SideId("warsawPact".to_owned()));
     // Next to West Berlin, with no NATO unit nearby, the Airspace is WP-friendly.
     assert_eq!(airspace[&HexId("3006".to_owned())], Airspace::Friendly);
+}
+
+// ------------------------------------------------------------------ artillery
+
+fn mark_artillery(game: &mut TestGame, unit_id: &str) {
+    game.edit_unit(&UnitId(unit_id.to_owned()), |unit| {
+        unit.definition
+            .traits
+            .push(UnitTraitId("artillery".to_owned()));
+    });
+}
+
+/// Verifies artillery independently strikes one adjacent stack and may fire only once per turn.
+#[test]
+fn artillery_fires_one_adjacent_strike_per_turn() {
+    let mut game = baltap_planning("warsawPact", &[(SOVIET, "4009"), (GERMAN, "4010")]);
+    mark_artillery(&mut game, SOVIET);
+    advance_to(&mut game, "warsawPact", "offensiveStrike");
+
+    let artillery = UnitId(SOVIET.to_owned());
+    let options = game.artillery_strike_options(&artillery).unwrap();
+    assert!(options.unavailable.is_none());
+    assert!(options
+        .targets
+        .iter()
+        .any(|target| target.hex_id.0 == "4010"));
+
+    game.set_dice(dice_rolling(3));
+    let outcome = game
+        .execute(GameCommand::ResolveArtilleryStrike {
+            artillery_unit_id: artillery.clone(),
+            hex_id: HexId("4010".to_owned()),
+            unit_ids: vec![UnitId(GERMAN.to_owned())],
+        })
+        .unwrap();
+    assert!(outcome.events.iter().any(|event| matches!(
+        event,
+        GameEvent::ArtilleryStrikeResolved { artillery_unit_id, .. } if artillery_unit_id == &artillery
+    )));
+    assert_eq!(
+        game.unit(&UnitId(GERMAN.to_owned())).disruption,
+        Some(Disruption::Disrupted)
+    );
+    assert_eq!(
+        game.artillery_strike_options(&artillery)
+            .unwrap()
+            .unavailable
+            .unwrap()
+            .code,
+        "artilleryAlreadyFired"
+    );
+}
+
+/// Verifies artillery Out of Combat Supply cannot fire.
+#[test]
+fn unsupplied_artillery_cannot_fire() {
+    let mut game = baltap_planning("warsawPact", &[(SOVIET, "4009"), (GERMAN, "4010")]);
+    mark_artillery(&mut game, SOVIET);
+    advance_to(&mut game, "warsawPact", "offensiveStrike");
+    game.edit_unit(&UnitId(SOVIET.to_owned()), |unit| {
+        unit.supply.combat = Some(SupplyStatus::OutOfSupply);
+    });
+    let artillery = UnitId(SOVIET.to_owned());
+    let options = game.artillery_strike_options(&artillery).unwrap();
+    assert_eq!(options.unavailable.unwrap().code, "artilleryOutOfSupply");
+    assert!(options.targets.is_empty());
+    assert_eq!(
+        game.execute(GameCommand::ResolveArtilleryStrike {
+            artillery_unit_id: artillery,
+            hex_id: HexId("4010".to_owned()),
+            unit_ids: vec![UnitId(GERMAN.to_owned())],
+        })
+        .unwrap_err()
+        .code,
+        "artilleryOutOfSupply"
+    );
+}
+
+/// Verifies a Strike suppresses artillery instead of giving it a normal Disrupted marker.
+#[test]
+fn artillery_can_be_suppressed() {
+    let mut game = baltap_planning("warsawPact", &[(SOVIET, "4009"), (GERMAN, "4010")]);
+    mark_artillery(&mut game, SOVIET);
+    mark_artillery(&mut game, GERMAN);
+    advance_to(&mut game, "nato", "offensiveStrike");
+    game.set_dice(dice_rolling(3));
+    game.execute(GameCommand::ResolveArtilleryStrike {
+        artillery_unit_id: UnitId(GERMAN.to_owned()),
+        hex_id: HexId("4009".to_owned()),
+        unit_ids: vec![UnitId(SOVIET.to_owned())],
+    })
+    .unwrap();
+    assert_eq!(
+        game.unit(&UnitId(SOVIET.to_owned())).disruption,
+        Some(Disruption::Suppressed)
+    );
+}
+
+/// Verifies artillery is excluded from ground attacks but defends with its printed defense.
+#[test]
+fn artillery_cannot_ground_attack_and_uses_normal_defense() {
+    let mut game = baltap_planning("warsawPact", &[(SOVIET, "4009"), (GERMAN, "4010")]);
+    mark_artillery(&mut game, SOVIET);
+    game.execute(GameCommand::SetAttackTarget {
+        hex_id: HexId("4010".to_owned()),
+        selected: true,
+    })
+    .unwrap();
+    advance_to(&mut game, "warsawPact", "combat");
+    assert!(game.combat_options().unwrap().objectives.is_empty());
+    assert_eq!(
+        game.execute(battle("4010", &[SOVIET])).unwrap_err().code,
+        "invalidObjective"
+    );
+
+    let mut game = baltap_planning("warsawPact", &[(SOVIET, "4009"), (GERMAN, "4010")]);
+    mark_artillery(&mut game, GERMAN);
+    game.execute(GameCommand::SetAttackTarget {
+        hex_id: HexId("4010".to_owned()),
+        selected: true,
+    })
+    .unwrap();
+    advance_to(&mut game, "warsawPact", "combat");
+    let odds = game
+        .battle_preview(
+            &HexId("4010".to_owned()),
+            &[UnitId(SOVIET.to_owned())],
+            None,
+        )
+        .unwrap();
+    let defender = odds
+        .defenders
+        .iter()
+        .find(|strength| strength.unit_id.0 == GERMAN)
+        .unwrap();
+    assert_eq!(defender.adjusted_64ths, u32::from(defender.printed) * 64);
+    assert!(!defender
+        .modifiers
+        .contains(&ooaw_nato::StrengthModifier::ProvisionalDefense));
 }
 
 // ------------------------------------------------------------------ combat

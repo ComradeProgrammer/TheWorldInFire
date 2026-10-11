@@ -52,6 +52,8 @@ pub struct RulesState {
     pub combat: Option<CombatState>,
     /// Marked units and their movement in the current Reserve Phase.
     pub reserve: Option<ReserveState>,
+    /// Artillery divisions that have fired during the current game turn.
+    pub artillery_fired_unit_ids: Vec<UnitId>,
 }
 
 /// The kernel state as the NATO rules read it.
@@ -123,6 +125,8 @@ pub struct Rules {
     pub(super) combat: Option<CombatState>,
     /// Marked reserve units and their movement history for the current Reserve Phase.
     pub(super) reserve: Option<ReserveState>,
+    /// Artillery divisions that have fired during the current game turn.
+    pub(super) artillery_fired_units: Vec<UnitId>,
     /// The kernel's seeded dice.
     pub(super) dice: Dice,
     /// State last reported to the kernel, for computing changes.
@@ -203,6 +207,7 @@ impl Rules {
             eliminated_units: Vec::new(),
             combat: None,
             reserve: None,
+            artillery_fired_units: Vec::new(),
             dice: Dice,
             baseline: RefCell::default(),
         })
@@ -267,6 +272,7 @@ impl Rules {
         self.eliminated_units = rules.eliminated_unit_ids;
         self.combat = rules.combat;
         self.reserve = rules.reserve;
+        self.artillery_fired_units = rules.artillery_fired_unit_ids;
         *self.baseline.borrow_mut() = Baseline {
             units: self.units.clone(),
             city_control: self.city_control.clone(),
@@ -292,6 +298,7 @@ impl Rules {
             eliminated_unit_ids: self.eliminated_units.clone(),
             combat: self.combat.clone(),
             reserve: self.reserve.clone(),
+            artillery_fired_unit_ids: self.artillery_fired_units.clone(),
         };
         match encode(&state)? {
             Value::Object(map) => Ok(map.into_iter().collect()),
@@ -456,6 +463,11 @@ impl Rules {
             }
             GameCommand::CancelAirMission { mission_id } => self.cancel_air_mission(mission_id),
             GameCommand::ResolveAirStrikes => self.resolve_air_strikes(),
+            GameCommand::ResolveArtilleryStrike {
+                artillery_unit_id,
+                hex_id,
+                unit_ids,
+            } => self.resolve_artillery_strike(artillery_unit_id, hex_id, unit_ids),
             GameCommand::ResolveBattle {
                 hex_id,
                 unit_ids,

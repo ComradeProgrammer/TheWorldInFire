@@ -32,12 +32,13 @@ const PHASES: [&str; 9] = [
 ];
 
 /// Read-only queries the NATO rules answer.
-const QUERIES: [&str; 11] = [
+const QUERIES: [&str; 12] = [
     "movementModes",
     "movementOptions",
     "attackTargetOptions",
     "reserveOptions",
     "airStrikeOptions",
+    "artilleryStrikeOptions",
     "airPlanningOptions",
     "airMissionOptions",
     "combatOptions",
@@ -206,6 +207,10 @@ impl RulesPlugin for NatoPlugin {
             "attackTargetOptions" => encode(&rules.attack_target_options()?),
             "reserveOptions" => encode(&rules.reserve_options()?),
             "airStrikeOptions" => encode(&rules.air_strike_options()?),
+            "artilleryStrikeOptions" => {
+                let input: UnitInput = decode(input)?;
+                encode(&rules.artillery_strike_options(&input.unit_id)?)
+            }
             "airPlanningOptions" => encode(&rules.air_planning_options()?),
             "airMissionOptions" => {
                 let input: AirUnitInput = decode(input)?;

@@ -243,3 +243,37 @@ pub struct AirStrikeOptions {
     /// Enemy-occupied hexes with targetable units.
     pub targets: Vec<StrikeTargetHex>,
 }
+
+/// One unit that an artillery division may name in an adjacent strike.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtilleryStrikeTargetUnit {
+    /// Target unit.
+    pub unit_id: UnitId,
+    /// Steps counted against the strike's two-step limit.
+    pub steps: u16,
+    /// Whether the unit is an HQ and therefore must be targeted alone.
+    pub headquarters: bool,
+}
+
+/// One adjacent enemy-occupied hex available to an artillery division.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtilleryStrikeTarget {
+    /// Target hex.
+    pub hex_id: HexId,
+    /// Enemy units that may be selected there.
+    pub units: Vec<ArtilleryStrikeTargetUnit>,
+}
+
+/// Read-only choices for one artillery division in the Offensive Strike Phase.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtilleryStrikeOptions {
+    /// Artillery division being queried.
+    pub artillery_unit_id: UnitId,
+    /// Why it cannot fire now, or `None` when it may fire.
+    pub unavailable: Option<crate::error::RuleError>,
+    /// Adjacent legal target hexes. Empty while unavailable.
+    pub targets: Vec<ArtilleryStrikeTarget>,
+}

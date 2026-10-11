@@ -163,6 +163,15 @@ pub enum GameCommand {
     },
     /// Resolves every committed air mission.
     ResolveAirStrikes,
+    /// Fires one artillery division at enemy units in an adjacent hex.
+    ResolveArtilleryStrike {
+        /// Artillery division conducting the strike.
+        artillery_unit_id: UnitId,
+        /// Adjacent target hex.
+        hex_id: HexId,
+        /// Targeted enemy units, in step-loss priority order.
+        unit_ids: Vec<UnitId>,
+    },
     /// Commits adjacent units against an objective and resolves the battle.
     ResolveBattle {
         /// Objective hex.

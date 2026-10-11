@@ -103,7 +103,7 @@ fn is_armored(unit: &UnitState) -> bool {
 
 /// Checks whether a unit is a non-headquarters maneuver unit without the hard trait.
 fn is_soft_maneuver(unit: &UnitState) -> bool {
-    !unit.is_hard() && !unit.is_headquarters()
+    !unit.is_hard() && !unit.is_headquarters() && !unit.has_trait("artillery")
 }
 
 /// Checks whether a unit currently occupies the specified map hex.
@@ -737,6 +737,7 @@ impl Rules {
         for id in defenders {
             let unit = &self.units[id];
             let eligible = !unit.is_headquarters()
+                && !unit.has_trait("artillery")
                 && unit.disruption.is_none()
                 && unit.train_status.is_none()
                 && unit.supply.combat != Some(SupplyStatus::OutOfSupply)
@@ -1470,6 +1471,7 @@ impl Rules {
         };
         unit.definition.side_id == *side_id
             && !unit.is_headquarters()
+            && !unit.has_trait("artillery")
             && unit.train_status.is_none()
             // 12.6: units under a Reserve/OMG Marker never attack.
             && !self.is_reserve_unit(unit.id())

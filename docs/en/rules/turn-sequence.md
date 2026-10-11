@@ -20,7 +20,7 @@ After the Joint Phases, the turn proceeds through these phases in order, each pl
 | 1. Pre-Battle Phase | automatic | automatic |
 | 2. Battle Planning Phase | plays | plays |
 | 3. Joint Air Operations Phase | automatic fighter combat and interception for both sides | — |
-| 4. Offensive Strike Phase | automatic resolution and review | automatic resolution and review |
+| 4. Offensive Strike Phase | automatic air strikes, then artillery fire | automatic air strikes, then artillery fire |
 | 5. Combat Phase | plays | plays |
 | 6. Reserve Phase | plays | plays |
 | 7. Post-Battle Phase | automatic | automatic |
@@ -35,7 +35,7 @@ Until the Battle Planning Phase ends, any order given during it can be taken bac
 
 When the Battle Planning Phase ends, the acting side's Disrupted markers are removed. Because the enemy's Offensive Strike and Combat Phases now come before your own next Battle Planning, units the enemy disrupts stay Disrupted through your own Combat Phase in the same turn.
 
-After both plans are complete, Joint Air Operations automatically resolve fighter combat and fighter interception of strike aircraft. At the start of each Offensive Strike Phase, the acting side's surviving, unaborted fighter-bombers automatically perform their planned ground or airbase strikes; the player reviews those results and ends the phase (see [Air Power](air-power.md)). In the Combat Phase, the acting side attacks enemy-held hexes with adjacent units (see [Combat](combat.md)); the Warsaw Pact must attack every objective it marked during its Battle Planning.
+After both plans are complete, Joint Air Operations automatically resolve fighter combat and fighter interception of strike aircraft. At the start of each Offensive Strike Phase, the acting side's surviving, unaborted fighter-bombers automatically perform their planned ground or airbase strikes; the player reviews those results, may fire each of the side's artillery divisions once (see [Artillery](artillery.md)), and ends the phase (see [Air Power](air-power.md)). In the Combat Phase, the acting side attacks enemy-held hexes with adjacent units (see [Combat](combat.md)); the Warsaw Pact must attack every objective it marked during its Battle Planning.
 
 In the Reserve Phase, the acting side's Reserve or OMG units move again at half their Movement Allowance (see [Reserves](reserve.md)). At the end of the Reserve Phase, the acting side's Reserve/OMG markers and its own Breakthrough Markers are removed, together with the enemy's Air Interdiction Zones. The Post-Battle Phase resolves automatically and removes the acting side's Suppressed markers.
 

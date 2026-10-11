@@ -15,6 +15,7 @@ An Objective hex must contain an enemy unit or an enemy Free City, or be an empt
 Any friendly Maneuver unit adjacent to the Objective hex may attack, except:
 
 - HQs, which never attack;
+- artillery divisions, which fight only by Artillery Strikes (see [Artillery](artillery.md));
 - units under a train marker;
 - units in reserve (see [Reserves](reserve.md));
 - units that would attack across a Blocked or All-Sea hexside or the Danish Ferry.
@@ -46,7 +47,7 @@ Add up the defenders' strengths and round up (never below 1). Each defending uni
 - halved if Out of Combat Supply;
 - doubled for Soft units in Forest, Rough, Mountain, or City hexes.
 
-An enemy Free City adds its Organic Defense Strength. An HQ adds its Defense Strength only if no Maneuver unit defends the hex. Units under a train marker, and units that already retreated from an earlier battle this phase, add nothing.
+An enemy Free City adds its Organic Defense Strength. Artillery divisions defend with their full Defense Strength, like Maneuver units. An HQ adds its Defense Strength only if no Maneuver unit defends the hex. Units under a train marker, and units that already retreated from an earlier battle this phase, add nothing.
 
 Divide attack by defense and round in the defender's favour to find the odds column, from 1:4 to 10:1. Then shift the column:
 
@@ -68,7 +69,7 @@ Roll one die on the final column. Results read *attacker / defender*:
 - **A1:** the attacker loses one step.
 - **\*:** that side's units are Disrupted.
 - **CA:** each defending step of an undisrupted, supplied Maneuver unit Counterattacks: one die against the strongest attacker. It Disrupts the target on 3+ (West German), 4+ (other NATO or Soviet), or 5+ (other Warsaw Pact). NATO Counterattacks with one nationality only: the one with the most eligible steps.
-- **D#:** the defender loses that many steps. Maneuver units lose them first, strongest first. An HQ is Suppressed instead of reduced. Units under a train marker that defend alone are eliminated.
+- **D#:** the defender loses that many steps. Maneuver units and artillery divisions lose them first, strongest first. An HQ is Suppressed instead of reduced. Units under a train marker that defend alone are eliminated.
 - **R#:** the defenders retreat that many hexes.
 
 Results apply in this order: Counterattacks, defender losses, retreat, defender Disruption, attacker losses, attacker Disruption. The attacker ignores an A1 if the defender could not absorb all of its own losses.

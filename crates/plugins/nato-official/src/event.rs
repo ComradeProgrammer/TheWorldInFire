@@ -223,6 +223,19 @@ pub enum GameEvent {
         /// Dice outcome.
         resolution: StrikeResolution,
     },
+    /// An artillery division rolled one attack on the Strike Table.
+    ArtilleryStrikeResolved {
+        /// Side firing the artillery.
+        side_id: SideId,
+        /// Artillery division that fired.
+        artillery_unit_id: UnitId,
+        /// Target hex.
+        hex_id: HexId,
+        /// Targeted units.
+        unit_ids: Vec<UnitId>,
+        /// Dice outcome.
+        resolution: StrikeResolution,
+    },
     /// An Air Interdiction Zone became active.
     AirInterdictionZonePlaced {
         /// Side that placed it.

@@ -26,8 +26,10 @@ impl Rules {
         }
     }
 
-    /// Provides the Joint Status Phase hook, which currently has no automatic effects.
-    fn resolve_joint_status(&mut self, _events: &mut Vec<GameEvent>) {}
+    /// Resets per-turn artillery use in the Joint Status Phase.
+    fn resolve_joint_status(&mut self, _events: &mut Vec<GameEvent>) {
+        self.artillery_fired_units.clear();
+    }
 
     /// Readies air counters, withdraws scheduled units, and adds this turn's reinforcements.
     fn resolve_joint_reinforcement(&mut self, events: &mut Vec<GameEvent>) {

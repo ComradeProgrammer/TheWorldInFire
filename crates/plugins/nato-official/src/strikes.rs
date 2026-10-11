@@ -1,17 +1,19 @@
 //! Offensive Strike Phase (rules 20 and 23): Air Strikes and Air Interdiction.
 //!
-//! Nuclear, Chemical, and Artillery Strikes and NATO Deep Interdiction are not
-//! implemented; the phase consists of the Air Strike Segment.
+//! Nuclear and Chemical Strikes and NATO Deep Interdiction are not implemented.
+//! Artillery divisions may each conduct one simplified adjacent strike.
 
 use crate::error::RuleError;
 use crate::event::GameEvent;
 use crate::filters::{self, StrikeModifierInput};
 use crate::model::{
     AirInterdictionZone, AirMission, AirMissionKind, AirPointKind, AirPointSource,
-    AirStrikeOptions, Airspace, CityKind, Disruption, HexId, MapHex, PhaseActor, SideId,
-    StrikeResolution, StrikeResult, StrikeTargetHex, StrikeTargetUnit, Terrain, UnitId,
-    UnitLocation, UnitState,
+    AirStrikeOptions, Airspace, ArtilleryStrikeOptions, ArtilleryStrikeTarget,
+    ArtilleryStrikeTargetUnit, CityKind, Disruption, HexId, HexsideFeature, MapHex, PhaseActor,
+    SideId, StrikeResolution, StrikeResult, StrikeTargetHex, StrikeTargetUnit, SupplyStatus,
+    Terrain, UnitId, UnitLocation, UnitState,
 };
+use crate::movement::MovementContext;
 use crate::rules::Rules;
 
 /// Steps one Air Point may strike (23.1.5).
@@ -275,6 +277,88 @@ impl Rules {
         self.resolve_missions()
     }
 
+    /// Fires an eligible artillery division and immediately resolves one Strike Table attack.
+    pub(super) fn resolve_artillery_strike(
+        &mut self,
+        artillery_unit_id: UnitId,
+        hex_id: HexId,
+        unit_ids: Vec<UnitId>,
+    ) -> Result<Vec<GameEvent>, RuleError> {
+        let options = self.artillery_strike_options(&artillery_unit_id)?;
+        if let Some(error) = options.unavailable {
+            return Err(error);
+        }
+        let target = options
+            .targets
+            .iter()
+            .find(|target| target.hex_id == hex_id)
+            .ok_or_else(|| {
+                RuleError::new(
+                    "invalidArtilleryTarget",
+                    "Artillery may strike only an adjacent enemy-occupied hex across a legal hexside",
+                )
+            })?;
+        if unit_ids.is_empty() {
+            return Err(RuleError::new(
+                "invalidArtilleryTarget",
+                "An artillery strike must name at least one enemy unit",
+            ));
+        }
+        let mut selected = Vec::new();
+        let mut steps = 0;
+        for unit_id in &unit_ids {
+            if selected.contains(unit_id) {
+                return Err(RuleError::new(
+                    "invalidArtilleryTarget",
+                    "A unit may be named only once in an artillery strike",
+                ));
+            }
+            let unit = target
+                .units
+                .iter()
+                .find(|unit| unit.unit_id == *unit_id)
+                .ok_or_else(|| {
+                    RuleError::new(
+                        "invalidArtilleryTarget",
+                        "Artillery targets must be enemy units in the selected target hex",
+                    )
+                })?;
+            steps += unit.steps;
+            selected.push(unit_id.clone());
+        }
+        if steps > STEPS_PER_AIR_STRIKE {
+            return Err(RuleError::new(
+                "invalidArtilleryTarget",
+                "One artillery strike targets at most two steps",
+            ));
+        }
+        if selected.len() > 1
+            && target
+                .units
+                .iter()
+                .any(|unit| unit.headquarters && selected.contains(&unit.unit_id))
+        {
+            return Err(RuleError::new(
+                "invalidArtilleryTarget",
+                "An artillery strike on an HQ may not target any other unit",
+            ));
+        }
+
+        let side_id = self.offensive_strike_side()?;
+        let mut consequences = Vec::new();
+        let resolution = self.resolve_strike(&side_id, &hex_id, &selected, 0, &mut consequences)?;
+        self.artillery_fired_units.push(artillery_unit_id.clone());
+        let mut events = vec![GameEvent::ArtilleryStrikeResolved {
+            side_id,
+            artillery_unit_id,
+            hex_id,
+            unit_ids: selected,
+            resolution,
+        }];
+        events.extend(consequences);
+        Ok(events)
+    }
+
     // ------------------------------------------------------------------ preview
 
     /// Previews airspace and enemy targets for the acting side's Air Strike Segment.
@@ -356,6 +440,105 @@ impl Rules {
         Ok(AirStrikeOptions {
             tactical_hexes,
             friendly_hexes,
+            targets,
+        })
+    }
+
+    /// Previews the adjacent targets available to one artillery division.
+    pub fn artillery_strike_options(
+        &self,
+        artillery_unit_id: &UnitId,
+    ) -> Result<ArtilleryStrikeOptions, RuleError> {
+        let side_id = self.offensive_strike_side()?;
+        let unit = self.units.get(artillery_unit_id).ok_or_else(|| {
+            RuleError::new(
+                "unknownUnit",
+                format!("Unknown unit: {}", artillery_unit_id.0),
+            )
+        })?;
+        let unavailable = if !unit.has_trait("artillery") {
+            Some(RuleError::new(
+                "notArtillery",
+                "Only a unit with the artillery trait may conduct an artillery strike",
+            ))
+        } else if unit.definition.side_id != side_id {
+            Some(RuleError::new(
+                "wrongSide",
+                "Only the side acting in this Offensive Strike Phase may fire artillery",
+            ))
+        } else if !matches!(unit.location, UnitLocation::Hex { .. }) {
+            Some(RuleError::new(
+                "artilleryOffMap",
+                "Artillery must be deployed on the map to fire",
+            ))
+        } else if unit.train_status.is_some() {
+            Some(RuleError::new(
+                "artilleryEntrained",
+                "Artillery under a train marker cannot fire",
+            ))
+        } else if unit.disruption.is_some() {
+            Some(RuleError::new(
+                "artillerySuppressed",
+                "Suppressed artillery cannot fire",
+            ))
+        } else if unit.supply.combat == Some(SupplyStatus::OutOfSupply) {
+            // 24.2.5: artillery Out of Combat Supply may not Strike at all.
+            Some(RuleError::new(
+                "artilleryOutOfSupply",
+                "Artillery Out of Combat Supply cannot fire",
+            ))
+        } else if self.artillery_fired_units.contains(artillery_unit_id) {
+            Some(RuleError::new(
+                "artilleryAlreadyFired",
+                "This artillery division has already fired this game turn",
+            ))
+        } else {
+            None
+        };
+        if unavailable.is_some() {
+            return Ok(ArtilleryStrikeOptions {
+                artillery_unit_id: artillery_unit_id.clone(),
+                unavailable,
+                targets: Vec::new(),
+            });
+        }
+
+        let UnitLocation::Hex { hex_id: from } = &unit.location else {
+            unreachable!("checked above")
+        };
+        let context = MovementContext::new(self, &side_id);
+        let mut targets = Vec::new();
+        for neighbor in context.neighbors(&from.0) {
+            if context.prohibited_hexside(&from.0, neighbor)
+                || context
+                    .side_features(&from.0, neighbor)
+                    .contains(&HexsideFeature::DanishFerry)
+            {
+                continue;
+            }
+            let units: Vec<ArtilleryStrikeTargetUnit> = self
+                .units
+                .values()
+                .filter(|target| {
+                    target.definition.side_id != side_id
+                        && matches!(&target.location, UnitLocation::Hex { hex_id } if hex_id.0 == neighbor)
+                })
+                .map(|target| ArtilleryStrikeTargetUnit {
+                    unit_id: target.id().clone(),
+                    steps: target.step_count(),
+                    headquarters: target.is_headquarters(),
+                })
+                .collect();
+            if !units.is_empty() {
+                targets.push(ArtilleryStrikeTarget {
+                    hex_id: HexId(neighbor.to_owned()),
+                    units,
+                });
+            }
+        }
+        Ok(ArtilleryStrikeOptions {
+            artillery_unit_id: artillery_unit_id.clone(),
+            unavailable: None,
             targets,
         })
     }
@@ -538,7 +721,7 @@ impl Rules {
         let Some(unit) = self.units.get_mut(unit_id) else {
             return;
         };
-        let marker = if unit.is_headquarters() {
+        let marker = if unit.is_headquarters() || unit.has_trait("artillery") {
             Disruption::Suppressed
         } else {
             Disruption::Disrupted

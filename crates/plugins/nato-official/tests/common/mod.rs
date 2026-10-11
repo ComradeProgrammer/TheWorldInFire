@@ -18,9 +18,10 @@ use ooaw_core::{Dice, GameEngine, GameId, MapDefinition};
 use ooaw_nato::{
     find_scenario, AirBaseState, AirInterdictionZone, AirMissionOptions, AirOperationsReport,
     AirPlan, AirPlanningOptions, AirPoints, AirStrikeOptions, AirUnitId, AirUnitState, Airspace,
-    BattleOdds, BattlePlan, BreakthroughMarker, CombatOptions, CombatState, GameCommand, GameEvent,
-    GameSetup, HexId, MovementMode, MovementModeOptions, MovementOption, PhaseActor, ReserveOption,
-    ReserveState, RuleError, RulesState, ScenarioDefinition, SideId, StrikePlan, UnitId, UnitState,
+    ArtilleryStrikeOptions, BattleOdds, BattlePlan, BreakthroughMarker, CombatOptions, CombatState,
+    GameCommand, GameEvent, GameSetup, HexId, MovementMode, MovementModeOptions, MovementOption,
+    PhaseActor, ReserveOption, ReserveState, RuleError, RulesState, ScenarioDefinition, SideId,
+    StrikePlan, UnitId, UnitState,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -55,6 +56,7 @@ pub struct GameSnapshot {
     pub eliminated_unit_ids: Vec<UnitId>,
     pub combat: Option<CombatState>,
     pub reserve: Option<ReserveState>,
+    pub artillery_fired_unit_ids: Vec<UnitId>,
 }
 
 /// An accepted command's typed events and resulting snapshot.
@@ -186,6 +188,13 @@ impl TestGame {
 
     pub fn air_strike_options(&mut self) -> Result<AirStrikeOptions, RuleError> {
         self.query("airStrikeOptions", Value::Null)
+    }
+
+    pub fn artillery_strike_options(
+        &mut self,
+        unit_id: &UnitId,
+    ) -> Result<ArtilleryStrikeOptions, RuleError> {
+        self.query("artilleryStrikeOptions", json!({ "unitId": unit_id }))
     }
 
     pub fn air_planning_options(&mut self) -> Result<AirPlanningOptions, RuleError> {
