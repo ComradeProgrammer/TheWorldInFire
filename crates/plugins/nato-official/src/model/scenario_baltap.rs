@@ -98,6 +98,7 @@ pub(crate) fn baltap_scenario() -> ScenarioDefinition {
             game_turn: 4,
             unit_id: UnitId("soviet.northernEastGermanyFront.hq".to_owned()),
         }],
+        fortified_hexes: Vec::new(),
     }
 }
 

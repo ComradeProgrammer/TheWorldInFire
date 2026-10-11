@@ -56,6 +56,8 @@ export interface GameSnapshot {
   reserve: ReserveState | null;
   /** Artillery divisions that have fired during the current game turn. */
   artilleryFiredUnitIds: string[];
+  /** NATO Fortified hexes that have not yet been Conquered. */
+  fortifiedHexIds: string[];
   pendingDecision: { kind: string } | null;
 }
 
@@ -280,12 +282,13 @@ export type KnownStrengthModifier =
   | "minorRiver"
   | "majorRiver"
   | "softUnitCover"
+  | "fortifiedHex"
   | "provisionalDefense";
 
 /** A printed modifier, or the name of one added by another rules plugin. */
 export type StrengthModifier = KnownStrengthModifier | (string & {});
 
-export type KnownShiftReason = "terrain" | "flankAttack" | "concentricAttack" | "surprise" | "offensiveSupport";
+export type KnownShiftReason = "terrain" | "fortified" | "flankAttack" | "concentricAttack" | "surprise" | "offensiveSupport";
 
 export interface UnitStrength {
   unitId: string;
@@ -531,6 +534,7 @@ export type GameEvent =
   | { type: "unitEliminated"; unitId: string; hexId: string }
   | { type: "breakthroughMarkerPlaced"; sideId: string; hexId: string }
   | { type: "breakthroughMarkersRemoved"; sideId: string; hexIds: string[] }
+  | { type: "fortifiedHexesConquered"; hexIds: string[] }
   | { type: "unitWithdrawn"; gameTurn: number; unitId: string }
   | { type: "battleResolved"; sideId: string; report: BattleReport }
   | { type: "unitRetreated"; unitId: string; from: string; path: string[] }

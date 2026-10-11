@@ -9,7 +9,7 @@ Each game turn begins with the Joint Phases. The two sides then take turns phase
 1. Joint Status Phase
 2. Joint Reinforcement Phase
 
-Both phases resolve automatically and require no player input. In the Joint Reinforcement Phase every surviving air unit becomes ready, and scheduled reinforcements arrive. On the first turn this deploys the opening forces.
+Both phases resolve automatically and require no player input. In the Joint Status Phase, Fortified hexes occupied by the Warsaw Pact are Conquered (see [Campaign scenarios](campaigns.md)). In the Joint Reinforcement Phase every surviving air unit becomes ready, and scheduled reinforcements arrive. On the first turn this deploys the opening forces.
 
 ## Side phases
 

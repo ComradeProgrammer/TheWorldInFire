@@ -444,6 +444,8 @@ export interface SidePanelProps {
   strike: StrikeContext | null;
   /** Strike choices for the selected artillery division. */
   artillery: ArtilleryStrikeOptionsResponse | null;
+  /** NATO Fortified hexes that have not yet been Conquered. */
+  fortifiedHexIds: string[];
   /** Named-aircraft command shown only while an airbase installation is selected. */
   air: AirOperationsContext | null;
   /** Combat Phase context; present only during that phase. */
@@ -557,6 +559,7 @@ export function SidePanel(props: SidePanelProps) {
               <div><dt>Terrain</dt><dd>{primary}</dd></div>
               {hex.city && <div><dt>Underlying</dt><dd>{TERRAIN_NAMES[hex.terrain]}</dd></div>}
               {hex.commandZone && <div><dt>Command zone</dt><dd>{hex.commandZone}</dd></div>}
+              {props.fortifiedHexIds.includes(hex.id) && <div><dt>Fortified</dt><dd>NATO defenders</dd></div>}
               {city && (
                 <div>
                   <dt>Control</dt>

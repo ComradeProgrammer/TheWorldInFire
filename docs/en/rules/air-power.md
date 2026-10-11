@@ -80,6 +80,7 @@ Ground strikes use the existing NATO strike procedure. Roll a d6 for each fighte
 | --- | ---: |
 | Target in a Major or Key City | −2 |
 | Target in a Forest, Rough, Mountain, or Minor City hex | −1 |
+| Warsaw Pact strike on a NATO unit in a Fortified hex, replacing terrain (see [Campaign scenarios](campaigns.md)) | −2 |
 | Target under a train marker, replacing terrain | +1 |
 | Target in the striking side's friendly ground Airspace | +1 |
 | Target in the striking side's enemy ground Airspace | −1 |

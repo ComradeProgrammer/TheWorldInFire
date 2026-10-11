@@ -57,6 +57,7 @@ pub struct GameSnapshot {
     pub combat: Option<CombatState>,
     pub reserve: Option<ReserveState>,
     pub artillery_fired_unit_ids: Vec<UnitId>,
+    pub fortified_hex_ids: Vec<HexId>,
 }
 
 /// An accepted command's typed events and resulting snapshot.

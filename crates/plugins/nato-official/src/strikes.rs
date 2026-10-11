@@ -707,6 +707,9 @@ impl Rules {
         if unit.train_status.is_some() {
             // 13.4.5: no terrain benefit, and +1 against units under a train marker.
             modifier += 1;
+        } else if self.fortified_against(side_id, &hex.id) {
+            // 38.4.3.4: -2 for WP Strikes into a Fortified hex, superseding terrain.
+            modifier -= 2;
         } else {
             modifier += match (&hex.city, hex.terrain) {
                 (Some(city), _) if matches!(city.kind, CityKind::Major | CityKind::Key) => -2,

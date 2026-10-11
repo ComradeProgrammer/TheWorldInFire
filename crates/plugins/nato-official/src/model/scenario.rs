@@ -40,6 +40,9 @@ pub struct ScenarioDefinition {
     pub offensive_support_hqs: Vec<OffensiveSupportHq>,
     /// Units the scenario removes from play at the start of a game turn.
     pub withdrawals: Vec<Withdrawal>,
+    /// NATO Fortified hexes at the start of the game (38.4.3.4).
+    #[serde(default)]
+    pub fortified_hexes: Vec<HexId>,
 }
 
 /// An HQ able to provide Offensive Support and the formations it commands.
@@ -257,6 +260,7 @@ pub fn find_scenario(id: &str) -> Option<ScenarioDefinition> {
             air_units: standard_air_forces("1983").1,
             offensive_support_hqs: Vec::new(),
             withdrawals: Vec::new(),
+            fortified_hexes: Vec::new(),
             reinforcements: vec![
                 reinforcement(
                     1,

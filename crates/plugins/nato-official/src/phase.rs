@@ -26,8 +26,9 @@ impl Rules {
         }
     }
 
-    /// Resets per-turn artillery use in the Joint Status Phase.
-    fn resolve_joint_status(&mut self, _events: &mut Vec<GameEvent>) {
+    /// Conquers WP-occupied Fortified hexes and resets per-turn artillery use.
+    fn resolve_joint_status(&mut self, events: &mut Vec<GameEvent>) {
+        self.conquer_fortified_hexes(events);
         self.artillery_fired_units.clear();
     }
 

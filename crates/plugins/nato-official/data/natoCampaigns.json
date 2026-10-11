@@ -1,5 +1,6 @@
 {
   "source": "NATO VASSAL 2.4.1; living Play Booklet 1 January 2026, sections 37, 38, 40, 44",
+  "fortifiedHexes": ["2214", "2315", "2414", "2515", "2614", "2713", "2714", "2715", "2815", "2915", "3007", "3014", "3114", "3214", "3215", "3316", "3415", "3516", "3517", "3617", "3717", "3817", "3917", "4017", "4112", "4116", "4117", "4210", "4211", "4212", "4213", "4215", "4310", "4314", "4315", "4409", "4510", "4609", "4708", "4709", "4807", "4906", "4907", "5005"],
   "units": {
     "1983:belgium.1.1": {"id": "belgium.1.1", "name": "Belgian 1/1 Mech Brigade", "nationId": "belgium", "unitTypeId": "mechanizedBrigade", "formationId": "nato.bei", "traits": ["hard"], "steps": [[2, 2, 5]]},
     "1983:belgium.10.16": {"id": "belgium.10.16", "name": "Belgian 10/16 Mech Brigade", "nationId": "belgium", "unitTypeId": "mechanizedBrigade", "formationId": "nato.bei", "traits": ["hard"], "steps": [[2, 2, 5]]},

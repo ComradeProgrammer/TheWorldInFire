@@ -21,7 +21,11 @@ pub(crate) const CAMPAIGN_IDS: [&str; 6] = [
 ];
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CampaignData {
+    /// Every West German hex adjacent to an Iron Curtain hexside, plus West
+    /// Berlin (38.4.3.4). Derived from the printed map's Iron Curtain line.
+    fortified_hexes: Vec<HexId>,
     units: BTreeMap<String, CampaignUnit>,
     scenarios: BTreeMap<String, CampaignSetup>,
 }
@@ -177,5 +181,11 @@ pub(crate) fn campaign_scenario(id: &str) -> Option<ScenarioDefinition> {
         reinforcements,
         offensive_support_hqs,
         withdrawals: Vec::new(),
+        // 38.4.3.4: NATO's border fortifications exist only in Extended Buildup.
+        fortified_hexes: if extended_buildup {
+            data.fortified_hexes.clone()
+        } else {
+            Vec::new()
+        },
     })
 }

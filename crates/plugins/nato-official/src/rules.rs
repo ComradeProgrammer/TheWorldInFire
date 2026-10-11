@@ -54,6 +54,8 @@ pub struct RulesState {
     pub reserve: Option<ReserveState>,
     /// Artillery divisions that have fired during the current game turn.
     pub artillery_fired_unit_ids: Vec<UnitId>,
+    /// NATO Fortified hexes that have not yet been Conquered (38.4.3.4).
+    pub fortified_hex_ids: Vec<HexId>,
 }
 
 /// The kernel state as the NATO rules read it.
@@ -127,6 +129,8 @@ pub struct Rules {
     pub(super) reserve: Option<ReserveState>,
     /// Artillery divisions that have fired during the current game turn.
     pub(super) artillery_fired_units: Vec<UnitId>,
+    /// NATO Fortified hexes that have not yet been Conquered.
+    pub(super) fortified_hexes: Vec<HexId>,
     /// The kernel's seeded dice.
     pub(super) dice: Dice,
     /// State last reported to the kernel, for computing changes.
@@ -187,6 +191,7 @@ impl Rules {
                 )
             })
             .collect();
+        let fortified_hexes = scenario.fortified_hexes.clone();
         Ok(Self {
             scenario,
             status: GameStatus::InProgress,
@@ -208,6 +213,7 @@ impl Rules {
             combat: None,
             reserve: None,
             artillery_fired_units: Vec::new(),
+            fortified_hexes,
             dice: Dice,
             baseline: RefCell::default(),
         })
@@ -273,6 +279,7 @@ impl Rules {
         self.combat = rules.combat;
         self.reserve = rules.reserve;
         self.artillery_fired_units = rules.artillery_fired_unit_ids;
+        self.fortified_hexes = rules.fortified_hex_ids;
         *self.baseline.borrow_mut() = Baseline {
             units: self.units.clone(),
             city_control: self.city_control.clone(),
@@ -299,6 +306,7 @@ impl Rules {
             combat: self.combat.clone(),
             reserve: self.reserve.clone(),
             artillery_fired_unit_ids: self.artillery_fired_units.clone(),
+            fortified_hex_ids: self.fortified_hexes.clone(),
         };
         match encode(&state)? {
             Value::Object(map) => Ok(map.into_iter().collect()),
@@ -554,6 +562,16 @@ fn validate_scenario(scenario: &ScenarioDefinition) -> Result<(), RuleError> {
                 ));
             }
         }
+    }
+    if let Some(hex_id) = scenario
+        .fortified_hexes
+        .iter()
+        .find(|hex_id| !map_hex_ids.contains(*hex_id))
+    {
+        return Err(RuleError::new(
+            "invalidScenario",
+            format!("Fortified hex is not on the map: {}", hex_id.0),
+        ));
     }
     for hexside in &scenario.map.hexsides {
         if !map_hex_ids.contains(&hexside.a) || !map_hex_ids.contains(&hexside.b) {

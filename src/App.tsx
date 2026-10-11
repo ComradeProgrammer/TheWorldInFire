@@ -466,6 +466,7 @@ function App({ game }: { game: NewGameResponse }) {
       missions: [],
       zones: snapshot?.airInterdictionZones ?? [],
       breakthroughs: snapshot?.breakthroughMarkers.map((marker) => marker.hexId) ?? [],
+      fortified: snapshot?.fortifiedHexIds ?? [],
     };
     strikeOverlayRef.current = overlay;
     rendererRef.current?.setStrikeOverlay(overlay);
@@ -673,6 +674,7 @@ function App({ game }: { game: NewGameResponse }) {
           movement={{ mode: movementMode, status: movementStatus, onModeChange: setModeChoice }}
           strike={null}
           artillery={artilleryOptions?.revision === snapshot.revision ? artilleryOptions : null}
+          fortifiedHexIds={snapshot.fortifiedHexIds}
           air={selectedAirBaseId && selectedAirCommandUnitId ? {
             gameTurn: snapshot.turn.gameTurn,
             phaseId: snapshot.turn.currentStep?.phaseId,

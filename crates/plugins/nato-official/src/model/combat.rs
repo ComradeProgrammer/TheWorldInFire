@@ -43,6 +43,8 @@ pub enum StrengthModifier {
     MajorRiver,
     /// Doubled: a Soft unit defending in Forest, Rough, Mountain, or a City.
     SoftUnitCover,
+    /// Doubled: a NATO Soft unit defending in a Fortified hex (38.4.3.4).
+    FortifiedHex,
     /// Counts only because no Maneuver unit defends the hex (25.2.7).
     ProvisionalDefense,
     /// An adjustment made by another plugin through a filter, serialized as
@@ -71,6 +73,8 @@ pub struct UnitStrength {
 pub enum ColumnShiftReason {
     /// Primary terrain of the Objective hex.
     Terrain,
+    /// NATO defending in a Fortified hex, replacing the terrain shift (38.4.3.4).
+    Fortified,
     /// Surrounded by the Attacker's units or ZOCs but next to other defenders.
     FlankAttack,
     /// Surrounded by the Attacker's units or ZOCs and isolated.

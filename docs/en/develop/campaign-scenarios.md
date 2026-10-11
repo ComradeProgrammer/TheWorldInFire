@@ -19,6 +19,14 @@ The backend registers the following six options. `list_scenarios()` and `new_gam
 
 All six options use the existing fourteen-war-turn sequence and scheduled reinforcements. Strategic Surprise and War of Nerves have three WP and two NATO Airlift Commands; Extended Buildup has four WP and three NATO commands. Strategic Surprise has Surprise on turn one. War of Nerves does not assume Surprise while Alert Levels are unmodeled. Eligible Front HQs and U.S. V/VII Corps HQs provide Offensive Support; Baltic Front and U.S. III Corps HQs do so only in Extended Buildup.
 
+**Fortified hexes (38.4.3.4).** `natoCampaigns.json` lists `fortifiedHexes`, and only Extended Buildup copies it into `ScenarioDefinition::fortified_hexes`. The list has 44 hexes: the 43 West German hexes adjacent to an Iron Curtain hexside, plus West Berlin (3007). The map data has no Iron Curtain hexsides; the traced `ironCurtain` polylines cover only part of the border. The 85 Iron Curtain hexsides were therefore read from the printed map image, using the line's orange casing along each hexside, and the Elbe stretch was taken from the `majorRiver` hexsides between the orange sections. They were checked to form one unbranched line from Lübeck Bay to the southern map edge, and the West German hex of each was taken on the west side of that line. The current list is kept in rules state as `fortifiedHexIds`; `Rules::new` seeds it from the scenario, and the Joint Status Phase removes WP-occupied hexes with a `fortifiedHexesConquered` event. Effects apply only to WP attacks and Strikes against NATO:
+- the Objective's terrain column shift is replaced by `ColumnShiftReason::Fortified` (−2);
+- NATO Soft defenders double with `StrengthModifier::FortifiedHex` in place of `SoftUnitCover`;
+- retreats are reduced by `max(1, terrain reduction)`, and a NATO unit may stop after one hex when its first retreat hex is Fortified;
+- the Strike terrain modifier is replaced by −2, unless the target is under a train marker.
+
+Exploitation is not implemented, so the no-Exploitation rule needs no code. War of Nerves' Alert Level Six fortification (39.4.6, 40.4.3.5) depends on the unimplemented Alert Level system. The Nuclear Strike negation (21.1.3) is likewise not implemented, and Conquered Markers have no separate effect beyond removing the status.
+
 ## Differences from the complete board-game scenarios
 
 These are campaign entries for the current war-turn engine, not complete implementations of the board-game scenarios:

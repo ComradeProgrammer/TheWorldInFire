@@ -45,7 +45,7 @@ Add up the defenders' strengths and round up (never below 1). Each defending uni
 
 - halved if Disrupted;
 - halved if Out of Combat Supply;
-- doubled for Soft units in Forest, Rough, Mountain, or City hexes.
+- doubled for Soft units in Forest, Rough, Mountain, or City hexes, or for NATO Soft units in a Fortified hex (see [Campaign scenarios](campaigns.md)).
 
 An enemy Free City adds its Organic Defense Strength. Artillery divisions defend with their full Defense Strength, like Maneuver units. An HQ adds its Defense Strength only if no Maneuver unit defends the hex. Units under a train marker, and units that already retreated from an earlier battle this phase, add nothing.
 
@@ -55,6 +55,7 @@ Divide attack by defense and round in the defender's favour to find the odds col
 | --- | ---: |
 | Objective in a Major or Key City | −2 |
 | Objective in a Forest, Rough, Mountain, or Minor City hex | −1 |
+| Warsaw Pact attack on a Fortified hex, replacing terrain | −2 |
 | Flank Attack: every adjacent hex holds an attacking unit or is in its ZOC, and the defenders are next to another friendly unit or Free City | +1 |
 | Concentric Attack: surrounded as above, with no such neighbour | +2 |
 | Warsaw Pact attack on the turn NATO is Surprised | +1 |
@@ -76,7 +77,7 @@ Results apply in this order: Counterattacks, defender losses, retreat, defender 
 
 ## Retreat
 
-Rough terrain or a Minor City reduces a retreat by one hex. Mountain or a Major or Key City reduces it by two.
+Rough terrain, a Minor City, or a Fortified hex defended by NATO reduces a retreat by one hex. Mountain or a Major or Key City reduces it by two.
 
 The defenders retreat together and must end that many hexes from the Objective hex. They may not enter an enemy unit, an enemy-controlled city, or Prohibited Terrain. Among the legal routes, they prefer:
 
@@ -86,7 +87,7 @@ The defenders retreat together and must end that many hexes from the Objective h
 4. avoiding Mountains and Major River crossings;
 5. ending as far from the attackers as possible.
 
-A unit loses a step for each enemy-ZOC hex it enters without a friendly unit or Free City there, and for each hex it cannot retreat. If its first hex holds a friendly unit or retreat-reducing terrain, it may stop there. Units under a train marker that must retreat are eliminated.
+A unit loses a step for each enemy-ZOC hex it enters without a friendly unit or Free City there, and for each hex it cannot retreat. If its first hex holds a friendly unit, retreat-reducing terrain, or (for NATO) a Fortified hex, it may stop there. Units under a train marker that must retreat are eliminated.
 
 Surviving defenders cannot defend again this phase.
 

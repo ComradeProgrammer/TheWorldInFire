@@ -28,11 +28,13 @@ const MODIFIER_LABELS: Record<KnownStrengthModifier, string> = {
   minorRiver: "Minor river ¾",
   majorRiver: "Major river ½",
   softUnitCover: "Soft unit in cover ×2",
+  fortifiedHex: "Soft unit fortified ×2",
   provisionalDefense: "HQ provisional",
 };
 
 const SHIFT_LABELS: Record<KnownShiftReason, string> = {
   terrain: "Terrain",
+  fortified: "Fortified hex",
   flankAttack: "Flank attack",
   concentricAttack: "Concentric attack",
   surprise: "Surprise",

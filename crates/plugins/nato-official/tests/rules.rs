@@ -2869,3 +2869,156 @@ fn new_movement_modes_serialize_in_camel_case() {
         "paradrop"
     );
 }
+
+// ------------------------------------------------------------------ fortified hexes
+
+/// BALTAP at the WP Battle Planning Phase with `fortified` as the only Fortified hexes.
+fn fortified_game(placements: &[(&str, &str)], fortified: &[&str]) -> TestGame {
+    baltap_planning_with("warsawPact", placements, |scenario| {
+        scenario.fortified_hexes = fortified
+            .iter()
+            .map(|hex| HexId((*hex).to_owned()))
+            .collect();
+    })
+}
+
+/// Verifies Extended Buildup alone fortifies the West German border and West Berlin.
+#[test]
+fn extended_buildup_fortifies_the_west_german_border() {
+    for year in ["1983", "1988"] {
+        let scenario = find_scenario(&format!("nato-extended-buildup-{year}")).unwrap();
+        assert_eq!(scenario.fortified_hexes.len(), 44);
+        for hex in ["2214", "2315", "2713", "4112", "5005", "3007"] {
+            assert!(
+                scenario.fortified_hexes.contains(&HexId(hex.to_owned())),
+                "{hex}"
+            );
+        }
+        // East German and Czechoslovak hexes across the border are not Fortified.
+        for hex in ["2314", "2813", "4113", "4905"] {
+            assert!(
+                !scenario.fortified_hexes.contains(&HexId(hex.to_owned())),
+                "{hex}"
+            );
+        }
+    }
+    for id in [
+        "nato-baltap-1983",
+        "nato-strategic-surprise-1983",
+        "nato-war-of-nerves-1983",
+    ] {
+        assert!(
+            find_scenario(id).unwrap().fortified_hexes.is_empty(),
+            "{id}"
+        );
+    }
+}
+
+/// Verifies NATO in a Fortified hex gets two column shifts down in place of terrain and Soft cover.
+#[test]
+fn a_fortified_hex_shifts_two_columns_and_doubles_soft_defenders() {
+    let mut game = fortified_game(&[(SOVIET, "4009"), (GERMAN, "4010")], &["4010"]);
+    game.edit_unit(&UnitId(GERMAN.to_owned()), |unit| {
+        unit.definition.traits.retain(|t| t.0 != "hard");
+    });
+    game.execute(GameCommand::SetAttackTarget {
+        hex_id: HexId("4010".to_owned()),
+        selected: true,
+    })
+    .unwrap();
+    advance_to(&mut game, "warsawPact", "combat");
+    let odds = game
+        .battle_preview(
+            &HexId("4010".to_owned()),
+            &[UnitId(SOVIET.to_owned())],
+            None,
+        )
+        .unwrap();
+    // BALTAP's first turn also adds the WP Surprise shift.
+    assert!(odds.shifts.contains(&ooaw_nato::ColumnShift {
+        reason: ooaw_nato::ColumnShiftReason::Fortified,
+        shift: -2,
+    }));
+    assert!(!odds
+        .shifts
+        .iter()
+        .any(|shift| shift.reason == ooaw_nato::ColumnShiftReason::Terrain));
+    let defender = &odds.defenders[0];
+    assert_eq!(
+        defender.modifiers,
+        vec![ooaw_nato::StrengthModifier::FortifiedHex]
+    );
+    assert_eq!(
+        defender.adjusted_64ths,
+        u32::from(defender.printed) * 2 * 64
+    );
+}
+
+/// Verifies a Fortified hex cancels a one-hex retreat for NATO defenders.
+#[test]
+fn a_fortified_hex_cancels_a_one_hex_retreat() {
+    let mut game = fortified_game(&[(SOVIET, "4009"), (GERMAN, "4010")], &["4010"]);
+    game.execute(GameCommand::SetAttackTarget {
+        hex_id: HexId("4010".to_owned()),
+        selected: true,
+    })
+    .unwrap();
+    advance_to(&mut game, "warsawPact", "combat");
+    game.set_dice(dice_rolling(5)); // 3:1 without the Fortified shift, 1:1 with it; roll 5: A1/R1
+    let outcome = game.execute(battle("4010", &[SOVIET])).unwrap();
+    assert_eq!(report(&outcome).result.unwrap().code, "A1/R1");
+    assert!(!outcome
+        .events
+        .iter()
+        .any(|event| matches!(event, GameEvent::UnitRetreated { .. })));
+    assert_eq!(
+        game.unit(&UnitId(GERMAN.to_owned())).location,
+        UnitLocation::Hex {
+            hex_id: HexId("4010".to_owned())
+        }
+    );
+}
+
+/// Verifies WP Strikes into a Fortified hex take -2 in place of the terrain modifier.
+#[test]
+fn wp_strikes_into_a_fortified_hex_take_minus_two() {
+    let target_modifier = |fortified: &[&str]| {
+        let mut game = fortified_game(&[(SOVIET, "4009"), (GERMAN, "4010")], fortified);
+        mark_artillery(&mut game, SOVIET);
+        advance_to(&mut game, "warsawPact", "offensiveStrike");
+        game.artillery_strike_options(&UnitId(SOVIET.to_owned()))
+            .unwrap()
+            .targets
+            .into_iter()
+            .find(|target| target.hex_id.0 == "4010")
+            .unwrap()
+            .units[0]
+            .modifier
+    };
+    // 4010 is Clear, so the only difference is the Fortified -2.
+    assert_eq!(target_modifier(&["4010"]), target_modifier(&[]) - 2);
+}
+
+/// Verifies a Fortified hex the WP occupies at a Joint Status Phase is Conquered for good.
+#[test]
+fn wp_occupation_conquers_a_fortified_hex_at_joint_status() {
+    let mut game = fortified_game(&[(SOVIET, "4009"), (GERMAN, "4010")], &["4009", "4010"]);
+    assert_eq!(game.snapshot().fortified_hex_ids.len(), 2);
+    let mut conquered = Vec::new();
+    loop {
+        let outcome = game.execute(GameCommand::EndPhase).unwrap();
+        for event in &outcome.events {
+            if let GameEvent::FortifiedHexesConquered { hex_ids } = event {
+                conquered.extend(hex_ids.clone());
+            }
+        }
+        if outcome.snapshot.turn.game_turn == 2 {
+            break;
+        }
+    }
+    assert_eq!(conquered, vec![HexId("4009".to_owned())]);
+    assert_eq!(
+        game.snapshot().fortified_hex_ids,
+        vec![HexId("4010".to_owned())]
+    );
+}

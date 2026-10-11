@@ -147,6 +147,12 @@ fn retreat_reduction(hex: &MapHex) -> u8 {
     }
 }
 
+/// Retreat hexes a Fortified Objective hex cancels: one, or two where Mountain
+/// or a Major or Key City would cancel two anyway (25.7.2, 38.4.3.4).
+fn fortified_retreat_reduction(hex: &MapHex) -> u8 {
+    retreat_reduction(hex).max(1)
+}
+
 /// A unit may always ignore the second retreat hex after entering one of these (25.7.3).
 fn stops_second_retreat_hex(hex: &MapHex) -> bool {
     retreat_reduction(hex) > 0
@@ -521,7 +527,12 @@ impl Rules {
         );
         // 30.4, 25.6.3.2: a Free City defending alone loses its Organic Defense to any step loss.
         let city_broken = city_alone && result.defender_steps > 0;
-        let net_retreat = result.retreat.saturating_sub(retreat_reduction(&hex));
+        let reduction = if self.fortified_against(&side_id, &hex_id) {
+            fortified_retreat_reduction(&hex)
+        } else {
+            retreat_reduction(&hex)
+        };
+        let net_retreat = result.retreat.saturating_sub(reduction);
         if net_retreat > 0 {
             self.retreat_defenders(
                 &side_id,
@@ -974,6 +985,13 @@ impl Rules {
         let context = MovementContext::new(self, defender_side);
         let hexes = &context.hexes;
         let origin = hexes[objective.0.as_str()];
+        // 25.7.3, 38.4.3.4: a Fortified hex reduces retreats, so it also stops the second hex.
+        let fortified: Vec<&str> = self
+            .fortified_hexes
+            .iter()
+            .filter(|id| self.fortified_for(defender_side, id))
+            .map(|id| id.0.as_str())
+            .collect();
         let retreating_steps: u16 = retreating
             .iter()
             .map(|id| self.units[id].step_count())
@@ -1063,7 +1081,8 @@ impl Rules {
             let stops = net_retreat == 2
                 && route.len() == 1
                 && (context.friendly_occupied.contains(first)
-                    || stops_second_retreat_hex(hexes[first]));
+                    || stops_second_retreat_hex(hexes[first])
+                    || fortified.contains(&first));
             if stops {
                 0
             } else {
@@ -1104,6 +1123,7 @@ impl Rules {
             .iter()
             .find(|hex| hex.id == *hex_id)
             .expect("validated hex");
+        let fortified = self.fortified_against(side_id, hex_id);
         let defender_side = self
             .scenario
             .sides
@@ -1209,7 +1229,11 @@ impl Rules {
                 let mut value = u32::from(current_defense(unit)) * SCALE;
                 let mut modifiers = Vec::new();
                 halve(unit, &mut value, &mut modifiers);
-                if is_soft_maneuver(unit) && gives_soft_cover(hex) {
+                // 38.4.3.4: a Fortified hex replaces the terrain's cover.
+                if is_soft_maneuver(unit) && fortified {
+                    value *= 2;
+                    modifiers.push(StrengthModifier::FortifiedHex);
+                } else if is_soft_maneuver(unit) && gives_soft_cover(hex) {
                     value *= 2;
                     modifiers.push(StrengthModifier::SoftUnitCover);
                 }
@@ -1247,8 +1271,14 @@ impl Rules {
         let basic_column = column_for(total_attack, total_defense);
 
         let mut shifts = Vec::new();
+        // 38.4.3.4: two columns down for NATO in a Fortified hex, superseding terrain.
         let terrain = terrain_shift(hex);
-        if terrain != 0 {
+        if fortified {
+            shifts.push(ColumnShift {
+                reason: ColumnShiftReason::Fortified,
+                shift: -2,
+            });
+        } else if terrain != 0 {
             shifts.push(ColumnShift {
                 reason: ColumnShiftReason::Terrain,
                 shift: terrain,

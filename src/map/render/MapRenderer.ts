@@ -66,6 +66,8 @@ export interface StrikeOverlay {
   missions: AirMission[];
   zones: AirInterdictionZone[];
   breakthroughs: string[];
+  /** NATO Fortified hexes that have not yet been Conquered. */
+  fortified: string[];
 }
 
 /** Named-aircraft missions, bases, and legal targets drawn during planning and review. */
@@ -110,6 +112,7 @@ const OPTIONAL_OBJECTIVE_COLOR = 0xffa640;
 const RESOLVED_STRIKE_COLOR = 0xf0bf58;
 const INTERDICTION_COLOR = 0xb58cff;
 const BREAKTHROUGH_COLOR = 0xffd23f;
+const FORTIFIED_COLOR = 0x5d6b78;
 const NATO_AIR_COLOR = 0x60a9ff;
 const PACT_AIR_COLOR = 0xff7168;
 const AEW_COLOR = 0xc895ff;
@@ -660,6 +663,12 @@ export class MapRenderer {
         zones.poly(this.grid.corners(center.row, center.col, 0.8)).stroke({ color: INTERDICTION_COLOR, width: 6, alpha: 0.9 });
       }
     };
+    // 38.4.3.4: Fortified hexes carry a steel-grey inner border.
+    for (const hexId of overlay.fortified) {
+      const hex = this.hexByKey.get(hexId);
+      if (!hex) continue;
+      zones.poly(this.grid.corners(hex.row, hex.col, 0.86)).stroke({ color: FORTIFIED_COLOR, width: 7, alpha: 0.9 });
+    }
     for (const zone of overlay.zones) drawZone(zone.hexId, 0.2);
     for (const mission of overlay.missions) {
       if (mission.kind.type === "interdiction" && !mission.resolution) drawZone(mission.hexId, 0.1);

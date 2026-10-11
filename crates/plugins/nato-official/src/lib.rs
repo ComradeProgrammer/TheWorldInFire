@@ -18,6 +18,7 @@ mod dice;
 mod error;
 mod event;
 pub mod filters;
+mod fortification;
 /// Domain data for sides, phases, scenarios, and units.
 pub mod model;
 mod movement;

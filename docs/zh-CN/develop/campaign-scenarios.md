@@ -19,6 +19,14 @@
 
 六个选项使用现有十四战争回合流程和逐回合增援机制。Strategic Surprise、War of Nerves 的空运司令部为华约三个、北约两个；Extended Buildup 为华约四个、北约三个。Strategic Surprise 第一回合有奇袭；War of Nerves 因警戒级别尚未建模，不默认给予奇袭。可用前线 HQ 和美国 V、VII 军 HQ 提供进攻支援；波罗的海前线和美国 III 军 HQ 仅在 Extended Buildup 中提供支援。
 
+**筑垒格（38.4.3.4）。** `natoCampaigns.json` 中列出 `fortifiedHexes`，只有 Extended Buildup 会把它复制到 `ScenarioDefinition::fortified_hexes`。该列表共 44 格：与铁幕格边相邻的 43 个西德格，加上西柏林（3007）。地图数据没有铁幕格边，描摹的 `ironCurtain` 折线也只覆盖了部分边境。因此 85 条铁幕格边是从印刷地图图像中读取的：依据铁幕线沿格边的橙色描边判定；易北河一段则取橙色段之间的 `majorRiver` 格边。已校验这些格边构成一条从吕贝克湾到地图南缘、没有分叉的连续线，并取每条格边位于线西侧的格为西德格。当前列表作为 `fortifiedHexIds` 保存在规则状态中：`Rules::new` 从剧本初始化，联合状态阶段移除有华约单位的格，并发出 `fortifiedHexesConquered` 事件。效果只适用于华约针对北约的进攻和打击：
+- 目标格的地形移栏改为 `ColumnShiftReason::Fortified`（−2）；
+- 北约软目标防守单位以 `StrengthModifier::FortifiedHex` 加倍，取代 `SoftUnitCover`；
+- 撤退减少 `max(1, 地形减少量)`；若北约单位撤退进入的第一格是筑垒格，可以在一格后停下；
+- 打击的地形修正改为 −2，但目标处于铁路标记下时除外。
+
+战果扩张尚未实现，因此“不得扩张”无需代码。War of Nerves 警戒等级 6 的筑垒（39.4.6、40.4.3.5）依赖尚未实现的警戒等级系统。核打击取消筑垒效果（21.1.3）同样尚未实现；征服标记除取消筑垒状态外没有其他效果。
+
 ## 与完整桌游剧本的差异
 
 这些选项是现有内核上的战争阶段接入版本，不能视为完整桌游规则已实现：
